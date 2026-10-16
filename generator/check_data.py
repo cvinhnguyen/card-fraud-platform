@@ -130,7 +130,7 @@ def check_terminals(dedup: pd.DataFrame) -> None:
 
 def check_stream(cfg: dict, src: Path, dedup: pd.DataFrame, disputes: pd.DataFrame, to_unit: dict) -> None:
     """card_authorizations: one event per payment, late events from offline POS, network-retry duplicates."""
-    st = cfg["stream"]
+    st = cfg["card_authorizations"]
     a = pd.read_parquet(src / "stream" / "card_authorizations").drop(columns="auth_date")
     print(f"\nstream: {len(a):,} card_authorizations, {a.auth_id.nunique():,} unique")
     rate = st["duplicate_rate"]
@@ -166,6 +166,67 @@ def check_stream(cfg: dict, src: Path, dedup: pd.DataFrame, disputes: pd.DataFra
     fraud = e.auth_id.str.replace("auth_", "txn_", regex=False).isin(disputes.transaction_id[disputes.is_confirmed_fraud])
     check("fraud ecom on a device new to the card (share)", first_use[fraud].mean(), 1, 1)
     print(f"      legit ecom on a device new to the card: {first_use[~fraud].mean():.2%}")
+
+
+def check_app_events(cfg: dict, src: Path) -> None:
+    """app_events: out-of-order arrival, the Decision 2345 biometric rule, ATO patterns and the QR trend."""
+    a, bio = cfg["app_events"], cfg["app_events"]["biometric"]
+    cutoff = pd.Timestamp(bio["cutoff"])
+    e = pq.read_table(src / "stream" / "app_events", partitioning=None).to_pandas().sort_values(["session_id", "event_ts"], ignore_index=True)
+    kind = e.session_id.map(pd.read_parquet(src / "_truth" / "ato_sessions.parquet").set_index("session_id").kind).fillna("legit")
+    print(f"\napp_events: {len(e):,} events, {e.session_id.nunique():,} sessions, {kind[~e.session_id.duplicated()].value_counts().to_dict()}")
+
+    # Problem: out-of-order. An event is out of order when a later event of its session arrived before it.
+    rev = e.iloc[::-1]
+    later_min = rev.groupby("session_id").received_ts.cummin().groupby(rev.session_id).shift()
+    ooo = e.received_ts > later_min.reindex(e.index)
+    delay = (e.received_ts - e.event_ts).dt.total_seconds()
+    share = a["out_of_order_share"]
+    check("out-of-order events (share)", ooo.mean(), share - 0.01, share + 0.01)
+    check("max delay of out-of-order events (s)", delay[ooo].max(), 0, a["max_disorder_s"])
+    check("max delay of in-order events (s)", delay[~ooo].max(), 0, 1)
+
+    # Decision 2345 identity check (domain rule, from the cutoff).
+    nxt, prev = e.groupby("session_id").shift(-1), e.groupby("session_id").shift()
+    post, is_bio = e.event_ts >= cutoff, e.event_type == "biometric_verify"
+    check("no biometric_verify before cutoff (share)", 1 - is_bio[~post].mean(), 1, 1)
+    big = post & (e.event_type == "transfer") & (e.amount_vnd >= bio["single_transfer_vnd"])
+    check("transfer >= 10M right after a passed amount check (share)", ((prev.event_type == "biometric_verify") & (prev.result == "success") & (prev.reason == "amount"))[big].mean(), 1, 1)
+    new_login = post & (e.event_type == "login") & e.is_new_device
+    check("new-device login followed by a new_device check (share)", ((nxt.event_type == "biometric_verify") & (nxt.reason == "new_device"))[new_login].mean(), 1, 1)
+    check("failed check ends the session (share)", nxt.event_type[is_bio & (e.result == "failed")].isna().mean(), 1, 1)
+    t = e[post & (e.event_type == "transfer")].assign(day=lambda d: d.event_ts.dt.date).sort_values("event_ts")
+    cum = t.groupby(["customer_id", "day"]).amount_vnd.cumsum()
+    cross = t[(cum > bio["daily_total_vnd"]) & (cum - t.amount_vnd <= bio["daily_total_vnd"])]
+    ok_bio = e[is_bio & (e.result == "success") & e.reason.isin(["amount", "daily_total"])][["customer_id", "event_ts"]].rename(columns={"event_ts": "bio_ts"})
+    hit = pd.merge_asof(cross, ok_bio.sort_values("bio_ts"), left_on="event_ts", right_on="bio_ts", by="customer_id")
+    check("transfer crossing 20M/day has a passed check that day (share)", (hit.bio_ts.dt.date == hit.day).mean(), 1, 1)
+    checks = e[is_bio]
+    passed = checks.result.eq("success").groupby(kind[is_bio].eq("legit")).mean()
+    check("identity check pass rate, legit", passed[True], bio["pass_rate_legit"] - 0.01, bio["pass_rate_legit"] + 0.01)
+    check("identity check pass rate, ATO", passed[False], bio["pass_rate_ato"] - 0.05, bio["pass_rate_ato"] + 0.05)
+    dev_bio = a["transfer_auth_method"]["device_biometric"]
+    legit_tr = (e.event_type == "transfer") & kind.eq("legit")
+    check("legit transfers approved with device_biometric (share)", e.auth_method[legit_tr].eq("device_biometric").mean(), dev_bio - 0.02, dev_bio + 0.02)
+
+    # ATO patterns (labels from the generator truth; Layer 2 gets them later).
+    s = e[kind.eq("new_device")]
+    first = s.pivot_table(index="session_id", columns="event_type", values="event_ts", aggfunc="min")
+    done = first.transfer.notna()
+    seq = (first.password_reset < first.add_payee) & (first.add_payee < first.transfer) & (first.transfer - first.password_reset < pd.Timedelta(minutes=10))
+    check("new_device ATO: reset -> add_payee -> transfer < 10 min (share)", seq[done].mean(), 1, 1)
+    arr = s.pivot_table(index="session_id", columns="event_type", values="received_ts", aggfunc="min")[done]
+    broken = ~((arr.password_reset < arr.add_payee) & (arr.add_payee < arr.transfer))
+    print(f"      new_device ATO with a transfer: {done.sum()}, sequence broken in arrival order: {broken.sum()}")
+    remote_tr = (e.event_type == "transfer") & kind.eq("remote_access")
+    check("remote_access ATO transfers in [9M, 10M) (share)", e.amount_vnd[remote_tr].between(9_000_000, 9_999_999).mean(), 1, 1)
+    print(f"      9M-10M transfers: remote ATO {remote_tr.sum()}, legit {(legit_tr & e.amount_vnd.between(9_000_000, 9_999_999)).sum()}")
+
+    # Trend: VietQR at shops grows among transfers.
+    tr = e[e.event_type == "transfer"]
+    qr = tr.transfer_type.eq("qr_merchant").groupby(tr.event_ts.dt.year).mean()
+    growth = 1 + a["qr_share"]["growth_per_year"]
+    check("qr_merchant share 2025 / 2024 (growing trend)", qr[2025] / qr[2024], growth - 0.06, growth + 0.06)
 
 
 def main(config_path: Path) -> None:
@@ -236,6 +297,7 @@ def main(config_path: Path) -> None:
     check_moves(dedup, cards, pd.read_parquet(src / "core_banking" / "accounts.parquet"), customers, to_unit)
     check_terminals(dedup)
     check_stream(cfg, src, dedup, disputes, to_unit)
+    check_app_events(cfg, src)
 
     assert not failures, f"{len(failures)} check(s) failed: {failures}"
     print("\nall checks passed")

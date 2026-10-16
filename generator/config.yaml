@@ -53,13 +53,40 @@ labels:                          # disputes table + label delay
   dispute_delay_days: {median: 14, p95: 45, min: 1, max: 60}   # truncated log-normal
   risk_weights: {ecom: 3.0, night: 2.0, high_amount: 2.0, otp: 1.5}   # relative fraud risk, normalized to fraud_rate
 
-stream:                          # card_authorizations: the card network's request for each payment (Kafka source)
-  extra_devices: 0.5             # online payments come from 1 + Poisson(0.5) phones per customer (device_id)
+devices:                         # customers' phones, shared by online card payments and app sessions (device_id)
+  extra_per_customer: 0.5        # 1 + Poisson(0.5) phones per customer
+  primary_share: 0.85            # app sessions on the main phone
+
+card_authorizations:             # Kafka source 1: the card network's request for each payment
   network_delay_s: [0.05, 2.0]   # normal delivery latency, uniform
   late_share_of_pos: 0.10        # offline POS store-and-forward, sent when the terminal reconnects (~2.4% of all)
   late_delay_min: [5, 30]
   duplicate_rate: 0.015          # network retry without an ack: same auth_id, later received_ts
   retry_delay_s: [1, 10]
+
+app_events:                      # Kafka source 2: mobile banking app, one session = login ... transfers
+  n_sessions: 60000              # smoke test, ~2.5 events per session
+  failed_login_share: 0.05       # sessions that start with 1-2 wrong passwords
+  password_reset_share: 0.01     # legit customers who forgot the password
+  change_phone_share: 0.002
+  transfers_per_session: {0: 0.35, 1: 0.45, 2: 0.15, 3: 0.05}
+  new_payee_share: 0.10          # p2p transfers to a payee added in the same session
+  qr_share: {start: 0.45, growth_per_year: 0.15}   # VietQR at shops among transfers (SBV 2025: QR +51% volume)
+  shops: 5000                    # QR payees, Zipf-like popularity
+  transfer_auth_method: {device_biometric: 0.85, smart_otp_pin: 0.10, sms_otp: 0.05}
+  out_of_order_share: 0.15       # events that reach Kafka after the next event of their session
+  max_disorder_s: 20
+  ato:                           # account takeover attempts
+    share: 0.01                  # of sessions (inflated so the smoke test has enough cases)
+    remote_share: 0.40           # after the cutoff: malware on the victim's phone, transfers split below 10M
+    attacker_devices: 50         # fraud rings reuse phones across victims
+    mule_payees: 100
+  biometric:                     # Decision 2345/QĐ-NHNN identity check, from 2024-07-01
+    cutoff: 2024-07-01
+    single_transfer_vnd: 10000000   # >= this amount
+    daily_total_vnd: 20000000       # the day's total goes above this
+    pass_rate_legit: 0.99
+    pass_rate_ato: 0.10
 
 schema_evolution:                # Decision 2345/QĐ-NHNN + Circular 18/2024/TT-NHNN both effective 2024-07-01
   cutoff: 2024-07-01             # auth_method + three_ds_version exist only from this transaction date

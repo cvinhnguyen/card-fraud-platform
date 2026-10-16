@@ -4,10 +4,12 @@ Outputs stand in for another department's systems (loaded into Postgres / Seawee
   <output_dir>/core_banking/{customers,accounts,cards,merchants,ref_province_mapping}.parquet
   <output_dir>/core-banking-export/transactions/export_date=YYYY-MM-DD/part-0.parquet
   <output_dir>/stream/card_authorizations/auth_date=YYYY-MM-DD/part-0.parquet   (replayed by producer.py)
+  <output_dir>/stream/app_events/event_date=YYYY-MM-DD/part-0.parquet            (replayed by producer.py)
+  <output_dir>/_truth/ato_sessions.parquet   generator ground truth for the checks, not a source system
 
 Problems injected in this version: merchant skew, txn_city skew, administrative
 reorganization (63 old names -> 34 units), offline duplicates, schema evolution, SCD2,
-label delay, high cardinality; streaming late arrivals and duplicates.
+label delay, high cardinality; streaming late arrivals, duplicates and out-of-order events.
 All identifiers are random synthetic tokens; no real card numbers (PAN) are produced.
 
 Usage: python generator/generate.py [--config generator/config.yaml]
@@ -21,6 +23,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
+
+from app_events import arrival, gen_app_day
 
 ROOT = Path(__file__).resolve().parent.parent
 MAPPING_CSV = Path(__file__).parent / "ref" / "province_mapping.csv"
@@ -328,7 +332,7 @@ def gen_disputes(rng, cfg, disputed: pd.DataFrame) -> pd.DataFrame:
 def gen_devices(rng, cfg, n_customers: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Phones each customer pays from online: 1 + Poisson(extra). Returns the device ids and,
     per customer position, the first index and count of that customer's block of ids."""
-    count = 1 + rng.poisson(cfg["stream"]["extra_devices"], n_customers)
+    count = 1 + rng.poisson(cfg["devices"]["extra_per_customer"], n_customers)
     return tokens("dev", rng, int(count.sum())), np.cumsum(count) - count, count
 
 
@@ -339,7 +343,7 @@ def gen_auths(rng, cfg, txns: pd.DataFrame, fraud: np.ndarray, cust: np.ndarray,
     and geo_city is the same location string as txn_city. Problems: late arrivals from offline POS
     terminals (store-and-forward) and duplicates from network retries (same auth_id, later received_ts).
     """
-    st, n = cfg["stream"], len(txns)
+    st, n = cfg["card_authorizations"], len(txns)
     channel = txns.channel.to_numpy()
     ids, first, count = devices
     dev = ids[first[cust] + (rng.random(n) * count[cust]).astype(int)]
@@ -364,6 +368,34 @@ def gen_auths(rng, cfg, txns: pd.DataFrame, fraud: np.ndarray, cust: np.ndarray,
     dup = df.iloc[rng.choice(n, round(n * st["duplicate_rate"]), replace=False)].copy()
     dup["received_ts"] += pd.to_timedelta(np.round(rng.uniform(*st["retry_delay_s"], len(dup)) * 1000), unit="ms")
     return pd.concat([df, dup], ignore_index=True).sort_values("received_ts", ignore_index=True)
+
+
+def write_app_events(cfg, out: Path, customers: pd.DataFrame, devices, days: pd.DatetimeIndex) -> tuple[int, int]:
+    """Sessions of the mobile banking app, day by day, with their own random stream (so the card data
+    stays unchanged). State such as each customer's last device carries over between days."""
+    rng = np.random.default_rng([cfg["seed"], 2])
+    a = cfg["app_events"]
+    onboard = customers.updated_ts.to_numpy()
+    order = np.argsort(onboard, kind="stable")
+    shop_w = 1 / np.arange(1, a["shops"] + 1) ** 0.9
+    ctx = {"customer_ids": customers.customer_id.to_numpy(), "onboard_order": order, "onboard_sorted": onboard[order],
+           "dev_ids": devices[0], "dev_first": devices[1], "dev_count": devices[2], "hour_p": HOUR_WEIGHTS,
+           "shops": tokens("pay", rng, a["shops"]), "shop_p": shop_w / shop_w.sum(),
+           "attackers": tokens("dev", rng, a["ato"]["attacker_devices"]), "mules": tokens("pay", rng, a["ato"]["mule_payees"]),
+           "last_device": {}, "payees": {}}
+    per_day = rng.poisson(a["n_sessions"] / len(days), len(days))
+    next_session, next_event, truth = 0, 0, []
+    for day, n in zip(days, per_day):
+        df, ato = gen_app_day(rng, cfg, day, int(n), next_session, ctx)
+        received = arrival(rng, cfg, df)
+        to_ts = lambda s: pd.to_datetime(np.round(s * 1000).astype(np.int64), unit="ms")
+        df.insert(0, "event_id", [f"evt_{i:012x}" for i in range(next_event, next_event + len(df))])
+        df["event_ts"], df["received_ts"] = to_ts(df.event_ts.to_numpy()), to_ts(received)
+        write(df.sort_values("received_ts", ignore_index=True), out / "stream" / "app_events" / f"event_date={day.date()}" / "part-0.parquet")
+        next_session, next_event = next_session + n, next_event + len(df)
+        truth += ato
+    write(pd.DataFrame(truth, columns=["session_id", "kind"]), out / "_truth" / "ato_sessions.parquet")
+    return next_event, len(truth)
 
 
 def write(df: pd.DataFrame, path: Path) -> None:
@@ -407,6 +439,7 @@ def main(config_path: Path) -> None:
         next_id, rows, n_auths = next_id + n, rows + len(df), n_auths + len(auths)
         disputed.append(dsp)
     disputes = gen_disputes(rng, cfg, pd.concat(disputed, ignore_index=True))
+    n_events, n_ato = write_app_events(cfg, out, customers, devices, days)
 
     cb = out / "core_banking"
     write(mapping.assign(effective_from=pd.Timestamp(cfg["reorganization"]["cutoff"]).date()), cb / "ref_province_mapping.parquet")
@@ -415,7 +448,8 @@ def main(config_path: Path) -> None:
 
     size_mb = sum(f.stat().st_size for f in out.rglob("*.parquet")) / 2**20
     print(f"wrote {rows:,} transaction rows ({next_id:,} unique), {len(customers):,} customers ({len(versions):,} versions), "
-          f"{len(cards):,} cards, {len(merchants):,} merchants, {len(disputes):,} disputes, {n_auths:,} authorizations -> {out} "
+          f"{len(cards):,} cards, {len(merchants):,} merchants, {len(disputes):,} disputes, {n_auths:,} authorizations, "
+          f"{n_events:,} app events ({n_ato:,} ATO sessions) -> {out} "
           f"({size_mb:.1f} MB, {time.perf_counter() - t0:.0f}s)")
 
 
