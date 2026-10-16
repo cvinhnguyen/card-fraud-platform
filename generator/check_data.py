@@ -4,6 +4,7 @@ Every check is an assert with a tolerance. The printed metrics feed docs/data_ch
 Usage: python generator/check_data.py [--config generator/config.yaml]
 """
 import argparse
+from math import erf, log, sqrt
 from pathlib import Path
 
 import pandas as pd
@@ -93,8 +94,16 @@ def check_labels(cfg: dict, dedup: pd.DataFrame, disputes: pd.DataFrame) -> None
     mature = dedup.txn_ts < end - pd.Timedelta(days=ld["max"])
     rate = is_fraud[mature].mean()
     check("fraud rate on mature transactions", rate, lab["fraud_rate"] * 0.8, lab["fraud_rate"] * 1.2)
+    # Expected visible share = P(delay < age) under the truncated log-normal; tolerance = 3x Poisson noise
+    # on the recent fraud count, so the band is wide on the smoke test and tight at 1 GB.
     recent = dedup.txn_ts >= end - pd.Timedelta(days=30)
-    check("last-30-day fraud rate / mature rate (label delay)", is_fraud[recent].mean() / rate, 0, 0.7)
+    mu, sigma = log(ld["median"]), (log(ld["p95"]) - log(ld["median"])) / 1.645
+    cdf = lambda x: 0.5 * (1 + erf((log(max(x, 1e-9)) - mu) / (sigma * sqrt(2))))
+    trunc = lambda x: min(max((cdf(x) - cdf(ld["min"])) / (cdf(ld["max"]) - cdf(ld["min"])), 0), 1)
+    expected = ((end - dedup.txn_ts[recent]).dt.total_seconds() / 86400).map(trunc).mean()
+    tol = 3 / sqrt(rate * recent.sum() * expected)
+    check("last-30-day fraud rate / mature rate (label delay)", is_fraud[recent].mean() / rate, max(0, expected * (1 - tol)), expected * (1 + tol))
+    print(f"      expected {expected:.2f} from the delay distribution, {recent.sum():,} recent transactions")
     ecom = dedup.channel == "ecom"
     check("fraud rate ecom / non-ecom (learnable signal)", is_fraud[mature & ecom].mean() / is_fraud[mature & ~ecom].mean(), 1.5, float("inf"))
 
@@ -198,6 +207,10 @@ def main(config_path: Path) -> None:
     check(f"top-{top_n} merchant share", counts.head(top_n).sum() / len(dedup), top_share - 0.02, top_share + 0.02)
     check("biggest merchant / median merchant rows", counts.iloc[0] / counts.median(), 100, float("inf"))
 
+    # Trend: ATM share of card payments shrinks every year.
+    atm, year = dedup.channel.eq("atm"), dedup.txn_ts.dt.year
+    keep = 1 - cfg["trends"]["atm_decline_per_year"]
+    check("ATM share 2025 / 2024 (declining trend)", atm[year == 2025].mean() / atm[year == 2024].mean(), keep - 0.05, keep + 0.05)
 
     # Problem: secondary skew on txn_city, measured after normalizing to the 34 units.
     unit = dedup.txn_city.map(to_unit)

@@ -6,12 +6,16 @@ output_dir: data/source          # relative to repo root; gitignored
 
 period:
   start: 2024-01-01
-  end: 2025-12-31                # inclusive
+  end: 2026-10-15                # inclusive; fixed (not "today") so reruns reproduce the same data
 
 volume:                          # ~10 MB smoke test; raise n_transactions for 1 GB / 100 GB
   n_customers: 20000
   n_merchants: 2000
   n_transactions: 200000
+
+trends:
+  atm_decline_per_year: 0.17     # ATM share of card payments shrinks yearly (SBV 2025: ATM volume -17.3% YoY);
+                                 # the lost share goes to non-top merchants, so the top-10 skew stays fixed
 
 skew:
   merchant:

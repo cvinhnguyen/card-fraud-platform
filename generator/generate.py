@@ -210,6 +210,19 @@ def gen_merchants(rng, cfg, p_units) -> tuple[pd.DataFrame, np.ndarray]:
     return merchants, p
 
 
+def day_merchant_probs(cfg, p: np.ndarray, merchants: pd.DataFrame, day: pd.Timestamp) -> np.ndarray:
+    """Trend: ATM use declines every year (cash withdrawals give way to QR and app payments).
+    The ATM share lost so far moves to the other non-top merchants, so the top-N merchant skew is unchanged."""
+    years = (day - pd.Timestamp(cfg["period"]["start"])).days / 365.25
+    keep = (1 - cfg["trends"]["atm_decline_per_year"]) ** years
+    atm = (merchants.mcc == 6011).to_numpy()
+    rest = ~atm & (np.arange(len(p)) >= cfg["skew"]["merchant"]["top_n_merchants"])
+    q = p.copy()
+    q[rest] += p[atm].sum() * (1 - keep) * p[rest] / p[rest].sum()
+    q[atm] *= keep
+    return q
+
+
 def pick(rng: np.random.Generator, shares: dict[str, float], n: int) -> np.ndarray:
     """Draw n values from a {value: share} mapping."""
     return rng.choice(list(shares), n, p=list(shares.values()))
@@ -383,7 +396,8 @@ def main(config_path: Path) -> None:
     per_day = rng.poisson(cfg["volume"]["n_transactions"] / len(days), len(days))
     next_id, rows, n_auths, disputed = 0, 0, 0, []
     for day, n in zip(days, per_day):
-        df, dsp = gen_day(rng, cfg, day, int(n), next_id, cards, homes, merchants, p_merchant, p_units, backmap)
+        p_day = day_merchant_probs(cfg, p_merchant, merchants, day)
+        df, dsp = gen_day(rng, cfg, day, int(n), next_id, cards, homes, merchants, p_day, p_units, backmap)
         export_date = (day + pd.Timedelta(days=1)).date()
         write(df, out / "core-banking-export" / "transactions" / f"export_date={export_date}" / "part-0.parquet")
         txns = df.iloc[:n]   # gen_day puts the originals before the export duplicates
