@@ -7,6 +7,9 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,14 +25,51 @@ def check(name: str, value: float, lo: float, hi: float) -> None:
         failures.append(name)
 
 
+def read_merged(export_dir: Path, schemas: list[pa.Schema]) -> pd.DataFrame:
+    """Read every export file with the union of their schemas; missing columns become null."""
+    part = pa.schema([("export_date", pa.string())])
+    merged = pa.unify_schemas(schemas).append(part.field(0))
+    dataset = ds.dataset(export_dir, schema=merged, partitioning=ds.partitioning(part, flavor="hive"))
+    return dataset.to_table().to_pandas()
+
+
+def check_schema_evolution(cfg: dict, files: list[Path], schemas: list[pa.Schema], dedup: pd.DataFrame) -> None:
+    """Problem: schema evolution. Auth columns exist only in files of transactions from the cutoff,
+    and their values match the channel of each payment."""
+    se = cfg["schema_evolution"]
+    cutoff = pd.Timestamp(se["cutoff"])
+    new_cols = {"auth_method", "three_ds_version"}
+    # export_date = transaction date + 1, so files exported up to the cutoff date hold only older transactions
+    new_file = [pd.Timestamp(f.parent.name.split("=")[1]) > cutoff for f in files]
+    has_cols = [new_cols <= set(s.names) for s in schemas]
+    check("files before cutoff without auth columns (share)", sum(not h for h, n in zip(has_cols, new_file) if not n) / max(1, new_file.count(False)), 1, 1)
+    check("files after cutoff with auth columns (share)", sum(h for h, n in zip(has_cols, new_file) if n) / max(1, new_file.count(True)), 1, 1)
+
+    before, after = dedup[dedup.txn_ts < cutoff], dedup[dedup.txn_ts >= cutoff]
+    check("auth_method null before cutoff (share)", before.auth_method.isna().mean(), 1, 1)
+    allowed = after.channel.map({ch: set(shares) for ch, shares in se["auth_method"].items()})
+    check("auth_method valid for its channel (share)", pd.Series([m in a for m, a in zip(after.auth_method, allowed)]).mean(), 1, 1)
+    ecom = after.channel == "ecom"
+    app = se["auth_method"]["ecom"]["3ds_app"]
+    check("3ds_app among ecom (share)", (after.auth_method[ecom] == "3ds_app").mean(), app - 0.02, app + 0.02)
+    v22 = se["three_ds_version"]["2.2.0"]
+    check("three_ds_version 2.2.0 among ecom (share)", (after.three_ds_version[ecom] == "2.2.0").mean(), v22 - 0.02, v22 + 0.02)
+    check("three_ds_version null for pos/atm (share)", after.three_ds_version[~ecom].isna().mean(), 1, 1)
+
+
 def main(config_path: Path) -> None:
     """Load the generated tables and run every check."""
-    cfg = yaml.safe_load(config_path.read_text())
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     src = ROOT / cfg["output_dir"]
     cards = pd.read_parquet(src / "core_banking" / "cards.parquet")
     merchants = pd.read_parquet(src / "core_banking" / "merchants.parquet")
     customers = pd.read_parquet(src / "core_banking" / "customers.parquet")
-    txn = pd.read_parquet(src / "core-banking-export" / "transactions")
+    export_dir = src / "core-banking-export" / "transactions"
+    files = sorted(export_dir.rglob("*.parquet"))
+    schemas = [pq.read_schema(f) for f in files]
+    # Old and new export files have different columns, so read them with the merged schema
+    # (the same fix the Spark job needs: mergeSchema).
+    txn = read_merged(export_dir, schemas)
     mapping = pd.read_csv(MAPPING_CSV)
     new_units = set(mapping.new_unit_name)
     # Values can be old OR new names: "Hue" is a new name only (old: "Thua Thien Hue"), so map both.
@@ -71,6 +111,8 @@ def main(config_path: Path) -> None:
     hcm = cfg["skew"]["txn_city"]["Ho Chi Minh"] * cfg["reorganization"]["back_map_weights"]["Ho Chi Minh"]["Ho Chi Minh"]
     check("raw 'Ho Chi Minh' share before cutoff (fake jump)", (dedup.txn_city[before] == "Ho Chi Minh").mean(), hcm - 0.02, hcm + 0.02)
     check("customers.city normalizes to the 34 units (share)", customers.city.map(to_unit).isin(new_units).mean(), 1, 1)
+
+    check_schema_evolution(cfg, files, schemas, dedup)
 
     assert not failures, f"{len(failures)} check(s) failed: {failures}"
     print("\nall checks passed")

@@ -159,6 +159,27 @@ def gen_merchants(rng, cfg, p_units) -> tuple[pd.DataFrame, np.ndarray]:
     return merchants, p
 
 
+def pick(rng: np.random.Generator, shares: dict[str, float], n: int) -> np.ndarray:
+    """Draw n values from a {value: share} mapping."""
+    return rng.choice(list(shares), n, p=list(shares.values()))
+
+
+def add_auth_columns(df: pd.DataFrame, rng: np.random.Generator, cfg: dict) -> None:
+    """Add `auth_method` and `three_ds_version` in place.
+
+    From 2024-07-01 (Decision 2345/QĐ-NHNN and Circular 18/2024/TT-NHNN take effect) the card
+    system records how each payment was authenticated. Only online payments go through 3-D Secure.
+    """
+    se = cfg["schema_evolution"]
+    channel = df.channel.to_numpy()
+    method = np.empty(len(df), dtype=object)
+    for ch, shares in se["auth_method"].items():
+        idx = np.flatnonzero(channel == ch)
+        method[idx] = pick(rng, shares, idx.size)
+    df["auth_method"] = pd.Series(method, dtype="string")
+    df["three_ds_version"] = pd.Series(pick(rng, se["three_ds_version"], len(df)), dtype="string").where(channel == "ecom")
+
+
 def gen_day(rng, cfg, day, n, first_id, cards, merchants, p_merchant, p_units, backmap) -> pd.DataFrame:
     """Settled transactions of one day plus the duplicates of a re-run nightly export."""
     txn_ts = day + pd.to_timedelta(rng.choice(24, n, p=HOUR_WEIGHTS) * 3600 + rng.integers(0, 3600, n), unit="s")
@@ -188,6 +209,9 @@ def gen_day(rng, cfg, day, n, first_id, cards, merchants, p_merchant, p_units, b
         # nightly settlement batch exports yesterday's transactions between 01:00 and 03:00
         "created_ts": day + pd.Timedelta(days=1, hours=1) + pd.to_timedelta(rng.integers(0, 7200, n), unit="s"),
     })
+    # Problem: schema evolution. The columns only exist from the regulation date, so older files lack them entirely.
+    if day >= pd.Timestamp(cfg["schema_evolution"]["cutoff"]):
+        add_auth_columns(df, rng, cfg)
     # Problem: export job re-run after a timeout -> same transaction_id, later created_ts.
     dup = df.iloc[rng.choice(n, round(n * cfg["duplicates"]["offline_rate"]), replace=False)].copy()
     dup["created_ts"] += pd.to_timedelta(rng.integers(30 * 60, 180 * 60, len(dup)), unit="s")
@@ -204,7 +228,7 @@ def write(df: pd.DataFrame, path: Path) -> None:
 def main(config_path: Path) -> None:
     """Generate every table described in the config and write it under `output_dir`."""
     t0 = time.perf_counter()
-    cfg = yaml.safe_load(config_path.read_text())
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     out = ROOT / cfg["output_dir"]
     rng = np.random.default_rng(cfg["seed"])
 

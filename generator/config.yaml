@@ -33,6 +33,14 @@ reorganization:
 duplicates:
   offline_rate: 0.02             # nightly export re-run after timeout
 
+schema_evolution:                # Decision 2345/QĐ-NHNN + Circular 18/2024/TT-NHNN both effective 2024-07-01
+  cutoff: 2024-07-01             # auth_method + three_ds_version exist only from this transaction date
+  auth_method:                   # how the card payment was authenticated, per channel (assumed shares)
+    ecom: {3ds_otp: 0.70, 3ds_app: 0.30}       # SMS / Smart OTP vs approval in the bank app
+    pos: {chip_pin: 0.60, contactless: 0.40}
+    atm: {pin: 1.0}
+  three_ds_version: {"2.2.0": 0.85, "2.1.0": 0.15}   # ecom only
+
 # Super merchants: 70% of transactions. ATM merchants use mcc 6011.
 super_merchants:
 # Names are generic on purpose: synthetic data, no real brands.
