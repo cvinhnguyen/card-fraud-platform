@@ -1,0 +1,38 @@
+"""Create the S3 buckets and Kafka topics the platform needs. Idempotent.
+
+Usage: python infra/init_infra.py   (after `docker compose --profile core up -d`)
+"""
+import boto3
+from confluent_kafka.admin import AdminClient, NewTopic
+
+from make_env import read_env
+
+BUCKETS = ["core-banking-export", "lakehouse"]   # another department's exports | our bronze/silver/gold
+TOPICS = {"card_authorizations": 6, "app_events": 6}   # name -> partitions
+
+
+def create_buckets(env: dict[str, str]) -> None:
+    """Create each bucket in SeaweedFS unless it already exists."""
+    s3 = boto3.client("s3", endpoint_url="http://localhost:8333", region_name="us-east-1",
+                      aws_access_key_id=env["S3_ACCESS_KEY"], aws_secret_access_key=env["S3_SECRET_KEY"])
+    existing = {b["Name"] for b in s3.list_buckets().get("Buckets", [])}
+    for name in BUCKETS:
+        if name not in existing:
+            s3.create_bucket(Bucket=name)
+        print(f"bucket {name}: ok")
+
+
+def create_topics() -> None:
+    """Create each Kafka topic unless it already exists."""
+    admin = AdminClient({"bootstrap.servers": "localhost:9092"})
+    missing = [NewTopic(t, num_partitions=p, replication_factor=1)
+               for t, p in TOPICS.items() if t not in admin.list_topics(timeout=10).topics]
+    for future in (admin.create_topics(missing).values() if missing else []):
+        future.result()   # raises on failure
+    for t in TOPICS:
+        print(f"topic {t}: ok")
+
+
+if __name__ == "__main__":
+    create_buckets(read_env())
+    create_topics()

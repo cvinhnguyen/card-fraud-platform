@@ -1,0 +1,48 @@
+# Generator configuration. Every share/rate lives here, not in code,
+# so the same pipeline can be benchmarked at different skew levels.
+
+seed: 42
+output_dir: data/source          # relative to repo root; gitignored
+
+period:
+  start: 2024-01-01
+  end: 2025-12-31                # inclusive
+
+volume:                          # ~10 MB smoke test; raise n_transactions for 1 GB / 100 GB
+  n_customers: 20000
+  n_merchants: 2000
+  n_transactions: 200000
+
+skew:
+  merchant:
+    top_n_merchants: 10
+    top_share: 0.70              # primary: join skew
+  txn_city:                      # shares on the 34 new units (new_unit_name)
+    Ho Chi Minh: 0.60            # secondary: storage layout / hot key
+    Ha Noi: 0.18
+    Da Nang: 0.05
+    others: 0.17                 # Zipf-like tail over the remaining 31 units
+
+reorganization:
+  cutoff: 2025-07-01             # Resolution 202/2025/QH15: 63 provinces -> 34 units
+  stale_share_after_cutoff: 0.05 # legacy POS / systems still sending old names
+  namesake_weight: 0.6           # default share of a merged unit that maps back to the province keeping its name
+  back_map_weights:              # overrides per new unit (old name -> weight)
+    Ho Chi Minh: {Ho Chi Minh: 0.80, Binh Duong: 0.13, Ba Ria-Vung Tau: 0.07}
+
+duplicates:
+  offline_rate: 0.02             # nightly export re-run after timeout
+
+# Super merchants: 70% of transactions. ATM merchants use mcc 6011.
+super_merchants:
+# Names are generic on purpose: synthetic data, no real brands.
+  - {name: E-Wallet A Top-up, mcc: 6540, is_online: true}
+  - {name: E-Wallet B Top-up, mcc: 6540, is_online: true}
+  - {name: E-Wallet C Top-up, mcc: 6540, is_online: true}
+  - {name: E-Wallet D Top-up, mcc: 6540, is_online: true}
+  - {name: Ride-Hailing A, mcc: 4121, is_online: true}
+  - {name: Ride-Hailing B, mcc: 4121, is_online: true}
+  - {name: Marketplace A, mcc: 5399, is_online: true}
+  - {name: Marketplace B, mcc: 5399, is_online: true}
+  - {name: Convenience Chain A, mcc: 5411, is_online: false}
+  - {name: Convenience Chain B, mcc: 5411, is_online: false}

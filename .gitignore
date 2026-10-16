@@ -1,0 +1,13 @@
+# secrets — never commit
+.env
+.secrets/
+infra/conf/seaweedfs/s3.json
+
+# generated data
+data/
+*.parquet
+
+# python
+.venv/
+__pycache__/
+*.pyc
