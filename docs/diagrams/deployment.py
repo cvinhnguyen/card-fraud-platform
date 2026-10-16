@@ -32,7 +32,7 @@ with Diagram("Layer 1 deployment · docker compose project `fraud`", filename=st
              direction="LR", graph_attr=GRAPH, node_attr=NODE, edge_attr=EDGE):
     with Cluster("Host · Windows 11 · repo .venv", graph_attr={"bgcolor": "#f5f5f5", "pencolor": "#c8ccd4", "fontname": "Helvetica"}):
         gen = Python("generator\ngenerate.py · load_source.py")
-        prod = Python("producer\n(P2, planned)")
+        prod = Python("producer.py\nreplays card_authorizations")
 
     with Cluster("Docker Desktop · WSL2 · disk on E: · ports bound to 127.0.0.1",
                  graph_attr={"bgcolor": "#eef0f3", "pencolor": "#c8ccd4", "fontname": "Helvetica"}):

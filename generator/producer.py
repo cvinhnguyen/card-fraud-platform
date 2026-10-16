@@ -1,0 +1,71 @@
+"""Replay the generated card_authorizations stream into Kafka in arrival order (received_ts).
+
+Each event is one JSON message keyed by card_id, so one card's events stay in one partition.
+Late and duplicate events are already in the data; the producer is idempotent, so it adds no
+duplicates of its own. Timestamps are 'YYYY-MM-DD HH:MM:SS.fff' (Flink SQL JSON format).
+
+Usage: python generator/producer.py [--speed 200] [--replay-from "2025-06-30 23:00"] [--limit 1000]
+       (after generate.py and infra/init_infra.py; Ctrl-C stops and prints where to resume)
+"""
+import argparse
+import time
+from pathlib import Path
+
+import pandas as pd
+import yaml
+from confluent_kafka import Producer
+
+ROOT = Path(__file__).resolve().parent.parent
+TOPIC = "card_authorizations"
+
+
+def load(src: Path, replay_from: pd.Timestamp | None, limit: int | None) -> pd.DataFrame:
+    """Events with received_ts >= replay_from, in arrival order.
+    ponytail: loads the whole stream into memory; read day by day if it outgrows RAM."""
+    df = pd.read_parquet(src).drop(columns="auth_date")
+    if replay_from is not None:
+        df = df[df.received_ts >= replay_from]
+    return df.sort_values("received_ts", kind="stable", ignore_index=True).head(limit)
+
+
+def main(args: argparse.Namespace) -> None:
+    """Send every event, paced to --speed events/s (0 = as fast as possible)."""
+    cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    df = load(ROOT / cfg["output_dir"] / "stream" / TOPIC, args.replay_from, args.limit)
+    out = df.assign(**{c: df[c].dt.strftime("%Y-%m-%d %H:%M:%S.%f").str[:-3] for c in ("auth_ts", "received_ts")})
+    values = out.to_json(orient="records", lines=True).splitlines()   # nulls stay null
+
+    errors = []
+    producer = Producer({"bootstrap.servers": "127.0.0.1:9092", "enable.idempotence": True, "linger.ms": 20,
+                         "on_delivery": lambda err, _: errors.append(err) if err else None})
+    sent, t0 = 0, time.perf_counter()
+    try:
+        for key, value in zip(df.card_id, values):
+            if args.speed and (ahead := t0 + sent / args.speed - time.perf_counter()) > 0:
+                time.sleep(ahead)
+            while True:
+                try:
+                    producer.produce(TOPIC, key=key, value=value)
+                    break
+                except BufferError:   # local queue full: let it drain
+                    producer.poll(0.5)
+            producer.poll(0)
+            sent += 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        left = producer.flush(30)
+    print(f"sent {sent - left:,} of {len(df):,} events to {TOPIC} in {time.perf_counter() - t0:.1f}s")
+    if sent < len(df):
+        print(f'resume with --replay-from "{df.received_ts.iloc[sent]}"')
+    if errors or left:
+        raise SystemExit(f"{len(errors)} delivery errors, {left} undelivered, first: {errors[:1]}")
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.yaml")
+    ap.add_argument("--speed", type=float, default=200, help="events per second, 0 = no limit")
+    ap.add_argument("--replay-from", type=pd.Timestamp, help="start at this received_ts")
+    ap.add_argument("--limit", type=int, help="stop after this many events")
+    main(ap.parse_args())

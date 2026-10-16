@@ -49,6 +49,14 @@ labels:                          # disputes table + label delay
   dispute_delay_days: {median: 14, p95: 45, min: 1, max: 60}   # truncated log-normal
   risk_weights: {ecom: 3.0, night: 2.0, high_amount: 2.0, otp: 1.5}   # relative fraud risk, normalized to fraud_rate
 
+stream:                          # card_authorizations: the card network's request for each payment (Kafka source)
+  extra_devices: 0.5             # online payments come from 1 + Poisson(0.5) phones per customer (device_id)
+  network_delay_s: [0.05, 2.0]   # normal delivery latency, uniform
+  late_share_of_pos: 0.10        # offline POS store-and-forward, sent when the terminal reconnects (~2.4% of all)
+  late_delay_min: [5, 30]
+  duplicate_rate: 0.015          # network retry without an ack: same auth_id, later received_ts
+  retry_delay_s: [1, 10]
+
 schema_evolution:                # Decision 2345/QĐ-NHNN + Circular 18/2024/TT-NHNN both effective 2024-07-01
   cutoff: 2024-07-01             # auth_method + three_ds_version exist only from this transaction date
   auth_method:                   # how the card payment was authenticated, per channel (assumed shares)

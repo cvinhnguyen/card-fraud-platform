@@ -3,9 +3,11 @@
 Outputs stand in for another department's systems (loaded into Postgres / SeaweedFS later):
   <output_dir>/core_banking/{customers,accounts,cards,merchants,ref_province_mapping}.parquet
   <output_dir>/core-banking-export/transactions/export_date=YYYY-MM-DD/part-0.parquet
+  <output_dir>/stream/card_authorizations/auth_date=YYYY-MM-DD/part-0.parquet   (replayed by producer.py)
 
 Problems injected in this version: merchant skew, txn_city skew, administrative
-reorganization (63 old names -> 34 units), offline duplicates.
+reorganization (63 old names -> 34 units), offline duplicates, schema evolution, SCD2,
+label delay, high cardinality; streaming late arrivals and duplicates.
 All identifiers are random synthetic tokens; no real card numbers (PAN) are produced.
 
 Usage: python generator/generate.py [--config generator/config.yaml]
@@ -171,6 +173,7 @@ def gen_accounts_cards(rng, customers) -> tuple[pd.DataFrame, pd.DataFrame]:
         "issue_ts": issue_ts,
         "status": "active",
         "_customer_id": customers.customer_id.to_numpy()[acc_idx],
+        "_cust": acc_idx,   # customer position (one account per customer)
         "_unit": customers._unit.to_numpy()[acc_idx],
     })
     cards["expiry_month"] = (cards.issue_ts + pd.DateOffset(years=5)).dt.strftime("%Y-%m")
@@ -309,6 +312,47 @@ def gen_disputes(rng, cfg, disputed: pd.DataFrame) -> pd.DataFrame:
     return out[out.reported_ts < end].sort_values("reported_ts", ignore_index=True)
 
 
+def gen_devices(rng, cfg, n_customers: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Phones each customer pays from online: 1 + Poisson(extra). Returns the device ids and,
+    per customer position, the first index and count of that customer's block of ids."""
+    count = 1 + rng.poisson(cfg["stream"]["extra_devices"], n_customers)
+    return tokens("dev", rng, int(count.sum())), np.cumsum(count) - count, count
+
+
+def gen_auths(rng, cfg, txns: pd.DataFrame, fraud: np.ndarray, cust: np.ndarray, devices) -> pd.DataFrame:
+    """Streaming source: the card network's authorization request for each payment, before settlement.
+
+    auth_id shares the counter of transaction_id (the settlement record references its authorization),
+    and geo_city is the same location string as txn_city. Problems: late arrivals from offline POS
+    terminals (store-and-forward) and duplicates from network retries (same auth_id, later received_ts).
+    """
+    st, n = cfg["stream"], len(txns)
+    channel = txns.channel.to_numpy()
+    ids, first, count = devices
+    dev = ids[first[cust] + (rng.random(n) * count[cust]).astype(int)]
+    # Fraudsters pay online from their own phone, so the card sees a device it never used (a realtime signal).
+    new = fraud & (channel == "ecom")
+    dev[new] = tokens("dev", rng, int(new.sum()))
+    delay = rng.uniform(*st["network_delay_s"], n)
+    late = (channel == "pos") & (rng.random(n) < st["late_share_of_pos"])
+    delay[late] = rng.uniform(*st["late_delay_min"], late.sum()) * 60
+    df = pd.DataFrame({
+        "auth_id": txns.transaction_id.str.replace("txn_", "auth_", regex=False).to_numpy(),
+        "card_id": txns.card_id.to_numpy(),
+        "merchant_id": txns.merchant_id.to_numpy(),
+        "amount_vnd": txns.amount_vnd.to_numpy(),
+        "channel": channel,
+        "terminal_id": txns.terminal_id.to_numpy(),
+        "device_id": pd.Series(dev, dtype="string").where(channel == "ecom"),
+        "geo_city": txns.txn_city.to_numpy(),
+        "auth_ts": txns.txn_ts.to_numpy(),
+        "received_ts": txns.txn_ts.to_numpy() + pd.to_timedelta(np.round(delay * 1000), unit="ms"),
+    })
+    dup = df.iloc[rng.choice(n, round(n * st["duplicate_rate"]), replace=False)].copy()
+    dup["received_ts"] += pd.to_timedelta(np.round(rng.uniform(*st["retry_delay_s"], len(dup)) * 1000), unit="ms")
+    return pd.concat([df, dup], ignore_index=True).sort_values("received_ts", ignore_index=True)
+
+
 def write(df: pd.DataFrame, path: Path) -> None:
     """Write Parquet with microsecond timestamps (Spark cannot read nanosecond Parquet timestamps)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,15 +374,23 @@ def main(config_path: Path) -> None:
     homes = versions[["customer_id", "updated_ts", "_unit"]].sort_values("updated_ts")
     accounts, cards = gen_accounts_cards(rng, customers)
     merchants, p_merchant = gen_merchants(rng, cfg, p_units)
+    # Separate random stream, so changing the streaming data leaves the offline data unchanged.
+    srng = np.random.default_rng([cfg["seed"], 1])
+    devices = gen_devices(srng, cfg, len(customers))
+    card_cust = cards.set_index("card_id")._cust
 
     days = pd.date_range(cfg["period"]["start"], cfg["period"]["end"], freq="D")
     per_day = rng.poisson(cfg["volume"]["n_transactions"] / len(days), len(days))
-    next_id, rows, disputed = 0, 0, []
+    next_id, rows, n_auths, disputed = 0, 0, 0, []
     for day, n in zip(days, per_day):
         df, dsp = gen_day(rng, cfg, day, int(n), next_id, cards, homes, merchants, p_merchant, p_units, backmap)
         export_date = (day + pd.Timedelta(days=1)).date()
         write(df, out / "core-banking-export" / "transactions" / f"export_date={export_date}" / "part-0.parquet")
-        next_id, rows = next_id + n, rows + len(df)
+        txns = df.iloc[:n]   # gen_day puts the originals before the export duplicates
+        fraud = txns.transaction_id.isin(dsp.transaction_id[dsp.is_confirmed_fraud]).to_numpy()
+        auths = gen_auths(srng, cfg, txns, fraud, card_cust.reindex(txns.card_id).to_numpy(), devices)
+        write(auths, out / "stream" / "card_authorizations" / f"auth_date={day.date()}" / "part-0.parquet")
+        next_id, rows, n_auths = next_id + n, rows + len(df), n_auths + len(auths)
         disputed.append(dsp)
     disputes = gen_disputes(rng, cfg, pd.concat(disputed, ignore_index=True))
 
@@ -349,7 +401,7 @@ def main(config_path: Path) -> None:
 
     size_mb = sum(f.stat().st_size for f in out.rglob("*.parquet")) / 2**20
     print(f"wrote {rows:,} transaction rows ({next_id:,} unique), {len(customers):,} customers ({len(versions):,} versions), "
-          f"{len(cards):,} cards, {len(merchants):,} merchants, {len(disputes):,} disputes -> {out} "
+          f"{len(cards):,} cards, {len(merchants):,} merchants, {len(disputes):,} disputes, {n_auths:,} authorizations -> {out} "
           f"({size_mb:.1f} MB, {time.perf_counter() - t0:.0f}s)")
 
 

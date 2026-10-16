@@ -48,6 +48,7 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 .venv/Scripts/python generator/generate.py                    # source data -> data/source
 .venv/Scripts/python generator/check_data.py                  # assert every injected problem
 .venv/Scripts/python generator/load_source.py                 # Postgres core_banking (127.0.0.1:5433) + s3://core-banking-export
+.venv/Scripts/python generator/producer.py --speed 200            # replay card_authorizations into Kafka (--replay-from, --limit)
 ```
 
 Data volume is set in `generator/config.yaml` (`volume.n_transactions`).

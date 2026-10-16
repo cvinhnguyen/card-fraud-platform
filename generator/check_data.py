@@ -119,6 +119,46 @@ def check_terminals(dedup: pd.DataFrame) -> None:
     check("distinct terminal_id", dedup.terminal_id.nunique(), 1000, float("inf"))
 
 
+def check_stream(cfg: dict, src: Path, dedup: pd.DataFrame, disputes: pd.DataFrame, to_unit: dict) -> None:
+    """card_authorizations: one event per payment, late events from offline POS, network-retry duplicates."""
+    st = cfg["stream"]
+    a = pd.read_parquet(src / "stream" / "card_authorizations").drop(columns="auth_date")
+    print(f"\nstream: {len(a):,} card_authorizations, {a.auth_id.nunique():,} unique")
+    rate = st["duplicate_rate"]
+    check("stream duplicate rate (extra rows / unique)", len(a) / a.auth_id.nunique() - 1, rate - 0.003, rate + 0.003)
+    check("stream duplicates differ only in received_ts (share)", len(a.drop(columns="received_ts").drop_duplicates()) / a.auth_id.nunique(), 1, 1)
+    gap = a[a.auth_id.duplicated(keep=False)].groupby("auth_id").received_ts.agg(lambda s: (s.max() - s.min()).total_seconds())
+    check("retry gap within retry_delay_s (share)", gap.between(*st["retry_delay_s"]).mean(), 1, 1)
+
+    u = a.sort_values("received_ts").drop_duplicates("auth_id")   # first arrival
+    t = dedup.assign(auth_id=dedup.transaction_id.str.replace("txn_", "auth_", regex=False)).merge(u, on="auth_id", how="left", suffixes=("", "_a"))
+    same = ((t.card_id == t.card_id_a) & (t.amount_vnd == t.amount_vnd_a) & (t.txn_city == t.geo_city) & (t.txn_ts == t.auth_ts))
+    check("unique auths / unique transactions", len(u) / len(dedup), 1, 1)
+    check("auth matches its transaction (share)", same.mean(), 1, 1)
+    check("share of Ho Chi Minh in geo_city (normalized)", (u.geo_city.map(to_unit) == "Ho Chi Minh").mean(), 0.58, 0.62)
+
+    # Problem: late arrivals. Offline POS terminals send minutes later; everything else within network delay.
+    delay = (u.received_ts - u.auth_ts).dt.total_seconds()
+    late = delay >= 60
+    pos = u.channel == "pos"
+    share = st["late_share_of_pos"]
+    check("late events are POS (share)", pos[late].mean(), 1, 1)
+    check("late share of POS", late[pos].mean(), share - 0.015, share + 0.015)
+    check("late delay within late_delay_min (share)", (delay[late] / 60).between(*st["late_delay_min"]).mean(), 1, 1)
+    check("on-time delay max (s)", delay[~late].max(), 0, st["network_delay_s"][1])
+    print(f"      late events: {late.sum():,} = {late.mean():.2%} of all authorizations")
+
+    # High cardinality + realtime signal: device_id on online payments; fraud comes from a device new to the card.
+    ecom = u.channel == "ecom"
+    check("device_id present only for ecom (share)", (u.device_id.notna() == ecom).mean(), 1, 1)
+    check("distinct device_id", u.device_id.nunique(), 1000, float("inf"))
+    e = u[ecom].sort_values("auth_ts")
+    first_use = ~e.duplicated(["card_id", "device_id"])
+    fraud = e.auth_id.str.replace("auth_", "txn_", regex=False).isin(disputes.transaction_id[disputes.is_confirmed_fraud])
+    check("fraud ecom on a device new to the card (share)", first_use[fraud].mean(), 1, 1)
+    print(f"      legit ecom on a device new to the card: {first_use[~fraud].mean():.2%}")
+
+
 def main(config_path: Path) -> None:
     """Load the generated tables and run every check."""
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -158,6 +198,7 @@ def main(config_path: Path) -> None:
     check(f"top-{top_n} merchant share", counts.head(top_n).sum() / len(dedup), top_share - 0.02, top_share + 0.02)
     check("biggest merchant / median merchant rows", counts.iloc[0] / counts.median(), 100, float("inf"))
 
+
     # Problem: secondary skew on txn_city, measured after normalizing to the 34 units.
     unit = dedup.txn_city.map(to_unit)
     check("txn_city normalizes to the 34 units (share)", unit.isin(new_units).mean(), 1, 1)
@@ -177,9 +218,11 @@ def main(config_path: Path) -> None:
 
     check_schema_evolution(cfg, files, schemas, dedup)
     check_scd2(cfg, customers, to_unit, new_units)
-    check_labels(cfg, dedup, pd.read_parquet(src / "core_banking" / "disputes.parquet"))
+    disputes = pd.read_parquet(src / "core_banking" / "disputes.parquet")
+    check_labels(cfg, dedup, disputes)
     check_moves(dedup, cards, pd.read_parquet(src / "core_banking" / "accounts.parquet"), customers, to_unit)
     check_terminals(dedup)
+    check_stream(cfg, src, dedup, disputes, to_unit)
 
     assert not failures, f"{len(failures)} check(s) failed: {failures}"
     print("\nall checks passed")

@@ -24,7 +24,7 @@ def create_buckets(env: dict[str, str]) -> None:
 
 def create_topics() -> None:
     """Create each Kafka topic unless it already exists."""
-    admin = AdminClient({"bootstrap.servers": "localhost:9092"})
+    admin = AdminClient({"bootstrap.servers": "127.0.0.1:9092"})
     missing = [NewTopic(t, num_partitions=p, replication_factor=1)
                for t, p in TOPICS.items() if t not in admin.list_topics(timeout=10).topics]
     for future in (admin.create_topics(missing).values() if missing else []):
