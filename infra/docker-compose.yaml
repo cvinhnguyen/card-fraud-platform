@@ -22,7 +22,7 @@ services:
       POSTGRES_USER: ${CORE_DB_USER}
       POSTGRES_PASSWORD: ${CORE_DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5433:5432"   # host 5433: 5432 is often taken by other local projects
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -37,9 +37,9 @@ services:
     container_name: seaweedfs
     command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
     ports:
-      - "8333:8333"   # S3 API
-      - "8888:8888"   # Filer UI
-      - "9333:9333"   # Master UI
+      - "127.0.0.1:8333:8333"   # S3 API
+      - "127.0.0.1:8888:8888"   # Filer UI
+      - "127.0.0.1:9333:9333"   # Master UI
     volumes:
       - ./conf/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs_data:/data
@@ -51,7 +51,7 @@ services:
     container_name: kafka
     hostname: kafka
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
     environment:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
