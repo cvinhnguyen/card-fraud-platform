@@ -11,7 +11,24 @@ Layer 1: Data Platform. Layer 2: ML Platform.
 
 ## Architecture
 
-![Layer 1 architecture](docs/images/layer1-architecture.png)
+![Layer 1 overview](docs/images/layer1-overview.png)
+
+| Step | Component | What it does |
+|---|---|---|
+| 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC) and the daily export files (S3A) into bronze `raw_*` Delta tables, unchanged |
+| 02 · DP2 | Spark silver | Dedup, `mergeSchema` for the 2024-07-01 auth columns, 63 → 34 unit normalization, skew salting → `stg_*` |
+| 03 · DP2 | dbt-spark (novel idea 1) | Gold `dim_*` / `fact_*` through Spark Thrift Server, SCD2 `dim_customer` as a dbt snapshot, dbt tests |
+| 04 · DP3 | Spark features | `feat_*` tables with `event_timestamp` for the Layer 2 feature store |
+| 05 | Trino | SQL over gold and feature tables through the Hive Metastore |
+| 06 | Flink | Watermarks, late events, dedup and windows on Kafka; raw events → bronze, realtime features → `card_features_rt` |
+
+Airflow runs DP1 → DP2 → DP3 with Great Expectations checks. Spark, Airflow and dbt send lineage to DataHub automatically through OpenLineage (novel idea 2).
+
+Deployment by compose profile (`python docs/diagrams/deployment.py`, needs Graphviz):
+
+![Layer 1 deployment](docs/images/layer1-deployment.png)
+
+Diagram sources: `docs/diagrams/layer1-overview.html` (open in a browser) and `docs/diagrams/deployment.py`.
 
 ## Repo structure
 

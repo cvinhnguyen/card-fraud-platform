@@ -5,3 +5,4 @@ pyyaml>=6
 boto3>=1.35
 confluent-kafka>=2.6
 psycopg[binary]>=3.2
+diagrams>=0.25   # docs/diagrams/deployment.py, needs Graphviz
