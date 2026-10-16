@@ -4,3 +4,4 @@ pyarrow>=18
 pyyaml>=6
 boto3>=1.35
 confluent-kafka>=2.6
+psycopg[binary]>=3.2

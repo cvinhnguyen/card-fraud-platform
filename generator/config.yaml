@@ -33,6 +33,22 @@ reorganization:
 duplicates:
   offline_rate: 0.02             # nightly export re-run after timeout
 
+scd2:                            # customers: one row per version (SCD2 source)
+  move_rate_per_year: 0.05       # customer moves to another unit
+  rescore_rate_per_year: 0.10    # risk_tier re-scored
+  # plus: on the reorganization date the core system relabels old province names (spurious version)
+
+terminals:                       # high cardinality: terminal_id on POS / ATM transactions (null for ecom)
+  chain: 3000                    # per convenience chain (super merchant, not online)
+  atm_network: 400               # per ATM network merchant
+  other_pos_max: 5               # other POS merchants: 1..this many terminals
+
+labels:                          # disputes table + label delay
+  fraud_rate: 0.003
+  non_fraud_dispute_rate: 0.001  # disputes that end up not fraud (not received, duplicate charge, ...)
+  dispute_delay_days: {median: 14, p95: 45, min: 1, max: 60}   # truncated log-normal
+  risk_weights: {ecom: 3.0, night: 2.0, high_amount: 2.0, otp: 1.5}   # relative fraud risk, normalized to fraud_rate
+
 schema_evolution:                # Decision 2345/QĐ-NHNN + Circular 18/2024/TT-NHNN both effective 2024-07-01
   cutoff: 2024-07-01             # auth_method + three_ds_version exist only from this transaction date
   auth_method:                   # how the card payment was authenticated, per channel (assumed shares)

@@ -88,8 +88,7 @@ def to_source_names(units: np.ndarray, ts: pd.Series, rng: np.random.Generator, 
 
 
 def gen_customers(rng, cfg, p_units, backmap) -> pd.DataFrame:
-    """One row per customer (single version for now; SCD2 versions come later).
-    `_unit` is the true new-space unit, kept only for generating transactions."""
+    """One onboarding row per customer. `_unit` is the true new-space unit, kept only for generating."""
     n = cfg["volume"]["n_customers"]
     unit = rng.choice(p_units.index.to_numpy(), n, p=p_units.to_numpy())
     updated_ts = random_ts(rng, "2015-01-01", cfg["period"]["end"], n)   # onboarding time
@@ -106,6 +105,49 @@ def gen_customers(rng, cfg, p_units, backmap) -> pd.DataFrame:
     })
 
 
+def customer_versions(rng, cfg, base: pd.DataFrame, p_units: pd.Series, backmap: dict) -> pd.DataFrame:
+    """SCD2 source: one row per customer version.
+
+    After onboarding, customers move to another unit or get a new risk_tier. On the reorganization
+    date the core system relabels old province names to the new unit name: only the label changes,
+    so a naive SCD2 comparison sees a fake move (the problem). A stale share is never relabeled.
+    """
+    sc, reorg = cfg["scd2"], cfg["reorganization"]
+    cutoff, end = pd.Timestamp(reorg["cutoff"]), pd.Timestamp(cfg["period"]["end"])
+    units, probs = p_units.index.to_numpy(), p_units.to_numpy()
+    span = (end - base.updated_ts).to_numpy()
+    parts = [base.assign(_kind="onboard")]
+    for kind, rate in (("move", sc["move_rate_per_year"]), ("rescore", sc["rescore_rate_per_year"])):
+        idx = np.repeat(np.arange(len(base)), rng.poisson(rate * span / np.timedelta64(365, "D")))
+        parts.append(pd.DataFrame({"customer_id": base.customer_id.to_numpy()[idx], "_kind": kind,
+                                   "updated_ts": base.updated_ts.to_numpy()[idx] + span[idx] * rng.random(idx.size)}))
+    v = pd.concat(parts, ignore_index=True).sort_values(["customer_id", "updated_ts"], ignore_index=True)
+    cols = [c for c in base.columns if c not in ("customer_id", "updated_ts")]
+
+    move = v._kind.eq("move")
+    v.loc[move, "_unit"] = rng.choice(units, move.sum(), p=probs)
+    # Destinations follow the unit shares, so the txn_city skew stays stable over time; a draw that
+    # lands in the current unit is no move and is dropped.
+    # ponytail: effective move rate = move_rate × (1 − share of the current unit), ~3%/yr.
+    prev = v.groupby("customer_id")._unit.ffill().groupby(v.customer_id).shift()
+    v = v[~(move & v._unit.eq(prev))].reset_index(drop=True)
+    move, rescore = v._kind.eq("move"), v._kind.eq("rescore")
+    v.loc[rescore, "risk_tier"] = rng.choice(["low", "medium", "high"], rescore.sum(), p=[0.7, 0.25, 0.05])
+    v.loc[move, "city"] = to_source_names(v.loc[move, "_unit"].to_numpy(), v.loc[move, "updated_ts"], rng, cfg, backmap)
+    v[cols] = v.groupby("customer_id")[cols].ffill()
+
+    # Relabel batch on the cutoff night, for customers whose current city is an old-only name.
+    state = v[v.updated_ts < cutoff].groupby("customer_id").tail(1)
+    old_only = ~state.city.isin(backmap.keys()) & (rng.random(len(state)) >= reorg["stale_share_after_cutoff"])
+    rel = state[old_only].assign(_kind="relabel", city=lambda d: d._unit,
+                                 updated_ts=cutoff + pd.to_timedelta(rng.integers(0, 7200, old_only.sum()), unit="s"))
+    later = (v.updated_ts >= cutoff) & ~move & v.customer_id.isin(rel.customer_id)
+    v.loc[later, "city"] = None   # re-filled from the relabel row or a later move
+    v = pd.concat([v, rel], ignore_index=True).sort_values(["customer_id", "updated_ts"], ignore_index=True)
+    v["city"] = v.groupby("customer_id").city.ffill()
+    return v[base.columns.tolist() + ["_kind"]].astype({"kyc_level": "int64"})
+
+
 def gen_accounts_cards(rng, customers) -> tuple[pd.DataFrame, pd.DataFrame]:
     """One account per customer and 1-2 cards per account. Cards are sorted by issue_ts."""
     n = len(customers)
@@ -116,7 +158,7 @@ def gen_accounts_cards(rng, customers) -> tuple[pd.DataFrame, pd.DataFrame]:
         "account_type": np.where(is_credit, "credit", "checking"),
         "open_ts": customers.updated_ts.to_numpy(),
         "status": "active",
-        "credit_limit": np.where(is_credit, rng.choice([20, 50, 100, 200], n) * 1_000_000, np.nan),
+        "credit_limit": pd.Series(np.where(is_credit, rng.choice([20, 50, 100, 200], n) * 1_000_000, 0), dtype="Int64").where(is_credit),
     })
     per_acc = rng.choice([1, 2], n, p=[0.7, 0.3])
     acc_idx = np.repeat(np.arange(n), per_acc)
@@ -128,6 +170,7 @@ def gen_accounts_cards(rng, customers) -> tuple[pd.DataFrame, pd.DataFrame]:
         "network": rng.choice(["Visa", "Mastercard", "Napas"], acc_idx.size, p=[0.4, 0.3, 0.3]),
         "issue_ts": issue_ts,
         "status": "active",
+        "_customer_id": customers.customer_id.to_numpy()[acc_idx],
         "_unit": customers._unit.to_numpy()[acc_idx],
     })
     cards["expiry_month"] = (cards.issue_ts + pd.DateOffset(years=5)).dt.strftime("%Y-%m")
@@ -152,6 +195,11 @@ def gen_merchants(rng, cfg, p_units) -> tuple[pd.DataFrame, np.ndarray]:
     hq = rng.choice(["Ho Chi Minh", "Ha Noi"], n)   # online merchants: head office city
     merchants["city"] = np.where(merchants.is_online, hq, rng.choice(p_units.index.to_numpy(), n, p=p_units.to_numpy()))
     merchants["country"] = "VN"
+    # Physical terminals per merchant (high cardinality on terminal_id). Online merchants have none.
+    t = cfg["terminals"]
+    merchants["_n_terminals"] = np.select(
+        [merchants.is_online, merchants.mcc == 6011, np.arange(n) < sk["top_n_merchants"]],
+        [0, t["atm_network"], t["chain"]], rng.integers(1, t["other_pos_max"] + 1, n))
 
     top = 1 / np.arange(1, sk["top_n_merchants"] + 1)
     tail = 1 / np.arange(1, n - sk["top_n_merchants"] + 1) ** 0.8
@@ -180,26 +228,48 @@ def add_auth_columns(df: pd.DataFrame, rng: np.random.Generator, cfg: dict) -> N
     df["three_ds_version"] = pd.Series(pick(rng, se["three_ds_version"], len(df)), dtype="string").where(channel == "ecom")
 
 
-def gen_day(rng, cfg, day, n, first_id, cards, merchants, p_merchant, p_units, backmap) -> pd.DataFrame:
-    """Settled transactions of one day plus the duplicates of a re-run nightly export."""
+def fraud_flags(rng, cfg, df: pd.DataFrame) -> np.ndarray:
+    """Mark fraud with a light, learnable signal: online, night, large amount and OTP payments are
+    riskier. Weights are relative and rescaled so the day's average rate is `fraud_rate`.
+    ponytail: independent multiplicative weights; richer fraud patterns (ATO, testing cards) come with Layer 2."""
+    w_cfg, lab = cfg["labels"]["risk_weights"], cfg["labels"]
+    w = (np.where(df.channel == "ecom", w_cfg["ecom"], 1.0)
+         * np.where(df.txn_ts.dt.hour < 6, w_cfg["night"], 1.0)
+         * np.where(df.amount_vnd > 5_000_000, w_cfg["high_amount"], 1.0))
+    if "auth_method" in df:
+        w = w * np.where(df.auth_method == "3ds_otp", w_cfg["otp"], 1.0)
+    return rng.random(len(df)) < lab["fraud_rate"] * w / w.mean()
+
+
+def gen_day(rng, cfg, day, n, first_id, cards, homes, merchants, p_merchant, p_units, backmap) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Settled transactions of one day plus the duplicates of a re-run nightly export.
+    Also returns the day's disputed transactions (fraud and non-fraud) for the disputes table."""
     txn_ts = day + pd.to_timedelta(rng.choice(24, n, p=HOUR_WEIGHTS) * 3600 + rng.integers(0, 3600, n), unit="s")
     m = rng.choice(len(merchants), n, p=p_merchant)
     online, mcc = merchants.is_online.to_numpy()[m], merchants.mcc.to_numpy()[m]
     channel = np.where(online, "ecom", np.where(mcc == 6011, "atm", "pos"))
 
-    # Only cards already issued can pay. ponytail: uniform over issued cards, add per-card activity later.
-    eligible = int(np.searchsorted(cards.issue_ts.to_numpy(), (day + pd.Timedelta(days=1)).to_datetime64()))
+    # Only cards issued before the day starts can pay, so txn_ts > issue_ts >= onboarding time.
+    # ponytail: uniform over issued cards, add per-card activity later.
+    eligible = int(np.searchsorted(cards.issue_ts.to_numpy(), day.to_datetime64()))
     c = rng.integers(0, eligible, n)
+    # Home unit as of the payment time, so a customer who moved pays mostly in the new unit.
+    pay = pd.DataFrame({"txn_ts": txn_ts, "customer_id": cards._customer_id.to_numpy()[c], "i": np.arange(n)}).sort_values("txn_ts")
+    home = pd.merge_asof(pay, homes, left_on="txn_ts", right_on="updated_ts", by="customer_id").sort_values("i")._unit.to_numpy()
+    assert not pd.isna(home).any(), "every payment must find a customer version"
     # Online: cardholder's registered city. POS/ATM: mostly the home city, sometimes travelling.
     travelling = (channel != "ecom") & (rng.random(n) < 0.15)
-    unit = np.where(travelling, rng.choice(p_units.index.to_numpy(), n, p=p_units.to_numpy()), cards._unit.to_numpy()[c])
+    unit = np.where(travelling, rng.choice(p_units.index.to_numpy(), n, p=p_units.to_numpy()), home)
 
     amount = np.where(channel == "atm", rng.choice([500, 1000, 2000, 3000, 5000], n) * 1000,
                       np.maximum(10_000, np.round(rng.lognormal(np.log(np.where(online, 250_000, 150_000)), 1.0) / 1000) * 1000))
+    n_term = merchants._n_terminals.to_numpy()[m]
+    term = rng.integers(0, np.maximum(n_term, 1))
     df = pd.DataFrame({
         "transaction_id": [f"txn_{i:012x}" for i in range(first_id, first_id + n)],
         "card_id": cards.card_id.to_numpy()[c],
         "merchant_id": merchants.merchant_id.to_numpy()[m],
+        "terminal_id": pd.Series([f"term_{a:05x}{b:04x}" for a, b in zip(m, term)], dtype="string").where(n_term > 0),
         "txn_ts": txn_ts,
         "txn_city": to_source_names(unit, pd.Series(txn_ts), rng, cfg, backmap),
         "amount_vnd": amount.astype(np.int64),
@@ -212,10 +282,31 @@ def gen_day(rng, cfg, day, n, first_id, cards, merchants, p_merchant, p_units, b
     # Problem: schema evolution. The columns only exist from the regulation date, so older files lack them entirely.
     if day >= pd.Timestamp(cfg["schema_evolution"]["cutoff"]):
         add_auth_columns(df, rng, cfg)
+    fraud = fraud_flags(rng, cfg, df)
+    disputed = fraud | (rng.random(n) < cfg["labels"]["non_fraud_dispute_rate"])
+    disputes = df.loc[disputed, ["transaction_id", "txn_ts", "channel"]].assign(is_confirmed_fraud=fraud[disputed])
     # Problem: export job re-run after a timeout -> same transaction_id, later created_ts.
     dup = df.iloc[rng.choice(n, round(n * cfg["duplicates"]["offline_rate"]), replace=False)].copy()
     dup["created_ts"] += pd.to_timedelta(rng.integers(30 * 60, 180 * 60, len(dup)), unit="s")
-    return pd.concat([df, dup], ignore_index=True)
+    return pd.concat([df, dup], ignore_index=True), disputes
+
+
+def gen_disputes(rng, cfg, disputed: pd.DataFrame) -> pd.DataFrame:
+    """Problem: label delay. A dispute is reported 1-60 days after the payment (truncated log-normal).
+    Disputes reported after the end of the period do not exist yet, so recent months look clean."""
+    ld = cfg["labels"]["dispute_delay_days"]
+    mu, sigma = np.log(ld["median"]), (np.log(ld["p95"]) - np.log(ld["median"])) / 1.645
+    delay = rng.lognormal(mu, sigma, len(disputed))
+    while (bad := (delay < ld["min"]) | (delay > ld["max"])).any():   # redraw = truncate
+        delay[bad] = rng.lognormal(mu, sigma, bad.sum())
+    reported = disputed.txn_ts + pd.to_timedelta(delay * 86400, unit="s").round("s")
+    fraud = disputed.is_confirmed_fraud.to_numpy()
+    reason = np.where(fraud, np.where(disputed.channel == "ecom", "fraud_card_not_present", "fraud_card_present"),
+                      rng.choice(["not_received", "duplicate_charge", "amount_differs"], len(disputed)))
+    out = pd.DataFrame({"dispute_id": tokens("dsp", rng, len(disputed)), "transaction_id": disputed.transaction_id.to_numpy(),
+                        "reported_ts": reported.to_numpy(), "reason_code": reason, "is_confirmed_fraud": fraud})
+    end = pd.Timestamp(cfg["period"]["end"]) + pd.Timedelta(days=1)
+    return out[out.reported_ts < end].sort_values("reported_ts", ignore_index=True)
 
 
 def write(df: pd.DataFrame, path: Path) -> None:
@@ -235,26 +326,31 @@ def main(config_path: Path) -> None:
     mapping = pd.read_csv(MAPPING_CSV)
     p_units, backmap = unit_probs(cfg, mapping, rng), back_map_table(cfg, mapping)
     customers = gen_customers(rng, cfg, p_units, backmap)
+    versions = customer_versions(rng, cfg, customers, p_units, backmap)
+    homes = versions[["customer_id", "updated_ts", "_unit"]].sort_values("updated_ts")
     accounts, cards = gen_accounts_cards(rng, customers)
     merchants, p_merchant = gen_merchants(rng, cfg, p_units)
 
-    cb = out / "core_banking"
-    write(mapping.assign(effective_from=pd.Timestamp(cfg["reorganization"]["cutoff"]).date()), cb / "ref_province_mapping.parquet")
-    for name, df in {"customers": customers, "accounts": accounts, "cards": cards, "merchants": merchants}.items():
-        write(df, cb / f"{name}.parquet")
-
     days = pd.date_range(cfg["period"]["start"], cfg["period"]["end"], freq="D")
     per_day = rng.poisson(cfg["volume"]["n_transactions"] / len(days), len(days))
-    next_id, rows = 0, 0
+    next_id, rows, disputed = 0, 0, []
     for day, n in zip(days, per_day):
-        df = gen_day(rng, cfg, day, int(n), next_id, cards, merchants, p_merchant, p_units, backmap)
+        df, dsp = gen_day(rng, cfg, day, int(n), next_id, cards, homes, merchants, p_merchant, p_units, backmap)
         export_date = (day + pd.Timedelta(days=1)).date()
         write(df, out / "core-banking-export" / "transactions" / f"export_date={export_date}" / "part-0.parquet")
         next_id, rows = next_id + n, rows + len(df)
+        disputed.append(dsp)
+    disputes = gen_disputes(rng, cfg, pd.concat(disputed, ignore_index=True))
+
+    cb = out / "core_banking"
+    write(mapping.assign(effective_from=pd.Timestamp(cfg["reorganization"]["cutoff"]).date()), cb / "ref_province_mapping.parquet")
+    for name, df in {"customers": versions, "accounts": accounts, "cards": cards, "merchants": merchants, "disputes": disputes}.items():
+        write(df, cb / f"{name}.parquet")
 
     size_mb = sum(f.stat().st_size for f in out.rglob("*.parquet")) / 2**20
-    print(f"wrote {rows:,} transaction rows ({next_id:,} unique) + {len(customers):,} customers, "
-          f"{len(cards):,} cards, {len(merchants):,} merchants -> {out} ({size_mb:.1f} MB, {time.perf_counter() - t0:.0f}s)")
+    print(f"wrote {rows:,} transaction rows ({next_id:,} unique), {len(customers):,} customers ({len(versions):,} versions), "
+          f"{len(cards):,} cards, {len(merchants):,} merchants, {len(disputes):,} disputes -> {out} "
+          f"({size_mb:.1f} MB, {time.perf_counter() - t0:.0f}s)")
 
 
 if __name__ == "__main__":

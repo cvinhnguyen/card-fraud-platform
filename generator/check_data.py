@@ -57,6 +57,68 @@ def check_schema_evolution(cfg: dict, files: list[Path], schemas: list[pa.Schema
     check("three_ds_version null for pos/atm (share)", after.three_ds_version[~ecom].isna().mean(), 1, 1)
 
 
+def check_scd2(cfg: dict, customers: pd.DataFrame, to_unit: dict, new_units: set) -> None:
+    """SCD2 source + reorganization: real changes (move, re-score) vs spurious relabel versions,
+    where only the province label changed and the normalized unit is the same."""
+    cutoff = pd.Timestamp(cfg["reorganization"]["cutoff"])
+    v = customers.sort_values(["customer_id", "updated_ts"])
+    prev = v.groupby("customer_id")[["city", "risk_tier"]].shift()
+    has_prev = prev.city.notna()
+    raw_change = has_prev & ((v.city != prev.city) | (v.risk_tier != prev.risk_tier))
+    real_change = has_prev & ((v.city.map(to_unit) != prev.city.map(to_unit)) | (v.risk_tier != prev.risk_tier))
+    spurious = raw_change & ~real_change
+    check("customers with more than one version (share)", (v.groupby("customer_id").size() > 1).mean(), 0.2, 1)
+    check("spurious versions on the cutoff date (share)", (v.updated_ts[spurious].dt.normalize() == cutoff).mean(), 1, 1)
+    state = v[v.updated_ts < cutoff].groupby("customer_id").tail(1)
+    old_names = (~state.city.isin(new_units)).sum()
+    stale = cfg["reorganization"]["stale_share_after_cutoff"]
+    check("old-name customers relabeled at cutoff (share)", spurious.sum() / max(1, old_names), 1 - stale - 0.03, 1 - stale + 0.03)
+    print(f"      spurious relabel versions: {spurious.sum():,} of {len(v):,} rows")
+
+
+def check_labels(cfg: dict, dedup: pd.DataFrame, disputes: pd.DataFrame) -> None:
+    """Disputes + label delay: delay distribution, fraud rate on mature months, and the
+    artificial drop in the most recent month."""
+    lab, ld = cfg["labels"], cfg["labels"]["dispute_delay_days"]
+    end = pd.Timestamp(cfg["period"]["end"]) + pd.Timedelta(days=1)
+    d = disputes.merge(dedup[["transaction_id", "txn_ts", "channel"]], on="transaction_id", how="left")
+    check("dispute.transaction_id found in transactions (share)", d.txn_ts.notna().mean(), 1, 1)
+    delay = (d.reported_ts - d.txn_ts).dt.total_seconds() / 86400
+    check("dispute delay median (days)", delay.median(), ld["median"] - 2, ld["median"] + 2)
+    check("dispute delay within [min, max] (share)", delay.between(ld["min"], ld["max"]).mean(), 1, 1)
+    check("disputes reported before the snapshot (share)", (d.reported_ts < end).mean(), 1, 1)
+
+    fraud_ids = set(d.transaction_id[d.is_confirmed_fraud])
+    is_fraud = dedup.transaction_id.isin(fraud_ids)
+    mature = dedup.txn_ts < end - pd.Timedelta(days=ld["max"])
+    rate = is_fraud[mature].mean()
+    check("fraud rate on mature transactions", rate, lab["fraud_rate"] * 0.8, lab["fraud_rate"] * 1.2)
+    recent = dedup.txn_ts >= end - pd.Timedelta(days=30)
+    check("last-30-day fraud rate / mature rate (label delay)", is_fraud[recent].mean() / rate, 0, 0.7)
+    ecom = dedup.channel == "ecom"
+    check("fraud rate ecom / non-ecom (learnable signal)", is_fraud[mature & ecom].mean() / is_fraud[mature & ~ecom].mean(), 1.5, float("inf"))
+
+
+def check_moves(dedup: pd.DataFrame, cards: pd.DataFrame, accounts: pd.DataFrame, customers: pd.DataFrame, to_unit: dict) -> None:
+    """After a real move, a customer pays mostly in the home unit of the version valid at payment time."""
+    v = customers.sort_values(["customer_id", "updated_ts"]).assign(home=lambda d: d.city.map(to_unit))
+    moved_at = v[v.home.ne(v.groupby("customer_id").home.shift()) & v.customer_id.duplicated()].groupby("customer_id").updated_ts.min()
+    t = dedup.merge(cards.merge(accounts, on="account_id")[["card_id", "customer_id"]], on="card_id")
+    t = t[t.txn_ts > t.customer_id.map(moved_at)]
+    asof = pd.merge_asof(t.sort_values("txn_ts"), v[["customer_id", "updated_ts", "home"]].sort_values("updated_ts"),
+                         left_on="txn_ts", right_on="updated_ts", by="customer_id")
+    check("moved customers pay in the as-of home unit (share)", (asof.txn_city.map(to_unit) == asof.home).mean(), 0.8, 1)
+    print(f"      transactions after a move: {len(t):,}")
+
+
+def check_terminals(dedup: pd.DataFrame) -> None:
+    """High cardinality: terminal_id on POS / ATM payments, null for online payments."""
+    physical = dedup.channel != "ecom"
+    check("terminal_id present for pos/atm (share)", dedup.terminal_id[physical].notna().mean(), 1, 1)
+    check("terminal_id null for ecom (share)", dedup.terminal_id[~physical].isna().mean(), 1, 1)
+    check("distinct terminal_id", dedup.terminal_id.nunique(), 1000, float("inf"))
+
+
 def main(config_path: Path) -> None:
     """Load the generated tables and run every check."""
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -81,6 +143,7 @@ def main(config_path: Path) -> None:
     check("card_id is a synthetic token (share)", cards.card_id.str.fullmatch(r"card_[0-9a-f]{8}").mean(), 1, 1)
     check("txn.card_id found in cards (share)", txn.card_id.isin(cards.card_id).mean(), 1, 1)
     check("txn.merchant_id found in merchants (share)", txn.merchant_id.isin(merchants.merchant_id).mean(), 1, 1)
+    check("txn_ts after card issue_ts (share)", (txn.txn_ts > txn.card_id.map(cards.set_index("card_id").issue_ts)).mean(), 1, 1)
 
     # Problem: offline duplicates. Extra rows share transaction_id and carry a later created_ts.
     rate = cfg["duplicates"]["offline_rate"]
@@ -113,6 +176,10 @@ def main(config_path: Path) -> None:
     check("customers.city normalizes to the 34 units (share)", customers.city.map(to_unit).isin(new_units).mean(), 1, 1)
 
     check_schema_evolution(cfg, files, schemas, dedup)
+    check_scd2(cfg, customers, to_unit, new_units)
+    check_labels(cfg, dedup, pd.read_parquet(src / "core_banking" / "disputes.parquet"))
+    check_moves(dedup, cards, pd.read_parquet(src / "core_banking" / "accounts.parquet"), customers, to_unit)
+    check_terminals(dedup)
 
     assert not failures, f"{len(failures)} check(s) failed: {failures}"
     print("\nall checks passed")
