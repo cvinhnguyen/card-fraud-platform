@@ -120,7 +120,8 @@ services:
     profiles: [batch]
     container_name: spark-master
     hostname: spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    # the event log dir must exist before any driver starts (spark.eventLog.dir)
+    command: bash -c "mkdir -p /opt/spark/work-dir/events && exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master"
     environment:
       CORE_DB_USER: ${CORE_DB_USER}   # JDBC source, read by the job
       CORE_DB_PASSWORD: ${CORE_DB_PASSWORD}
@@ -141,12 +142,26 @@ services:
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on: [spark-master]
     environment:
-      SPARK_WORKER_CORES: 4
+      SPARK_WORKER_CORES: 8     # 12 on the host; skew only shows when the hot key is > 1/cores of the data
       SPARK_WORKER_MEMORY: 3g   # one 2g executor + headroom; the Docker VM has 8 GB
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
     ports:
       - "127.0.0.1:8081:8081"   # worker UI (executor logs)
+    volumes: *spark-volumes
+
+  # UI of finished Spark apps (stage timelines for the skew benchmark), read from the shared event log dir.
+  spark-history:
+    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    profiles: [batch]
+    container_name: spark-history
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    depends_on: [spark-master]
+    environment:
+      SPARK_DAEMON_MEMORY: 512m
+      SPARK_HISTORY_OPTS: -Dspark.history.fs.logDirectory=file:/opt/spark/work-dir/events
+    ports:
+      - "127.0.0.1:18080:18080"
     volumes: *spark-volumes
 
   # SQL endpoint for dbt-spark (novel idea 1). Own profile: while up it holds 2 cores / 1 GB on the worker,

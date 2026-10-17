@@ -63,11 +63,12 @@ docker compose -f infra/docker-compose.yaml --profile dbt up -d spark-thrift
 .venv/Scripts/dbt build --project-dir dbt --profiles-dir dbt
 ```
 
-UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, Trino http://127.0.0.1:8090. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
+UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
 
 Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 6 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data_characteristics.md](docs/data_characteristics.md).
 
 ## Docs
 - [Data characteristics](docs/data_characteristics.md): datasets, injected problems, measured numbers.
 - [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest, DP2 silver (dedup, unit normalization), dbt gold (SCD2 `dim_customer`).
+- [Spark optimization](docs/spark_optimization.md): merchant join skew, baseline vs salting vs AQE vs broadcast, skew level sweep.
 - Coming per phase: `flink_jobs.md`, `airflow.md`, `datahub.md`, `schema_design.md`, `storage_optimization.md`, `docker_optimization.md`.
