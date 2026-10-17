@@ -224,3 +224,29 @@ On the day June ends, more than half of June's frauds are still unknown; after 6
 the same in every version, so a training set built from mature rows does not depend on when it was built. Layer 2
 reads `VERSION AS OF` the version its model was trained on and filters to mature rows.
 
+## DP3: features (`spark/build_features.py`)
+
+```bash
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_features.py
+```
+
+`gold.feat_card_txn_stats_daily` is the offline source of the Feast feature view `card_txn_stats_daily` (Layer 2).
+One row per card and day D on which the card has a settled transaction: 7,618,305 rows, 129,214 cards, 117 s.
+
+| Feature | Window (days before D) | Mean |
+|---|---|---:|
+| `txn_count_30d` | 30 | 2.01 |
+| `distinct_merchants_30d` | 30 | 1.84 |
+| `avg_amount_90d`, `std_amount_90d` (VND) | 90 | 452,775 / 430,057 |
+| `ecom_ratio_90d` | 90 | 0.719 |
+| `foreign_txn_ratio_90d` (`currency != VND`) | 90 | 0.040 |
+| `dispute_count_180d` (disputes by `reported_ts`, any reason) | 180 | 0.043 |
+
+Every window ends at D-1 and `event_timestamp` is D 00:00, so the point-in-time join of a payment on day D never
+sees that payment or anything later. Payments earlier on the same day are left to the stream features (Flink, 1 hour
+windows). Disputes are counted on the day they were reported, not the day of the disputed payment: a dispute
+reported after D was unknown on D. `created` is the processing time (Feast uses it to break ties).
+
+Windows are `rangeBetween(-N, -1)` over the day number, on one row per card and day, so one sort per card serves all
+windows. The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
+`raw_disputes` with plain date filters, and all 500 match.

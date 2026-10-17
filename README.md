@@ -62,6 +62,7 @@ docker exec -it trino trino --execute "SELECT count(*) FROM delta.bronze.raw_tra
 # P4 gold: dbt-spark through the Spark Thrift Server
 docker compose -f infra/docker-compose.yaml --profile dbt up -d spark-thrift
 .venv/Scripts/dbt build --project-dir dbt --profiles-dir dbt
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_features.py   # DP3, reads gold
 ```
 
 UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
