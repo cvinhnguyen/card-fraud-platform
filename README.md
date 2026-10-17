@@ -37,6 +37,7 @@ infra/        docker-compose (profiles), secrets bootstrap, bucket/topic init
 generator/    synthetic source data + injected data problems, and the checks that prove them
 spark/        Spark jobs (mounted into the Spark containers at /opt/jobs)
 dbt/          dbt-spark project: gold models and tests
+sql/          Postgres serving SQL (indexes + EXPLAIN)
 docs/         one file per major part
 ```
 
@@ -74,4 +75,5 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - [Schema design](docs/schema_design.md): zones, naming, grain of every table, gold ER diagram.
 - [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest (schema evolution demos), DP2 silver (dedup, unit normalization, HCMC chart), dbt gold star schema, labels with label delay, DP3 features.
 - [Spark optimization](docs/spark_optimization.md): merchant join skew, baseline vs salting vs AQE vs broadcast, skew level sweep.
+- [Storage optimization](docs/storage_optimization.md): small files, partitioning, `OPTIMIZE` + Z-order on Delta; B-tree and BRIN indexes on the Postgres serving table.
 - Coming per phase: `flink_jobs.md`, `airflow.md`, `datahub.md`, `schema_design.md`, `storage_optimization.md`, `docker_optimization.md`.
