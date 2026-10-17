@@ -30,6 +30,7 @@ select
     t.auth_method,
     t.three_ds_version,
     t.amount_vnd,
+    t.currency,                            -- USD = cross-border (foreign merchant), amount_vnd already converted
     t.export_date,
     date_format(t.txn_date, 'yyyy-MM') as txn_month
 from txn t

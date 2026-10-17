@@ -7,7 +7,7 @@ Outputs stand in for another department's systems (loaded into Postgres / Seawee
   <output_dir>/stream/app_events/event_date=YYYY-MM-DD/part-0.parquet            (replayed by producer.py)
   <output_dir>/_truth/ato_sessions.parquet   generator ground truth for the checks, not a source system
 
-Problems injected in this version: merchant skew, txn_city skew, administrative
+Problems injected in this version: merchant skew, txn_city skew, cross-border online payments, administrative
 reorganization (63 old names -> 34 units), offline duplicates, schema evolution, SCD2,
 label delay, high cardinality; streaming late arrivals, duplicates and out-of-order events.
 All identifiers are random synthetic tokens; no real card numbers (PAN) are produced.
@@ -185,8 +185,8 @@ def gen_accounts_cards(rng, customers) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def gen_merchants(rng, cfg, p_units) -> tuple[pd.DataFrame, np.ndarray]:
-    """Super merchants first, then 20 ATM merchants and a long tail. Returns merchants and
-    the probability that a transaction goes to each merchant (the primary skew)."""
+    """Super merchants first, then 20 ATM merchants, a long tail and the foreign online merchants.
+    Returns merchants and the probability that a transaction goes to each merchant (the primary skew)."""
     sk = cfg["skew"]["merchant"]
     supers = pd.DataFrame(cfg["super_merchants"]).rename(columns={"name": "merchant_name"})
     n_other = cfg["volume"]["n_merchants"] - len(supers)
@@ -208,10 +208,27 @@ def gen_merchants(rng, cfg, p_units) -> tuple[pd.DataFrame, np.ndarray]:
         [merchants.is_online, merchants.mcc == 6011, np.arange(n) < sk["top_n_merchants"]],
         [0, t["atm_network"], t["chain"]], rng.integers(1, t["other_pos_max"] + 1, n))
 
+    foreign = gen_foreign_merchants(cfg)
+    f_share = cfg["foreign"]["share"]
     top = 1 / np.arange(1, sk["top_n_merchants"] + 1)
     tail = 1 / np.arange(1, n - sk["top_n_merchants"] + 1) ** 0.8
-    p = np.concatenate([sk["top_share"] * top / top.sum(), (1 - sk["top_share"]) * tail / tail.sum()])
-    return merchants, p
+    f_w = 1 / np.arange(1, len(foreign) + 1)
+    p = np.concatenate([sk["top_share"] * top / top.sum(), (1 - sk["top_share"] - f_share) * tail / tail.sum(),
+                        f_share * f_w / f_w.sum()])
+    return pd.concat([merchants, foreign], ignore_index=True), p
+
+
+def gen_foreign_merchants(cfg) -> pd.DataFrame:
+    """Cross-border online merchants (streaming, games, stores, travel). Own random stream, so the
+    domestic merchants stay unchanged. No city: they sit outside the 34 units."""
+    rng, f = np.random.default_rng([cfg["seed"], 3]), cfg["foreign"]
+    n, mcc = f["n_merchants"], rng.choice(list(f["mcc"]), f["n_merchants"])
+    country = pick(rng, f["countries"], n)
+    return pd.DataFrame({
+        "merchant_id": tokens("mer", rng, n),   # ponytail: separate draw, a clash with a domestic id is ~1e-5; check_data asserts uniqueness
+        "merchant_name": [f"{f['mcc'][m]} {i:03d} ({c})" for i, (m, c) in enumerate(zip(mcc, country))],
+        "mcc": mcc, "is_online": True, "city": None, "country": country, "_n_terminals": 0,
+    })
 
 
 def day_merchant_probs(cfg, p: np.ndarray, merchants: pd.DataFrame, day: pd.Timestamp) -> np.ndarray:
@@ -220,7 +237,8 @@ def day_merchant_probs(cfg, p: np.ndarray, merchants: pd.DataFrame, day: pd.Time
     years = (day - pd.Timestamp(cfg["period"]["start"])).days / 365.25
     keep = (1 - cfg["trends"]["atm_decline_per_year"]) ** years
     atm = (merchants.mcc == 6011).to_numpy()
-    rest = ~atm & (np.arange(len(p)) >= cfg["skew"]["merchant"]["top_n_merchants"])
+    domestic = (merchants.country == "VN").to_numpy()   # the foreign share stays fixed
+    rest = ~atm & domestic & (np.arange(len(p)) >= cfg["skew"]["merchant"]["top_n_merchants"])
     q = p.copy()
     q[rest] += p[atm].sum() * (1 - keep) * p[rest] / p[rest].sum()
     q[atm] *= keep
@@ -249,13 +267,14 @@ def add_auth_columns(df: pd.DataFrame, rng: np.random.Generator, cfg: dict) -> N
 
 
 def fraud_flags(rng, cfg, df: pd.DataFrame) -> np.ndarray:
-    """Mark fraud with a light, learnable signal: online, night, large amount and OTP payments are
+    """Mark fraud with a light, learnable signal: online, foreign, night, large amount and OTP payments are
     riskier. Weights are relative and rescaled so the day's average rate is `fraud_rate`.
     ponytail: independent multiplicative weights; richer fraud patterns (ATO, testing cards) come with Layer 2."""
     w_cfg, lab = cfg["labels"]["risk_weights"], cfg["labels"]
     w = (np.where(df.channel == "ecom", w_cfg["ecom"], 1.0)
          * np.where(df.txn_ts.dt.hour < 6, w_cfg["night"], 1.0)
          * np.where(df.amount_vnd > 5_000_000, w_cfg["high_amount"], 1.0))
+    w = w * np.where(df.currency != "VND", w_cfg["foreign"], 1.0)
     if "auth_method" in df:
         w = w * np.where(df.auth_method == "3ds_otp", w_cfg["otp"], 1.0)
     return rng.random(len(df)) < lab["fraud_rate"] * w / w.mean()
@@ -293,7 +312,8 @@ def gen_day(rng, cfg, day, n, first_id, cards, homes, merchants, p_merchant, p_u
         "txn_ts": txn_ts,
         "txn_city": to_source_names(unit, pd.Series(txn_ts), rng, cfg, backmap),
         "amount_vnd": amount.astype(np.int64),
-        "currency": "VND",
+        # Cross-border: the card network converts, so amount_vnd is what the statement shows.
+        "currency": np.where(merchants.country.to_numpy()[m] == "VN", "VND", "USD"),
         "channel": channel,
         "status": rng.choice(["settled", "reversed"], n, p=[0.985, 0.015]),
         # nightly settlement batch exports yesterday's transactions between 01:00 and 03:00

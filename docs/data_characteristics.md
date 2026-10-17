@@ -1,7 +1,7 @@
 # Data characteristics
 
 What the source data looks like at the default volume (~1 GB), and which problems it carries on purpose.
-Every number below is printed by `generator/check_data.py` (65 checks, all pass) on the data from
+Every number below is printed by `generator/check_data.py` (69 checks, all pass) on the data from
 `generator/generate.py` with `seed: 42`, period 2024-01-01 to 2026-10-15. These are the "before" numbers
 the later phases are measured against.
 
@@ -12,36 +12,37 @@ the later phases are measured against.
 | customers (SCD2 source, 100,000 customers) | Postgres `core_banking` | 1 | 193,207 | |
 | accounts | Postgres | 1 | 100,000 | |
 | cards | Postgres | 1 | 130,120 | |
-| merchants | Postgres | 1 | 5,000 | |
-| disputes (fraud labels) | Postgres | 1 | 31,357 | |
+| merchants (5,000 domestic + 200 foreign online) | Postgres | 1 | 5,200 | |
+| disputes (fraud labels) | Postgres | 1 | 31,364 | |
 | ref_province_mapping (63 → 34) | Postgres | 1 | 63 | |
-| *core banking tables total* | | 6 | 459,747 | 11.7 MB |
-| transactions (nightly export) | S3 `core-banking-export/transactions/export_date=*/` | 1,019 | 8,159,516 | 329.0 MB |
-| card_authorizations | Kafka topic, key `card_id` | 1,019 | 8,119,499 | 401.5 MB |
+| *core banking tables total* | | 6 | 459,954 | 11.6 MB |
+| transactions (nightly export) | S3 `core-banking-export/transactions/export_date=*/` | 1,019 | 8,159,516 | 327.6 MB |
+| card_authorizations | Kafka topic, key `card_id` | 1,019 | 8,119,499 | 402.2 MB |
 | app_events | Kafka topic, key `customer_id` | 1,019 | 4,822,745 | 224.0 MB |
 | *total* | | | | *~966 MB* |
 
 Sizes are Parquet on disk under `data/source/`. `_truth/ato_sessions.parquet` (21,789 ATO sessions) is
 ground truth for evaluation only and is never loaded into the platform.
 
-Generate: ~6.5 min, 0.31 GB RAM. Check: ~1 min, 4.24 GB RAM peak.
+Generate: ~7 min, 0.31 GB RAM. Check: 1 to 3.5 min (slower when the Spark containers are up), 4.24 GB RAM peak (measured before the `currency` column was added to the check).
 
 ## Problems in the batch sources
 
 | Problem | How it shows up | Measured | Fixed in |
 |---|---|---|---|
 | Duplicate rows | Nightly export re-run after a timeout: same `transaction_id`, later `created_ts` | 159,990 extra rows = 2.00% of 7,999,526 unique; 100% of duplicates have a later `created_ts` | P4 dedup (keep latest) |
-| Merchant skew | 10 super merchants (e-wallet top-up, ride-hailing, marketplace, convenience chains) | top-10 share 0.6998; biggest / median merchant = 9,071× | P4 salting / AQE skew join |
-| City skew | Shares on the 34 new units | Ho Chi Minh 0.5989, Ha Noi 0.1802, Da Nang 0.0502 | P4 / P5 partitioning, P6 hot key |
-| Province reorganization (63 → 34, from 2025-07-01) | Old names before the cutoff; 5% of legacy terminals keep sending old names after it | old-only names 19.66% before, 0.98% after; raw "Ho Chi Minh" share 0.4792 before the cutoff (a fake jump to 0.60 if not normalized) | P4 normalize via `ref_province_mapping` |
-| Schema evolution | `auth_method`, `three_ds_version` exist only in files from 2024-07-01 | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 29.98% of ecom, 3DS 2.2.0 84.99% | P3 / P4 `mergeSchema` |
+| Merchant skew | 10 super merchants (e-wallet top-up, ride-hailing, marketplace, convenience chains) | top-10 share 0.7000; biggest / median merchant = 10,012× | P4 salting / AQE skew join |
+| Cross-border online payments | 200 foreign merchants (digital content, games, online stores, travel, software; US / SG / IE / CN / GB), online only, `currency = USD`, `amount_vnd` already converted; `city` NULL | 4.01% of transactions; 100% online with a merchant outside VN | Layer 2 `foreign_txn_ratio_90d` |
+| City skew | Shares on the 34 new units | Ho Chi Minh 0.5993, Ha Noi 0.1802, Da Nang 0.0500 | P4 / P5 partitioning, P6 hot key |
+| Province reorganization (63 → 34, from 2025-07-01) | Old names before the cutoff; 5% of legacy terminals keep sending old names after it | old-only names 19.62% before, 0.99% after; raw "Ho Chi Minh" share 0.4797 before the cutoff (a fake jump to 0.60 if not normalized) | P4 normalize via `ref_province_mapping` |
+| Schema evolution | `auth_method`, `three_ds_version` exist only in files from 2024-07-01 | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 30.00% of ecom, 3DS 2.2.0 85.03% | P3 / P4 `mergeSchema` |
 | High cardinality | `terminal_id` on POS / ATM, null for ecom | 26,863 distinct | P5 bucketing, approx distinct |
 | SCD2 | Customers move (5%/yr), get rescored (10%/yr); on 2025-07-01 the core system relabels old province names | 56.45% of customers have >1 version; 16,635 spurious relabel versions (95.09% of old-name customers) | P4 SCD2 / snapshot logic |
-| As-of joins | A moved customer pays in the home unit valid at `txn_ts` | 96.68% of 1,107,359 post-move transactions | P4 point-in-time join |
-| Label delay | Disputes arrive 1 to 60 days after the transaction (truncated log-normal, median 14) | median 13.67 days; last-30-day fraud rate is 0.44× the mature rate (expected 0.48) | P4 / Layer 2 maturity window of 60 days |
-| Trend: ATM decline | ATM share of card payments falls 17%/yr | 2025 / 2024 = 0.8287 | Layer 2 drift monitoring |
+| As-of joins | A moved customer pays in the home unit valid at `txn_ts` | 97.08% of 1,107,271 post-move transactions | P4 point-in-time join |
+| Label delay | Disputes arrive 1 to 60 days after the transaction (truncated log-normal, median 14) | median 13.65 days; last-30-day fraud rate is 0.53× the mature rate (expected 0.48) | P4 / Layer 2 maturity window of 60 days |
+| Trend: ATM decline | ATM share of card payments falls 17%/yr | 2025 / 2024 = 0.8327 | Layer 2 drift monitoring |
 
-Labels: fraud rate on mature transactions 0.0030; ecom fraud rate is 3.85× non-ecom (a learnable signal).
+Labels: fraud rate on mature transactions 0.0030; ecom fraud rate is 4.18× non-ecom, and foreign payments 3.03× domestic ecom (learnable signals).
 
 ![Label delay histogram](images/label_delay.svg)
 
@@ -56,10 +57,10 @@ Both streams carry two timestamps: event time (`auth_ts`, `event_ts`) and arriva
 
 | Problem | How it shows up | Measured | Fixed in |
 |---|---|---|---|
-| Late events | 10% of POS payments come from offline terminals and arrive 5 to 30 min late | 214,892 late = 2.69% of all auths (9.99% of POS); on-time delay ≤ 2 s | P6 watermark 5 s + `allowed_lateness` 30 min + side output |
+| Late events | 10% of POS payments come from offline terminals and arrive 5 to 30 min late | 191,295 late = 2.39% of all auths (9.98% of POS); on-time delay ≤ 2 s | P6 watermark 5 s + `allowed_lateness` 30 min + side output |
 | Duplicates | Network retry without an ack: same `auth_id`, `received_ts` 1 to 10 s later | 1.50% extra rows; duplicates differ only in `received_ts` | P6 keyed dedup on `auth_id` with state TTL, before any count |
 | Join key to batch | `auth_id` shares the counter with `transaction_id` | 7,999,526 unique auths = unique transactions, 100% match | Layer 2 auth → transaction → dispute label |
-| Device signal | `device_id` on ecom only; fraud always uses a device new to the card | 169,820 distinct devices; new device: fraud 100%, legit 3.55% | Layer 2 realtime feature |
+| Device signal | `device_id` on ecom only; fraud always uses a device new to the card | 170,459 distinct devices; new device: fraud 100%, legit 3.37% | Layer 2 realtime feature |
 
 ### app_events
 

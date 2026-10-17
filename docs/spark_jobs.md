@@ -1,6 +1,6 @@
 # Spark jobs
 
-Spark 4.1.3 standalone (1 master, 1 worker with 4 cores / 3 GB), Delta Lake 4.4.1, Hive Metastore 3.1.3, Trino 484.
+Spark 4.1.3 standalone (1 master, 1 worker with 8 cores / 3 GB), Delta Lake 4.4.1, Hive Metastore 3.1.3, Trino 484.
 Jobs live in `spark/` and run inside the `spark-master` container (compose profile `batch`).
 
 ## DP1: source to bronze (`spark/ingest_bronze.py`)
@@ -27,8 +27,8 @@ Result (2026-10-17, 1 GB data):
 | raw_customers | 193,207 |
 | raw_cards | 130,120 |
 | raw_accounts | 100,000 |
-| raw_disputes | 31,357 |
-| raw_merchants | 5,000 |
+| raw_disputes | 31,364 |
+| raw_merchants | 5,200 |
 | raw_ref_province_mapping | 63 |
 
 `SELECT count(*) FROM delta.bronze.raw_transactions` on Trino returns 8,159,516, the number of rows the generator wrote.
@@ -45,9 +45,9 @@ Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns
 
 | Step | Command | Result |
 |---|---|---|
-| 1 | `--until 2024-07-01` | +178 export dates, 1,455,416 rows, table without the auth columns (89 s) |
+| 1 | `--until 2024-07-01` | +182 export dates, 1,455,416 rows, table without the auth columns (82 s) |
 | 2 | `--until 2024-07-02 --no-merge-schema` | fails: `[DELTA_METADATA_MISMATCH] A schema mismatch detected when writing to the Delta table`, nothing written |
-| 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows (132 s) |
+| 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows (132 s; 510 s on a run where the machine was short of RAM) |
 
 After step 3, Trino shows the auth columns filled for every row exported after the cutoff and NULL before it:
 
@@ -83,30 +83,30 @@ The job stops if a city name is missing from `ref_province_mapping` (no silent N
 Only bronze export dates newer than the newest `export_date` in silver are read. The batch is deduplicated, then
 `MERGE`d on `transaction_id`: an id already in silver is replaced only by a row with a later `created_ts`, so a re-run,
 or a duplicate that lands in a later export, cannot double count. Test: deleting the last 6 export dates from silver
-(47,226 rows) and re-running the job merged exactly 47,226 rows back (7,999,526 total, 69 s).
+(47,226 rows) and re-running the job merged exactly 47,226 rows back (7,999,526 total, 64 s).
 
-### Before / after (full build, 148 s)
+### Before / after (full build, 146 s)
 
 | Measure | Bronze (before) | Silver (after) |
 |---|---:|---:|
 | Rows | 8,159,516 | 7,999,526 |
 | Distinct `transaction_id` | 7,999,526 | 7,999,526 |
-| Settled spend (VND) | 3,682,960,413,000 | 3,611,008,776,000 |
+| Settled spend (VND) | 3,625,268,094,000 | 3,554,102,498,000 |
 | NULL `auth_method` | 1,455,416 | 0 (1,426,881 rows `unknown_pre_regulation`) |
 
-Without dedup the settled spend is overcounted by 1.99%. 879,837 rows (11.00%) carry a location name that maps to a
+Without dedup the settled spend is overcounted by 2.00%. 878,795 rows (10.99%) carry a location name that maps to a
 different unit (old province names before 2025-07-01, plus stale names after it).
 
 Ho Chi Minh City around the reorganization (settled spend, billion VND; share of rows):
 
 | Month | By raw name | By `txn_unit` | Binh Duong (raw) | Share raw | Share unit |
 |---|---:|---:|---:|---:|---:|
-| 2025-05 | 52.1 | 65.0 | 8.4 | 48.0% | 59.9% |
-| 2025-06 | 50.9 | 63.6 | 8.3 | 47.9% | 59.9% |
-| 2025-07 | 64.8 | 65.5 | 0.5 | 59.4% | 60.0% |
-| 2025-08 | 64.4 | 65.0 | 0.4 | 59.2% | 59.7% |
+| 2025-05 | 51.9 | 64.9 | 8.5 | 47.8% | 59.9% |
+| 2025-06 | 49.7 | 62.0 | 8.0 | 48.0% | 60.0% |
+| 2025-07 | 63.5 | 64.1 | 0.4 | 59.5% | 60.1% |
+| 2025-08 | 64.1 | 64.7 | 0.4 | 59.3% | 59.9% |
 
-By raw name, HCMC "grows" 27% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat: nothing
+By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat: nothing
 changed physically, only the labels.
 
 ## Gold with dbt-spark (`dbt/`, novel idea 1)
@@ -143,8 +143,8 @@ customer follow each other without gaps or overlaps.
 
 ### Point-in-time join
 
-An online payment's `txn_city` is the card holder's home unit at payment time. For the 15,391 customers who moved,
-joining their 944,529 ecom payments to `dim_customer`:
+An online payment's `txn_city` is the card holder's home unit at payment time. For the 15,393 customers who moved,
+joining their 977,652 settled ecom payments to `dim_customer`:
 
 | Join | Home unit matches `txn_unit` |
 |---|---:|
@@ -157,22 +157,22 @@ Joining on the current version puts every payment made before a move in the wron
 
 | Model | Grain | Rows | Built from |
 |---|---|---:|---|
-| `fact_transaction` (incremental `MERGE`, partitioned by `txn_month`) | one settled transaction | 7,879,338 | `stg_transactions` |
+| `fact_transaction` (incremental `MERGE`, partitioned by `txn_month`) | one settled transaction | 7,879,773 (315,913 in USD) | `stg_transactions` |
 | `dim_customer` (SCD2) | one customer version | 144,167 | `stg_customers` |
 | `dim_card` | one card, with its account and owner | 130,120 | `raw_cards` + `raw_accounts` |
-| `dim_merchant` | one merchant | 5,000 | `raw_merchants` |
+| `dim_merchant` | one merchant (`merchant_unit` NULL for the 200 foreign ones) | 5,200 | `raw_merchants` |
 | `dim_date` | one day, 2024-01-01 to 2026-10-15 | 1,019 | generated |
 
-Reversed transactions (120,188) are left out: no money moved. Fraud labels are not in the fact because they change
+Reversed transactions (119,753) are left out: no money moved. Fraud labels are not in the fact because they change
 after it is written; they live in `gold.label_transaction` (below). `fact_transaction.customer_sk` is resolved with the
 point-in-time join when the row is built, so a query joins `dim_customer` on `customer_sk` without a date range.
 The two small reference tables need no cleaning, so `dim_card` and `dim_merchant` read bronze directly.
 
 Tests (`dbt build`, 27/27 pass): unique / not-null keys, every fact key found in its dimension (`relationships`), and
-`fact_transaction` has the same row count and settled spend as silver (7,879,338 rows, 3,611,008,776,000 VND).
+`fact_transaction` has the same row count and settled spend as silver (7,879,773 rows, 3,554,102,498,000 VND).
 
-Incremental load: a full refresh of the fact takes 60 s. Deleting the last 5 export dates (46,519 rows) and running
-`dbt run --select fact_transaction` again `MERGE`d exactly 46,519 rows back in 21 s, with no file rewritten.
+Incremental load: a full refresh of the fact takes 60 s. Deleting the last 5 export dates (38,752 rows) and running
+`dbt run --select fact_transaction` again `MERGE`d exactly 38,752 rows back in 25 s, with no file rewritten.
 
 The Thrift Server runs with `spark.databricks.delta.optimizeMetadataQuery.enabled=false`: Delta answers
 `min/max` of a date column from file statistics as `java.sql.Date`, while the Thrift Server uses the Java 8 time API,
@@ -202,24 +202,25 @@ Replay, one run per month end (about 60 s each):
 | Version | `label_as_of` | New rows | Labels flipped | Files removed / added |
 |---:|---|---:|---:|---|
 | 0 | 2026-06-30 | 7,159,417 | | 0 / 30 |
-| 1 | 2026-07-31 | 243,823 | 369 | 2 / 3 |
-| 2 | 2026-08-31 | 242,706 | 356 | 2 / 3 |
-| 3 | 2026-09-30 | 235,497 | 346 | 2 / 3 |
-| 4 | 2026-10-15 | 118,083 | 260 | 2 / 3 |
+| 1 | 2026-07-31 | 243,823 | 409 | 2 / 3 |
+| 2 | 2026-08-31 | 242,706 | 381 | 2 / 3 |
+| 3 | 2026-09-30 | 235,497 | 356 | 2 / 3 |
+| 4 | 2026-10-15 | 118,083 | 287 | 2 / 3 |
 
-The final table has 7,999,526 rows (= `stg_transactions`) and 23,475 frauds (= confirmed fraud disputes).
+The final table has 7,999,526 rows (= `stg_transactions`) and 23,594 frauds (= confirmed fraud disputes).
 
 The fraud rate of June 2026 transactions, read from each version, versus the rate of mature rows only
 (`event_timestamp < label_as_of - 60 days`):
 
 | Version (`label_as_of`) | June 2026 fraud rate | Mature rows | Mature fraud rate |
 |---|---:|---:|---:|
-| 0 (2026-06-30) | 0.140% | 6,680,600 | 0.300% |
-| 1 (2026-07-31) | 0.286% | 6,924,346 | 0.299% |
-| 2 (2026-08-31) | 0.295% | 7,167,311 | 0.299% |
-| 3 (2026-09-30) | 0.295% | 7,403,240 | 0.299% |
-| 4 (2026-10-15) | 0.295% | 7,520,544 | 0.299% |
+| 0 (2026-06-30) | 0.141% | 6,680,600 | 0.2999% |
+| 1 (2026-07-31) | 0.302% | 6,924,346 | 0.2995% |
+| 2 (2026-08-31) | 0.311% | 7,167,311 | 0.3000% |
+| 3 (2026-09-30) | 0.311% | 7,403,240 | 0.3000% |
+| 4 (2026-10-15) | 0.311% | 7,520,544 | 0.2999% |
 
-On the day June ends, half of June's frauds are still unknown; after 60 days the rate stops moving. The mature rate is
+On the day June ends, more than half of June's frauds are still unknown; after 60 days the rate stops moving. The mature rate is
 the same in every version, so a training set built from mature rows does not depend on when it was built. Layer 2
 reads `VERSION AS OF` the version its model was trained on and filters to mature rows.
+

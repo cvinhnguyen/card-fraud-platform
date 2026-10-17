@@ -40,7 +40,7 @@ def read_merged(export_dir: Path, schemas: list[pa.Schema]) -> pd.DataFrame:
     part = pa.schema([("export_date", pa.string())])
     merged = pa.unify_schemas(schemas).append(part.field(0))
     dataset = ds.dataset(export_dir, schema=merged, partitioning=ds.partitioning(part, flavor="hive"))
-    unused = {"currency", "status", "export_date"}   # not checked; skipping them saves memory at 1 GB
+    unused = {"status", "export_date"}   # not checked; skipping them saves memory at 1 GB
     return dataset.to_table(columns=[c for c in merged.names if c not in unused]).to_pandas()
 
 
@@ -117,6 +117,9 @@ def check_labels(cfg: dict, dedup: pd.DataFrame, disputes: pd.DataFrame) -> None
     print(f"      expected {expected:.2f} from the delay distribution, {recent.sum():,} recent transactions")
     ecom = dedup.channel == "ecom"
     check("fraud rate ecom / non-ecom (learnable signal)", is_fraud[mature & ecom].mean() / is_fraud[mature & ~ecom].mean(), 1.5, float("inf"))
+    foreign = dedup.currency != "VND"
+    check("fraud rate foreign / domestic ecom (learnable signal)",
+          is_fraud[mature & foreign].mean() / is_fraud[mature & ecom & ~foreign].mean(), 1.5, float("inf"))
 
 
 def check_moves(dedup: pd.DataFrame, cards: pd.DataFrame, accounts: pd.DataFrame, customers: pd.DataFrame, to_unit: dict) -> None:
@@ -299,6 +302,14 @@ def main(config_path: Path) -> None:
     top_n, top_share = cfg["skew"]["merchant"]["top_n_merchants"], cfg["skew"]["merchant"]["top_share"]
     check(f"top-{top_n} merchant share", counts.head(top_n).sum() / len(dedup), top_share - 0.02, top_share + 0.02)
     check("biggest merchant / median merchant rows", counts.iloc[0] / counts.median(), 100, float("inf"))
+    check("merchant_id unique", merchants.merchant_id.is_unique, 1, 1)
+
+    # Cross-border online payments: foreign merchant, USD, always online.
+    foreign, f_share = dedup.currency.ne("VND"), cfg["foreign"]["share"]
+    check("foreign transaction share", foreign.mean(), f_share - 0.005, f_share + 0.005)
+    country = dedup.merchant_id[foreign].map(merchants.set_index("merchant_id").country)
+    check("foreign transactions: merchant outside VN and online (share)",
+          (country.ne("VN") & dedup.channel[foreign].eq("ecom")).mean(), 1, 1)
 
     # Trend: ATM share of card payments shrinks every year.
     atm, year = dedup.channel.eq("atm"), dedup.txn_ts.dt.year
@@ -324,8 +335,8 @@ def main(config_path: Path) -> None:
 
     check_schema_evolution(cfg, files, schemas, dedup)
     check_terminals(dedup)
-    # The remaining checks need six columns; dropping the rest frees ~40% of the frame at 1 GB.
-    dedup = dedup[["transaction_id", "card_id", "amount_vnd", "channel", "txn_city", "txn_ts"]]
+    # The remaining checks need seven columns; dropping the rest frees ~40% of the frame at 1 GB.
+    dedup = dedup[["transaction_id", "card_id", "amount_vnd", "channel", "currency", "txn_city", "txn_ts"]]
     free()
     check_scd2(cfg, customers, to_unit, new_units)
     disputes = pd.read_parquet(src / "core_banking" / "disputes.parquet")

@@ -14,19 +14,20 @@ warm up, then 3 times; the table shows the median. Task numbers come from the sl
 
 | Method | What changes | Median (s) | Runs (s) | Slowest task | Median task |
 |---|---|---:|---|---:|---:|
-| baseline | sort-merge join, AQE off, broadcast off | 42.0 | 46.1, 42.0, 41.3 | 16.2 s | 0.13 s |
-| salting | merchant_id + random salt 0..31, merchants copied 32 times | 38.7 | 38.2, 38.8, 38.7 | 2.0 s | 1.49 s |
-| AQE skew join | `spark.sql.adaptive.enabled`, skew threshold 8 MB | 32.7 | 33.2, 32.7, 32.7 | 1.9 s | 1.32 s |
-| broadcast | merchants (5k rows) sent to every executor | 19.7 | 19.7, 19.7, 19.8 | 1.3 s | 1.09 s |
+| baseline | sort-merge join, AQE off, broadcast off | 51.2 | 53.5, 51.2, 48.9 | 17.4 s | 0.15 s |
+| salting | merchant_id + random salt 0..31, merchants copied 32 times | 45.5 | 45.8, 45.5, 44.8 | 2.2 s | 1.80 s |
+| AQE skew join | `spark.sql.adaptive.enabled`, skew threshold 8 MB | 38.0 | 35.8, 38.0, 38.6 | 2.1 s | 1.68 s |
+| broadcast | merchants (5.2k rows) sent to every executor | 23.9 | 24.1, 23.2, 23.9 | 1.5 s | 1.35 s |
 
 For salting, AQE and broadcast the slowest stage is the scan of the transactions, not the join: the skew is gone.
-Broadcast's 19.7 s is roughly the cost of reading the data, so the join itself costs about 22 s in the baseline,
-19 s with salting, 13 s with AQE and almost nothing with broadcast.
+Broadcast's 23.9 s is roughly the cost of reading the data, so the join itself costs about 27 s in the baseline,
+22 s with salting, 14 s with AQE and almost nothing with broadcast.
 
 ### Baseline: one task reads the hot key
 
-200 shuffle partitions; the task that gets the biggest merchant reads 453 MB (7.7M rows) while the median task reads
-3.5 MB, runs 16 s instead of 0.1 s and spills 2.4 GB. The other 7 cores sit idle while it runs.
+200 shuffle partitions; the task that gets the biggest merchant reads 451 MB (7.7M rows) and runs 17.4 s, while the
+median task runs 0.15 s. The other 7 cores sit idle while it runs. The screenshots are from the run before the 200
+foreign merchants were added (same pattern: 453 MB read, 16 s, 2.4 GB spilled, median task 3.5 MB).
 
 ![Baseline join stage: event timeline](images/skew_baseline_timeline.png)
 
@@ -34,8 +35,8 @@ Broadcast's 19.7 s is roughly the cost of reading the data, so the join itself c
 
 ### AQE: the hot partition is split at run time
 
-AQE sees the oversized shuffle partitions and splits them (325 tasks instead of 200). The largest task reads 17 MB,
-the slowest runs 0.5 s, nothing spills.
+AQE sees the oversized shuffle partitions and splits them (325 tasks instead of 200 in the screenshot run). The largest
+task reads 17 MB, the slowest join task runs 0.5 s, nothing spills.
 
 ![AQE join stage: event timeline](images/skew_aqe_timeline.png)
 
@@ -43,7 +44,7 @@ the slowest runs 0.5 s, nothing spills.
 
 ### Which fix, in which order
 
-1. **Broadcast** when one side is small. `merchants` is 5k rows, far below Spark's 10 MB auto-broadcast threshold, so
+1. **Broadcast** when one side is small. `merchants` is 5.2k rows, far below Spark's 10 MB auto-broadcast threshold, so
    with default settings this join is broadcast and never skews. The benchmark turns automatic broadcast off on purpose
    to show the problem.
 2. **AQE** for large-to-large joins: configuration only, no code change. Its defaults (a partition is skewed above
@@ -65,17 +66,19 @@ everything else.
 
 `--top-shares 0.3,0.6,0.8` re-assigns `merchant_id` in memory so the top 10 merchants get 30%, 60% or 80% of the rows
 (rows moved into the top group are spread evenly over the 10, so the biggest merchant is smaller than in the generated
-data). The re-assignment is recomputed in every run and changes the plan (AQE is about 5 s slower than on the
-generated data, broadcast about 1.5 s faster), so compare methods within a row, not across rows. Median of 3 runs, seconds; 8 cores, 32M rows.
+data). The re-assignment is recomputed in every run and changes the plan (broadcast is about 4.5 s faster than on the
+generated data), so compare methods within a row, not across rows. Median of 3 runs, seconds; 8 cores, 32M rows.
 
 | Top-10 share | Biggest merchant | Baseline | Salting | AQE | Broadcast | Baseline slowest task |
 |---|---:|---:|---:|---:|---:|---:|
-| 30% | 8.1% | 38.9 | 40.4 | 37.5 | 18.6 | 7.4 s |
-| 60% | 16.2% | 45.2 | 39.3 | 38.4 | 18.8 | 17.8 s |
-| 80% | 21.5% | 46.1 | 38.6 | 37.4 | 18.4 | 18.0 s |
-| 70% (as generated, no re-assignment) | 23.9% | 41.9 | 38.6 | 32.4 | 20.1 | 16.0 s |
+| 30% | 8.1% | 44.4 | 44.4 | 38.7 | 19.3 | 9.2 s |
+| 60% | 16.1% | 45.9 | 41.7 | 37.7 | 19.9 | 15.8 s |
+| 80% | 21.5% | 48.6 | 42.4 | 38.1 | 18.7 | 19.4 s |
+| 70% (as generated, no re-assignment) | 23.9% | 51.2 | 45.5 | 38.0 | 23.9 | 17.4 s |
 
-- At 30% the biggest key (8.1%) is below one core's fair share (12.5%): baseline and AQE are within 1.4 s, and salting
-  is the slowest because it pays for the extra column and the 32 copies of `merchants` without having anything to fix.
-- From 60% the hot key exceeds the fair share: baseline grows by 6–7 s while salting and AQE stay flat.
+- At 30% the biggest key (8.1%) is below one core's fair share (12.5%). Salting gains nothing over the baseline
+  (44.4 s both): what it saves on the hot task it pays back for the extra column and the 32 copies of `merchants`.
+  AQE is still 5.7 s faster, because the baseline's slowest task still reads 175 MB (9.2 s) and AQE splits it.
+- From 60% the hot key exceeds the fair share: the baseline grows by 1.5–4 s per step while salting and AQE stay
+  within a second of each other.
 - Broadcast does not depend on skew at all, because the transactions are never shuffled.

@@ -19,4 +19,4 @@ sources:
       - name: raw_cards
       - name: raw_accounts
       - name: raw_merchants
-        description: city is already one of the 34 units.
+        description: city is already one of the 34 units (NULL for foreign merchants).

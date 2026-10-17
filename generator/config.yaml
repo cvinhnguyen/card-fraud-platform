@@ -35,6 +35,12 @@ reorganization:
   back_map_weights:              # overrides per new unit (old name -> weight)
     Ho Chi Minh: {Ho Chi Minh: 0.80, Binh Duong: 0.13, Ba Ria-Vung Tau: 0.07}
 
+foreign:                         # cross-border online payments: card-not-present abroad, the riskiest channel
+  share: 0.04                    # of transactions, taken from the domestic long tail (the top-10 skew stays 0.70)
+  n_merchants: 200               # on top of volume.n_merchants; Zipf-like popularity, online only, currency USD
+  countries: {US: 0.45, SG: 0.20, IE: 0.15, CN: 0.10, GB: 0.10}
+  mcc: {5815: Digital Content, 5816: Online Games, 5311: Online Store, 4722: Travel Booking, 5734: Software}
+
 duplicates:
   offline_rate: 0.02             # nightly export re-run after timeout
 
@@ -52,7 +58,7 @@ labels:                          # disputes table + label delay
   fraud_rate: 0.003
   non_fraud_dispute_rate: 0.001  # disputes that end up not fraud (not received, duplicate charge, ...)
   dispute_delay_days: {median: 14, p95: 45, min: 1, max: 60}   # truncated log-normal
-  risk_weights: {ecom: 3.0, night: 2.0, high_amount: 2.0, otp: 1.5}   # relative fraud risk, normalized to fraud_rate
+  risk_weights: {ecom: 3.0, night: 2.0, high_amount: 2.0, otp: 1.5, foreign: 3.0}   # relative fraud risk, normalized to fraud_rate
 
 devices:                         # customers' phones, shared by online card payments and app sessions (device_id)
   extra_per_customer: 0.5        # 1 + Poisson(0.5) phones per customer
