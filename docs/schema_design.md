@@ -49,12 +49,12 @@ Columns: `snake_case`; timestamps end in `_ts` (`txn_ts`, `valid_from_ts`); surr
 
 ```mermaid
 erDiagram
-    dim_customer ||--o{ fact_transaction : "customer_sk (version valid at txn_ts)"
+    dim_card ||--o{ feat_card_txn_stats_daily : card_id
     dim_card ||--o{ fact_transaction : card_id
+    dim_customer ||--o{ fact_transaction : "customer_sk (version valid at txn_ts)"
     dim_merchant ||--o{ fact_transaction : merchant_id
     dim_date ||--o{ fact_transaction : date_key
     label_transaction ||--o| fact_transaction : "transaction_id (reversed txns have no fact row)"
-    dim_card ||--o{ feat_card_txn_stats_daily : card_id
 
     fact_transaction {
         string transaction_id PK
