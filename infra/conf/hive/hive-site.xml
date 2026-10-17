@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Hive Metastore config. ${env.X} is read from the container env (values come from infra/.env). -->
+<configuration>
+  <property><name>javax.jdo.option.ConnectionDriverName</name><value>org.postgresql.Driver</value></property>
+  <property><name>javax.jdo.option.ConnectionURL</name><value>jdbc:postgresql://metastore-db:5432/metastore</value></property>
+  <property><name>javax.jdo.option.ConnectionUserName</name><value>hive</value></property>
+  <property><name>javax.jdo.option.ConnectionPassword</name><value>${env.METASTORE_DB_PASSWORD}</value></property>
+  <property><name>metastore.warehouse.dir</name><value>s3a://lakehouse/warehouse</value></property>
+  <property><name>metastore.metastore.event.db.notification.api.auth</name><value>false</value></property>
+  <!-- S3 credentials: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the container env -->
+  <property><name>fs.s3a.endpoint</name><value>http://seaweedfs:8333</value></property>
+  <property><name>fs.s3a.path.style.access</name><value>true</value></property>
+  <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+</configuration>

@@ -35,6 +35,7 @@ Diagram sources: `docs/diagrams/layer1-overview.html` (open in a browser) and `d
 ```
 infra/        docker-compose (profiles), secrets bootstrap, bucket/topic init
 generator/    synthetic source data + injected data problems, and the checks that prove them
+spark/        Spark jobs (mounted into the Spark containers at /opt/jobs)
 docs/         one file per major part
 ```
 
@@ -49,9 +50,18 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 .venv/Scripts/python generator/check_data.py                  # assert every injected problem
 .venv/Scripts/python generator/load_source.py                 # Postgres core_banking (127.0.0.1:5433) + s3://core-banking-export
 .venv/Scripts/python generator/producer.py --speed 200            # replay card_authorizations into Kafka (--topic app_events, --replay-from, --limit)
+
+# P3: Spark + Hive Metastore + Trino, then DP1 (source -> bronze Delta tables)
+docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py
+docker exec -it trino trino --execute "SELECT count(*) FROM delta.bronze.raw_transactions"
 ```
+
+UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, Trino http://127.0.0.1:8090. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
 
 Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 6 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data_characteristics.md](docs/data_characteristics.md).
 
 ## Docs
-- Coming per phase: `data_characteristics.md`, `spark_jobs.md`, `flink_jobs.md`, `airflow.md`, `datahub.md`, `schema_design.md`, `storage_optimization.md`, `docker_optimization.md`.
+- [Data characteristics](docs/data_characteristics.md): datasets, injected problems, measured numbers.
+- [Spark jobs](docs/spark_jobs.md): DP1 ingest to bronze, incremental load, schema evolution demo.
+- Coming per phase: `flink_jobs.md`, `airflow.md`, `datahub.md`, `schema_design.md`, `storage_optimization.md`, `docker_optimization.md`.

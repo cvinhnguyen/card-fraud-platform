@@ -41,11 +41,11 @@ with Diagram("Layer 1 deployment · docker compose project `fraud`", filename=st
             s3 = Storage("seaweedfs:4.48\nS3 :8333 · filer :8888")
             kafka = Kafka("apache/kafka:3.9.0\nKRaft :9092")
 
-        with profile("batch · P3–P4", False):
-            spark = Spark("Spark master\n+ 2 workers")
-            thrift = Dbt("Spark Thrift Server\n← dbt-spark")
-            hms = Hive("Hive Metastore")
-            trino = Trino("Trino")
+        with profile("batch · P3–P4 · running", True):
+            spark = Spark("Spark 4.1 master\n+ 1 worker · Delta 4.4")
+            thrift = Dbt("Spark Thrift Server (P4)\n← dbt-spark")
+            hms = Hive("Hive Metastore 3.1\n+ its Postgres")
+            trino = Trino("Trino :8090")
 
         with profile("stream · P6", False):
             flink = Flink("Flink · JobManager + TaskManager\nraw events → bronze (s3a)")

@@ -2,12 +2,14 @@
 #
 # Profiles keep RAM usage inside 16 GB: start only what the current phase needs.
 #   core  : postgres (core banking, "another department") + seaweedfs (S3 lake) + kafka
-#   (next) batch / stream / orch / gov
+#   batch : spark master + worker, hive metastore (+ its postgres), trino; needs core running
+#   (next) stream / orch / gov
 #
 # Usage (from repo root):
 #   python infra/make_env.py                       # once: secrets into infra/.env + s3.json
 #   docker compose -f infra/docker-compose.yaml --profile core up -d
 #   python infra/init_infra.py                     # buckets + topics
+#   docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
 
 name: fraud
 
@@ -74,9 +76,98 @@ services:
       retries: 10
       start_period: 20s
 
+  # ---------- batch (P3-P4) ----------
+
+  # Hive Metastore backend. Ours, so it is not inside the core banking database.
+  metastore-db:
+    image: postgres:16-alpine
+    profiles: [batch]
+    container_name: metastore-db
+    environment:
+      POSTGRES_DB: metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: ${METASTORE_DB_PASSWORD}
+    volumes:
+      - metastore_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore"]
+      interval: 10s
+      retries: 5
+
+  # Table catalog shared by Spark (and later Spark Thrift Server / dbt) and Trino.
+  hive-metastore:
+    build: ./hive
+    image: fraud/hive-metastore:3.1.3
+    profiles: [batch]
+    container_name: hive-metastore
+    depends_on:
+      metastore-db: {condition: service_healthy}
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: -Xmx512m
+      METASTORE_DB_PASSWORD: ${METASTORE_DB_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - ./conf/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+
+  # Spark standalone. Jobs run with `docker compose exec spark-master /opt/spark/bin/spark-submit /opt/jobs/<job>.py`,
+  # so the driver lives in this container (UI on :4040 while a job runs).
+  spark-master:
+    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    profiles: [batch]
+    container_name: spark-master
+    hostname: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      CORE_DB_USER: ${CORE_DB_USER}   # JDBC source, read by the job
+      CORE_DB_PASSWORD: ${CORE_DB_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "127.0.0.1:8080:8080"   # master UI
+      - "127.0.0.1:4040:4040"   # driver UI
+    volumes: &spark-volumes
+      - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ../spark:/opt/jobs:ro
+      - spark_ivy:/opt/spark/work-dir   # Maven jars cache (spark.jars.ivy); spark-owned dir in the image
+
+  spark-worker:
+    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    profiles: [batch]
+    container_name: spark-worker
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on: [spark-master]
+    environment:
+      SPARK_WORKER_CORES: 4
+      SPARK_WORKER_MEMORY: 3g   # one 2g executor + headroom; the Docker VM has 8 GB
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "127.0.0.1:8081:8081"   # worker UI (executor logs)
+    volumes: *spark-volumes
+
+  # SQL over the lakehouse through the metastore: catalog `delta`.
+  trino:
+    image: trinodb/trino:484
+    profiles: [batch]
+    container_name: trino
+    depends_on: [hive-metastore]
+    mem_limit: 2g   # JVM heap = 80% of this
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "127.0.0.1:8090:8080"   # 8080 is the Spark master UI
+    volumes:
+      - ./conf/trino/catalog:/etc/trino/catalog:ro
+
 # ponytail: named volumes live in Docker's WSL disk. Before the 100 GB phase, move Docker Desktop's
 # disk image to E: (Settings → Resources → Advanced → Disk image location) instead of bind-mounting NTFS.
 volumes:
   postgres_data:
   seaweedfs_data:
   kafka_data:
+  metastore_db_data:
+  spark_ivy:
