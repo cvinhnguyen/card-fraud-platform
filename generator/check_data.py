@@ -1,12 +1,15 @@
 """Verify that the generated source data really contains the injected problems.
 
 Every check is an assert with a tolerance. The printed metrics feed docs/data_characteristics.md.
+ponytail: pandas in memory, ~4.3 GB RAM and ~1 min at the 1 GB volume; the 100 GB run (P9) checks with Spark.
 Usage: python generator/check_data.py [--config generator/config.yaml]
 """
 import argparse
+import gc
 from math import erf, log, sqrt
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
@@ -16,6 +19,12 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 MAPPING_CSV = Path(__file__).parent / "ref" / "province_mapping.csv"
 failures: list[str] = []
+
+
+def free() -> None:
+    """Give freed memory back to the OS; Arrow's pool keeps it otherwise and numpy cannot reuse it."""
+    gc.collect()
+    pa.default_memory_pool().release_unused()
 
 
 def check(name: str, value: float, lo: float, hi: float) -> None:
@@ -31,7 +40,8 @@ def read_merged(export_dir: Path, schemas: list[pa.Schema]) -> pd.DataFrame:
     part = pa.schema([("export_date", pa.string())])
     merged = pa.unify_schemas(schemas).append(part.field(0))
     dataset = ds.dataset(export_dir, schema=merged, partitioning=ds.partitioning(part, flavor="hive"))
-    return dataset.to_table().to_pandas()
+    unused = {"currency", "status", "export_date"}   # not checked; skipping them saves memory at 1 GB
+    return dataset.to_table(columns=[c for c in merged.names if c not in unused]).to_pandas()
 
 
 def check_schema_evolution(cfg: dict, files: list[Path], schemas: list[pa.Schema], dedup: pd.DataFrame) -> None:
@@ -46,16 +56,17 @@ def check_schema_evolution(cfg: dict, files: list[Path], schemas: list[pa.Schema
     check("files before cutoff without auth columns (share)", sum(not h for h, n in zip(has_cols, new_file) if not n) / max(1, new_file.count(False)), 1, 1)
     check("files after cutoff with auth columns (share)", sum(h for h, n in zip(has_cols, new_file) if n) / max(1, new_file.count(True)), 1, 1)
 
-    before, after = dedup[dedup.txn_ts < cutoff], dedup[dedup.txn_ts >= cutoff]
-    check("auth_method null before cutoff (share)", before.auth_method.isna().mean(), 1, 1)
-    allowed = after.channel.map({ch: set(shares) for ch, shares in se["auth_method"].items()})
-    check("auth_method valid for its channel (share)", pd.Series([m in a for m, a in zip(after.auth_method, allowed)]).mean(), 1, 1)
-    ecom = after.channel == "ecom"
+    # Masks, not filtered copies of the frame: at 1 GB each copy costs about 1 GB of RAM.
+    after = (dedup.txn_ts >= cutoff).to_numpy()
+    check("auth_method null before cutoff (share)", dedup.auth_method[~after].isna().mean(), 1, 1)
+    valid = {f"{ch}:{m}" for ch, shares in se["auth_method"].items() for m in shares}
+    check("auth_method valid for its channel (share)", (dedup.channel[after] + ":" + dedup.auth_method[after]).isin(valid).mean(), 1, 1)
+    ecom = (dedup.channel == "ecom").to_numpy()
     app = se["auth_method"]["ecom"]["3ds_app"]
-    check("3ds_app among ecom (share)", (after.auth_method[ecom] == "3ds_app").mean(), app - 0.02, app + 0.02)
+    check("3ds_app among ecom (share)", (dedup.auth_method[after & ecom] == "3ds_app").mean(), app - 0.02, app + 0.02)
     v22 = se["three_ds_version"]["2.2.0"]
-    check("three_ds_version 2.2.0 among ecom (share)", (after.three_ds_version[ecom] == "2.2.0").mean(), v22 - 0.02, v22 + 0.02)
-    check("three_ds_version null for pos/atm (share)", after.three_ds_version[~ecom].isna().mean(), 1, 1)
+    check("three_ds_version 2.2.0 among ecom (share)", (dedup.three_ds_version[after & ecom] == "2.2.0").mean(), v22 - 0.02, v22 + 0.02)
+    check("three_ds_version null for pos/atm (share)", dedup.three_ds_version[after & ~ecom].isna().mean(), 1, 1)
 
 
 def check_scd2(cfg: dict, customers: pd.DataFrame, to_unit: dict, new_units: set) -> None:
@@ -112,7 +123,7 @@ def check_moves(dedup: pd.DataFrame, cards: pd.DataFrame, accounts: pd.DataFrame
     """After a real move, a customer pays mostly in the home unit of the version valid at payment time."""
     v = customers.sort_values(["customer_id", "updated_ts"]).assign(home=lambda d: d.city.map(to_unit))
     moved_at = v[v.home.ne(v.groupby("customer_id").home.shift()) & v.customer_id.duplicated()].groupby("customer_id").updated_ts.min()
-    t = dedup.merge(cards.merge(accounts, on="account_id")[["card_id", "customer_id"]], on="card_id")
+    t = dedup[["card_id", "txn_ts", "txn_city"]].merge(cards.merge(accounts, on="account_id")[["card_id", "customer_id"]], on="card_id")
     t = t[t.txn_ts > t.customer_id.map(moved_at)]
     asof = pd.merge_asof(t.sort_values("txn_ts"), v[["customer_id", "updated_ts", "home"]].sort_values("updated_ts"),
                          left_on="txn_ts", right_on="updated_ts", by="customer_id")
@@ -131,18 +142,31 @@ def check_terminals(dedup: pd.DataFrame) -> None:
 def check_stream(cfg: dict, src: Path, dedup: pd.DataFrame, disputes: pd.DataFrame, to_unit: dict) -> None:
     """card_authorizations: one event per payment, late events from offline POS, network-retry duplicates."""
     st = cfg["card_authorizations"]
-    a = pd.read_parquet(src / "stream" / "card_authorizations").drop(columns="auth_date")
+    path = src / "stream" / "card_authorizations"
+    # merchant_id / terminal_id are only needed to compare duplicates, so only the duplicated rows read them.
+    a = pq.read_table(path, partitioning=None, columns=["auth_id", "card_id", "amount_vnd", "channel", "device_id",
+                                                         "geo_city", "auth_ts", "received_ts"]).to_pandas()
     print(f"\nstream: {len(a):,} card_authorizations, {a.auth_id.nunique():,} unique")
     rate = st["duplicate_rate"]
     check("stream duplicate rate (extra rows / unique)", len(a) / a.auth_id.nunique() - 1, rate - 0.003, rate + 0.003)
-    check("stream duplicates differ only in received_ts (share)", len(a.drop(columns="received_ts").drop_duplicates()) / a.auth_id.nunique(), 1, 1)
-    gap = a[a.auth_id.duplicated(keep=False)].groupby("auth_id").received_ts.agg(lambda s: (s.max() - s.min()).total_seconds())
+    dup_ids = pa.array(a.auth_id[a.auth_id.duplicated()].unique())
+    d = pq.read_table(path, partitioning=None, filters=ds.field("auth_id").isin(dup_ids)).to_pandas()
+    check("stream duplicates differ only in received_ts (share)", len(d.drop(columns="received_ts").drop_duplicates()) / d.auth_id.nunique(), 1, 1)
+    gap = d.groupby("auth_id").received_ts.agg(["min", "max"]).pipe(lambda g: (g["max"] - g["min"]).dt.total_seconds())
     check("retry gap within retry_delay_s (share)", gap.between(*st["retry_delay_s"]).mean(), 1, 1)
 
-    u = a.sort_values("received_ts").drop_duplicates("auth_id")   # first arrival
-    t = dedup.assign(auth_id=dedup.transaction_id.str.replace("txn_", "auth_", regex=False)).merge(u, on="auth_id", how="left", suffixes=("", "_a"))
-    same = ((t.card_id == t.card_id_a) & (t.amount_vnd == t.amount_vnd_a) & (t.txn_city == t.geo_city) & (t.txn_ts == t.auth_ts))
+    # First arrival of each auth, ordered by auth_id, built with one row copy.
+    order = np.argsort(a.received_ts.to_numpy(), kind="stable")
+    first = order[~a.auth_id.take(order).duplicated().to_numpy()]
+    u = a.take(first[a.auth_id.take(first).argsort(kind="stable").to_numpy()]).reset_index(drop=True)
+    del a, d, order, first
+    free()
     check("unique auths / unique transactions", len(u) / len(dedup), 1, 1)
+    # auth_id and transaction_id share the counter, so both sorted by id line up row by row.
+    x = dedup[["transaction_id", "card_id", "amount_vnd", "txn_city", "txn_ts"]].take(dedup.transaction_id.argsort(kind="stable").to_numpy()).reset_index(drop=True)
+    same = ((x.transaction_id.str[4:] == u.auth_id.str[5:]) & (x.card_id == u.card_id) & (x.amount_vnd == u.amount_vnd)
+            & (x.txn_city == u.geo_city) & (x.txn_ts == u.auth_ts)) if len(x) == len(u) else pd.Series([False])
+    del x
     check("auth matches its transaction (share)", same.mean(), 1, 1)
     check("share of Ho Chi Minh in geo_city (normalized)", (u.geo_city.map(to_unit) == "Ho Chi Minh").mean(), 0.58, 0.62)
 
@@ -172,7 +196,9 @@ def check_app_events(cfg: dict, src: Path) -> None:
     """app_events: out-of-order arrival, the Decision 2345 biometric rule, ATO patterns and the QR trend."""
     a, bio = cfg["app_events"], cfg["app_events"]["biometric"]
     cutoff = pd.Timestamp(bio["cutoff"])
-    e = pq.read_table(src / "stream" / "app_events", partitioning=None).to_pandas().sort_values(["session_id", "event_ts"], ignore_index=True)
+    cols = ["session_id", "customer_id", "event_type", "is_new_device", "event_ts", "received_ts", "amount_vnd",
+            "transfer_type", "auth_method", "result", "reason"]   # ids not checked are not read (memory at 1 GB)
+    e = pq.read_table(src / "stream" / "app_events", partitioning=None, columns=cols).to_pandas().sort_values(["session_id", "event_ts"], ignore_index=True)
     kind = e.session_id.map(pd.read_parquet(src / "_truth" / "ato_sessions.parquet").set_index("session_id").kind).fillna("legit")
     print(f"\napp_events: {len(e):,} events, {e.session_id.nunique():,} sessions, {kind[~e.session_id.duplicated()].value_counts().to_dict()}")
 
@@ -187,7 +213,8 @@ def check_app_events(cfg: dict, src: Path) -> None:
     check("max delay of in-order events (s)", delay[~ooo].max(), 0, 1)
 
     # Decision 2345 identity check (domain rule, from the cutoff).
-    nxt, prev = e.groupby("session_id").shift(-1), e.groupby("session_id").shift()
+    g = e.groupby("session_id")[["event_type", "result", "reason"]]
+    nxt, prev = g.shift(-1), g.shift()
     post, is_bio = e.event_ts >= cutoff, e.event_type == "biometric_verify"
     check("no biometric_verify before cutoff (share)", 1 - is_bio[~post].mean(), 1, 1)
     big = post & (e.event_type == "transfer") & (e.amount_vnd >= bio["single_transfer_vnd"])
@@ -236,6 +263,8 @@ def main(config_path: Path) -> None:
     cards = pd.read_parquet(src / "core_banking" / "cards.parquet")
     merchants = pd.read_parquet(src / "core_banking" / "merchants.parquet")
     customers = pd.read_parquet(src / "core_banking" / "customers.parquet")
+    check_app_events(cfg, src)   # first: needs none of the transaction frames below
+    free()
     export_dir = src / "core-banking-export" / "transactions"
     files = sorted(export_dir.rglob("*.parquet"))
     schemas = [pq.read_schema(f) for f in files]
@@ -260,7 +289,10 @@ def main(config_path: Path) -> None:
     check("duplicate rate (extra rows / unique)", len(txn) / txn.transaction_id.nunique() - 1, rate - 0.003, rate + 0.003)
     span = txn[txn.transaction_id.duplicated(keep=False)].groupby("transaction_id").created_ts.agg(["min", "max"])
     check("duplicates have a later created_ts (share)", (span["max"] > span["min"]).mean(), 1, 1)
-    dedup = txn.sort_values("created_ts").drop_duplicates("transaction_id", keep="last")
+    # Keep the last export of each transaction: one row copy instead of sort_values + drop_duplicates (two).
+    order = np.argsort(txn.created_ts.to_numpy(), kind="stable")
+    dedup = txn.take(order[~txn.transaction_id.take(order).duplicated(keep="last").to_numpy()])
+    del txn, span, order   # only the deduplicated rows are used from here on
 
     # Problem: primary skew, merchant join skew.
     counts = dedup.merchant_id.value_counts()
@@ -291,13 +323,15 @@ def main(config_path: Path) -> None:
     check("customers.city normalizes to the 34 units (share)", customers.city.map(to_unit).isin(new_units).mean(), 1, 1)
 
     check_schema_evolution(cfg, files, schemas, dedup)
+    check_terminals(dedup)
+    # The remaining checks need six columns; dropping the rest frees ~40% of the frame at 1 GB.
+    dedup = dedup[["transaction_id", "card_id", "amount_vnd", "channel", "txn_city", "txn_ts"]]
+    free()
     check_scd2(cfg, customers, to_unit, new_units)
     disputes = pd.read_parquet(src / "core_banking" / "disputes.parquet")
     check_labels(cfg, dedup, disputes)
     check_moves(dedup, cards, pd.read_parquet(src / "core_banking" / "accounts.parquet"), customers, to_unit)
-    check_terminals(dedup)
     check_stream(cfg, src, dedup, disputes, to_unit)
-    check_app_events(cfg, src)
 
     assert not failures, f"{len(failures)} check(s) failed: {failures}"
     print("\nall checks passed")

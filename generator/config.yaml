@@ -8,10 +8,11 @@ period:
   start: 2024-01-01
   end: 2026-10-15                # inclusive; fixed (not "today") so reruns reproduce the same data
 
-volume:                          # ~10 MB smoke test; raise n_transactions for 1 GB / 100 GB
-  n_customers: 20000
-  n_merchants: 2000
-  n_transactions: 200000
+volume:                          # ~1 GB of source data; `generate.py --scale 0.05` for a quick smoke test
+  n_customers: 100000
+  n_merchants: 5000
+  n_transactions: 8000000
+  n_sessions: 2200000            # app sessions, ~2.5 events each
 
 trends:
   atm_decline_per_year: 0.17     # ATM share of card payments shrinks yearly (SBV 2025: ATM volume -17.3% YoY);
@@ -65,7 +66,6 @@ card_authorizations:             # Kafka source 1: the card network's request fo
   retry_delay_s: [1, 10]
 
 app_events:                      # Kafka source 2: mobile banking app, one session = login ... transfers
-  n_sessions: 60000              # smoke test, ~2.5 events per session
   failed_login_share: 0.05       # sessions that start with 1-2 wrong passwords
   password_reset_share: 0.01     # legit customers who forgot the password
   change_phone_share: 0.002

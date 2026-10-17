@@ -383,7 +383,7 @@ def write_app_events(cfg, out: Path, customers: pd.DataFrame, devices, days: pd.
            "shops": tokens("pay", rng, a["shops"]), "shop_p": shop_w / shop_w.sum(),
            "attackers": tokens("dev", rng, a["ato"]["attacker_devices"]), "mules": tokens("pay", rng, a["ato"]["mule_payees"]),
            "last_device": {}, "payees": {}}
-    per_day = rng.poisson(a["n_sessions"] / len(days), len(days))
+    per_day = rng.poisson(cfg["volume"]["n_sessions"] / len(days), len(days))
     next_session, next_event, truth = 0, 0, []
     for day, n in zip(days, per_day):
         df, ato = gen_app_day(rng, cfg, day, int(n), next_session, ctx)
@@ -405,10 +405,11 @@ def write(df: pd.DataFrame, path: Path) -> None:
     pq.write_table(table, path, coerce_timestamps="us", allow_truncated_timestamps=True)
 
 
-def main(config_path: Path) -> None:
+def main(config_path: Path, scale: float) -> None:
     """Generate every table described in the config and write it under `output_dir`."""
     t0 = time.perf_counter()
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    cfg["volume"] = {k: round(v * scale) for k, v in cfg["volume"].items()}
     out = ROOT / cfg["output_dir"]
     rng = np.random.default_rng(cfg["seed"])
 
@@ -456,4 +457,6 @@ def main(config_path: Path) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.yaml")
-    main(ap.parse_args().config)
+    ap.add_argument("--scale", type=float, default=1.0, help="multiply every volume count, e.g. 0.05 for a smoke test")
+    args = ap.parse_args()
+    main(args.config, args.scale)

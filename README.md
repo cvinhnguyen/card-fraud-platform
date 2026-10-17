@@ -51,7 +51,7 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 .venv/Scripts/python generator/producer.py --speed 200            # replay card_authorizations into Kafka (--topic app_events, --replay-from, --limit)
 ```
 
-Data volume is set in `generator/config.yaml` (`volume.n_transactions`).
+Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 6 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`.
 
 ## Docs
 - Coming per phase: `data_characteristics.md`, `spark_jobs.md`, `flink_jobs.md`, `airflow.md`, `datahub.md`, `schema_design.md`, `storage_optimization.md`, `docker_optimization.md`.
