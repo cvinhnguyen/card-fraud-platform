@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: silver
+    schema: silver
+    description: Cleaned tables written by spark/build_silver.py (PySpark).
+    tables:
+      - name: stg_customers
+        description: One row per source version of a customer; city normalized to customer_unit (34 units).
+      - name: stg_transactions
+        description: Deduplicated transactions with txn_unit (34 units) and auth_method filled for old rows.

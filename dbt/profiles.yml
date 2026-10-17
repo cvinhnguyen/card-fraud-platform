@@ -1,0 +1,13 @@
+# No secrets: the thrift server listens on 127.0.0.1 only, without auth (local dev).
+card_fraud:
+  target: local
+  outputs:
+    local:
+      type: spark
+      method: thrift
+      host: 127.0.0.1
+      port: 10000
+      schema: gold
+      threads: 2
+      connect_retries: 3
+      connect_timeout: 10

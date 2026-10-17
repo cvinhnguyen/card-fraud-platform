@@ -3,6 +3,7 @@
 # Profiles keep RAM usage inside 16 GB: start only what the current phase needs.
 #   core  : postgres (core banking, "another department") + seaweedfs (S3 lake) + kafka
 #   batch : spark master + worker, hive metastore (+ its postgres), trino; needs core running
+#   dbt   : spark thrift server for dbt-spark (needs batch)
 #   (next) stream / orch / gov
 #
 # Usage (from repo root):
@@ -146,6 +147,29 @@ services:
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
     ports:
       - "127.0.0.1:8081:8081"   # worker UI (executor logs)
+    volumes: *spark-volumes
+
+  # SQL endpoint for dbt-spark (novel idea 1). Own profile: while up it holds 2 cores / 1 GB on the worker,
+  # so stop it during Spark benchmarks.  docker compose ... --profile dbt up -d spark-thrift
+  spark-thrift:
+    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    profiles: [dbt]
+    container_name: spark-thrift
+    hostname: spark-thrift   # executors call back to the driver by this name
+    # S3A + Delta jars also on the JVM classpath: with --packages alone, thrift session threads miss their classes
+    # (NoClassDefFoundError). Listed one by one: the whole ivy dir brings an old jackson that breaks Spark.
+    # ponytail: paths pin the versions in spark-defaults.conf; P9 bakes the jars into the image instead.
+    command: >-
+      /opt/spark/sbin/start-thriftserver.sh --conf spark.cores.max=2 --conf spark.executor.memory=1g
+      --conf spark.driver.extraClassPath=/opt/spark/work-dir/ivy/jars/org.apache.hadoop_hadoop-aws-3.4.2.jar:/opt/spark/work-dir/ivy/jars/software.amazon.awssdk_bundle-2.29.52.jar:/opt/spark/work-dir/ivy/jars/software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar:/opt/spark/work-dir/ivy/jars/org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-spark_4.1_2.13-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-storage-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-api-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-defaults-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-unitycatalog-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-client-0.6.0.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-hadoop-0.6.0.jar Files\Git\opt\spark\work-dir\ivy\jars\org.apache.hadoop_hadoop-aws-3.4.2.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.awssdk_bundle-2.29.52.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar
+      --conf spark.executor.extraClassPath=/opt/spark/work-dir/ivy/jars/org.apache.hadoop_hadoop-aws-3.4.2.jar:/opt/spark/work-dir/ivy/jars/software.amazon.awssdk_bundle-2.29.52.jar:/opt/spark/work-dir/ivy/jars/software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar:/opt/spark/work-dir/ivy/jars/org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-spark_4.1_2.13-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-storage-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-api-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-defaults-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-unitycatalog-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-client-0.6.0.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-hadoop-0.6.0.jar Files\Git\opt\spark\work-dir\ivy\jars\org.apache.hadoop_hadoop-aws-3.4.2.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.awssdk_bundle-2.29.52.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "127.0.0.1:10000:10000"   # HiveServer2 protocol (dbt, beeline)
+      - "127.0.0.1:4041:4040"     # its Spark UI
     volumes: *spark-volumes
 
   # SQL over the lakehouse through the metastore: catalog `delta`.

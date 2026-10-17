@@ -11,3 +11,9 @@ data/
 .venv/
 __pycache__/
 *.pyc
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/

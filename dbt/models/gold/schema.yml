@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: dim_customer
+    description: >
+      SCD2 customer dimension. Point-in-time join: valid_from_ts <= txn_ts < valid_to_ts.
+    columns:
+      - name: customer_sk
+        description: Surrogate key of one version.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: customer_unit
+        description: Home unit (34 units) of this version.
+        data_tests: [not_null]
+      - name: valid_from_ts
+        data_tests: [not_null]
