@@ -153,6 +153,32 @@ joining their 944,529 ecom payments to `dim_customer`:
 
 Joining on the current version puts every payment made before a move in the wrong unit.
 
+### Star schema
+
+| Model | Grain | Rows | Built from |
+|---|---|---:|---|
+| `fact_transaction` (incremental `MERGE`, partitioned by `txn_month`) | one settled transaction | 7,879,338 | `stg_transactions` |
+| `dim_customer` (SCD2) | one customer version | 144,167 | `stg_customers` |
+| `dim_card` | one card, with its account and owner | 130,120 | `raw_cards` + `raw_accounts` |
+| `dim_merchant` | one merchant | 5,000 | `raw_merchants` |
+| `dim_date` | one day, 2024-01-01 to 2026-10-15 | 1,019 | generated |
+
+Reversed transactions (120,188) are left out: no money moved. Fraud labels are not in the fact because they change
+after it is written; they live in `gold.label_transaction` (below). `fact_transaction.customer_sk` is resolved with the
+point-in-time join when the row is built, so a query joins `dim_customer` on `customer_sk` without a date range.
+The two small reference tables need no cleaning, so `dim_card` and `dim_merchant` read bronze directly.
+
+Tests (`dbt build`, 27/27 pass): unique / not-null keys, every fact key found in its dimension (`relationships`), and
+`fact_transaction` has the same row count and settled spend as silver (7,879,338 rows, 3,611,008,776,000 VND).
+
+Incremental load: a full refresh of the fact takes 60 s. Deleting the last 5 export dates (46,519 rows) and running
+`dbt run --select fact_transaction` again `MERGE`d exactly 46,519 rows back in 21 s, with no file rewritten.
+
+The Thrift Server runs with `spark.databricks.delta.optimizeMetadataQuery.enabled=false`: Delta answers
+`min/max` of a date column from file statistics as `java.sql.Date`, while the Thrift Server uses the Java 8 time API,
+so `dim_date` and the incremental filter failed with `ClassCastException: java.time.LocalDate cannot be cast to
+java.sql.Date`.
+
 ## Labels with label delay (`spark/build_labels.py`)
 
 ```bash

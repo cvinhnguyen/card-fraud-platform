@@ -15,3 +15,39 @@ models:
         data_tests: [not_null]
       - name: valid_from_ts
         data_tests: [not_null]
+
+  - name: dim_card
+    columns:
+      - name: card_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+
+  - name: dim_merchant
+    columns:
+      - name: merchant_id
+        data_tests: [unique, not_null]
+
+  - name: dim_date
+    columns:
+      - name: date_key
+        data_tests: [unique, not_null]
+
+  - name: fact_transaction
+    description: One settled transaction. Join dim_customer on customer_sk (already point in time).
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
+      - name: customer_sk
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_customer'), field: customer_sk}}
+      - name: card_id
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_card'), field: card_id}}
+      - name: merchant_id
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_merchant'), field: merchant_id}}
+      - name: date_key
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_date'), field: date_key}}

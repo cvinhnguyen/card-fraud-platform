@@ -9,3 +9,14 @@ sources:
         description: One row per source version of a customer; city normalized to customer_unit (34 units).
       - name: stg_transactions
         description: Deduplicated transactions with txn_unit (34 units) and auth_method filled for old rows.
+
+  - name: bronze
+    schema: bronze
+    description: >
+      Faithful copies written by spark/ingest_bronze.py. The small reference tables need no cleaning, so the gold
+      dimensions read them directly instead of going through a silver copy.
+    tables:
+      - name: raw_cards
+      - name: raw_accounts
+      - name: raw_merchants
+        description: city is already one of the 34 units.
