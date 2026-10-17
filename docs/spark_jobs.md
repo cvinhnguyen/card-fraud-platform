@@ -43,6 +43,18 @@ A second run with no new files prints `nothing new after 2026-10-16` and appends
 
 Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns; later files have both.
 
+**Demo 1: reading.** `spark/schema_evolution_read.py` reads every export file at once (33 s):
+
+| Read | Columns | Rows | Rows with `auth_method` |
+|---|---:|---:|---:|
+| without `mergeSchema` | 12 (auth columns missing) | 8,159,516 | 0 |
+| with `mergeSchema` | 14 | 8,159,516 | 6,704,100 |
+
+Without `mergeSchema` Spark takes the schema of one file (the oldest), so the two columns vanish for all rows, with no
+error. `ingest_bronze.py` reads with `mergeSchema`.
+
+**Demo 2: appending to the bronze Delta table** in steps:
+
 | Step | Command | Result |
 |---|---|---|
 | 1 | `--until 2024-07-01` | +182 export dates, 1,455,416 rows, table without the auth columns (82 s) |
@@ -108,6 +120,10 @@ Ho Chi Minh City around the reorganization (settled spend, billion VND; share of
 
 By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat: nothing
 changed physically, only the labels.
+
+![Ho Chi Minh City settled spend per month, by raw name and by unit](images/hcmc_spend.svg)
+
+Redraw with `python docs/diagrams/hcmc_spend.py` (reads silver through Trino). The February dips are the short month.
 
 ## Gold with dbt-spark (`dbt/`, novel idea 1)
 

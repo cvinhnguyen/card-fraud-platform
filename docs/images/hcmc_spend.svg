@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" font-family="system-ui, sans-serif" font-size="12">
+<style>.bg{fill:#fcfcfb}.t1{fill:#0b0b0b}.t2{fill:#52514e}.grid{stroke:#e4e3df}.ref{stroke:#52514e}polyline{fill:none}.raw{stroke:#eb6834}.unit{stroke:#2a78d6}.rawf{fill:#eb6834}.unitf{fill:#2a78d6}.hit{fill:transparent}@media (prefers-color-scheme: dark){.bg{fill:#1a1a19}.t1{fill:#f0efec}.t2{fill:#c3c2b7}.grid{stroke:#383835}.ref{stroke:#c3c2b7}.raw{stroke:#d95926}.unit{stroke:#3987e5}.rawf{fill:#d95926}.unitf{fill:#3987e5}}</style>
+<rect class="bg" width="760" height="360"/>
+<text class="t1" x="56" y="24" font-size="15" font-weight="600">Ho Chi Minh City: settled spend per month (billion VND)</text>
+<text class="t2" x="56" y="44">By raw name the city "jumps" when old names are relabelled on 2025-07-01. By unit nothing changes.</text>
+<line class="grid" x1="56" x2="740" y1="316.0" y2="316.0"/>
+<text class="t2" x="48" y="320.0" text-anchor="end">0</text>
+<line class="grid" x1="56" x2="740" y1="253.0" y2="253.0"/>
+<text class="t2" x="48" y="257.0" text-anchor="end">20</text>
+<line class="grid" x1="56" x2="740" y1="190.0" y2="190.0"/>
+<text class="t2" x="48" y="194.0" text-anchor="end">40</text>
+<line class="grid" x1="56" x2="740" y1="127.0" y2="127.0"/>
+<text class="t2" x="48" y="131.0" text-anchor="end">60</text>
+<line class="grid" x1="56" x2="740" y1="64.0" y2="64.0"/>
+<text class="t2" x="48" y="68.0" text-anchor="end">80</text>
+<text class="t2" x="56.0" y="334" text-anchor="middle">2024</text>
+<text class="t2" x="312.5" y="334" text-anchor="middle">2025</text>
+<text class="t2" x="569.0" y="334" text-anchor="middle">2026</text>
+<line class="ref" x1="440.75" x2="440.75" y1="64" y2="316.0" stroke-dasharray="4 3"/>
+<text class="t2" x="446.75" y="308.0">2025-07-01: 63 provinces -> 34 units</text>
+<polyline class="raw" points="56.0,145.3 77.4,155.9 98.8,147.3 120.1,152.5 141.5,145.7 162.9,151.5 184.2,147.6 205.6,147.6 227.0,153.7 248.4,149.3 269.8,154.9 291.1,149.8 312.5,150.8 333.9,167.5 355.2,151.4 376.6,157.3 398.0,152.5 419.4,159.5 440.8,115.9 462.1,114.0 483.5,122.8 504.9,117.0 526.2,123.5 547.6,118.3 569.0,120.1 590.4,139.2 611.8,117.5 633.1,126.8 654.5,121.0 675.9,126.3 697.2,121.7 718.6,122.5 740.0,129.0" stroke-width="2" stroke-linejoin="round"/>
+<text class="t2" x="77.375" y="177.85712165">by raw name</text>
+<polyline class="unit" points="56.0,102.4 77.4,116.5 98.8,104.4 120.1,112.4 141.5,104.3 162.9,110.7 184.2,104.9 205.6,106.1 227.0,113.4 248.4,108.2 269.8,114.3 291.1,108.9 312.5,109.7 333.9,131.0 355.2,109.7 376.6,117.8 398.0,111.7 419.4,120.6 440.8,113.9 462.1,112.1 483.5,120.7 504.9,114.9 526.2,121.5 547.6,116.4 569.0,118.0 590.4,137.3 611.8,115.6 633.1,124.9 654.5,119.0 675.9,124.3 697.2,119.7 718.6,120.6 740.0,127.0" stroke-width="2" stroke-linejoin="round"/>
+<text class="t2" x="77.375" y="92.49705895000002">by unit (34 units)</text>
+<circle class="rawf" cx="56.0" cy="145.3" r="3"/>
+<circle class="unitf" cx="56.0" cy="102.4" r="3"/>
+<rect class="hit" x="45.6" y="64" width="20.7" height="252"><title>2024-01: 54.2 by raw name, 67.8 by unit</title></rect>
+<circle class="rawf" cx="77.4" cy="155.9" r="3"/>
+<circle class="unitf" cx="77.4" cy="116.5" r="3"/>
+<rect class="hit" x="67.0" y="64" width="20.7" height="252"><title>2024-02: 50.8 by raw name, 63.3 by unit</title></rect>
+<circle class="rawf" cx="98.8" cy="147.3" r="3"/>
+<circle class="unitf" cx="98.8" cy="104.4" r="3"/>
+<rect class="hit" x="88.4" y="64" width="20.7" height="252"><title>2024-03: 53.6 by raw name, 67.2 by unit</title></rect>
+<circle class="rawf" cx="120.1" cy="152.5" r="3"/>
+<circle class="unitf" cx="120.1" cy="112.4" r="3"/>
+<rect class="hit" x="109.8" y="64" width="20.7" height="252"><title>2024-04: 51.9 by raw name, 64.6 by unit</title></rect>
+<circle class="rawf" cx="141.5" cy="145.7" r="3"/>
+<circle class="unitf" cx="141.5" cy="104.3" r="3"/>
+<rect class="hit" x="131.1" y="64" width="20.7" height="252"><title>2024-05: 54.1 by raw name, 67.2 by unit</title></rect>
+<circle class="rawf" cx="162.9" cy="151.5" r="3"/>
+<circle class="unitf" cx="162.9" cy="110.7" r="3"/>
+<rect class="hit" x="152.5" y="64" width="20.7" height="252"><title>2024-06: 52.2 by raw name, 65.2 by unit</title></rect>
+<circle class="rawf" cx="184.2" cy="147.6" r="3"/>
+<circle class="unitf" cx="184.2" cy="104.9" r="3"/>
+<rect class="hit" x="173.9" y="64" width="20.7" height="252"><title>2024-07: 53.5 by raw name, 67.0 by unit</title></rect>
+<circle class="rawf" cx="205.6" cy="147.6" r="3"/>
+<circle class="unitf" cx="205.6" cy="106.1" r="3"/>
+<rect class="hit" x="195.3" y="64" width="20.7" height="252"><title>2024-08: 53.5 by raw name, 66.6 by unit</title></rect>
+<circle class="rawf" cx="227.0" cy="153.7" r="3"/>
+<circle class="unitf" cx="227.0" cy="113.4" r="3"/>
+<rect class="hit" x="216.6" y="64" width="20.7" height="252"><title>2024-09: 51.5 by raw name, 64.3 by unit</title></rect>
+<circle class="rawf" cx="248.4" cy="149.3" r="3"/>
+<circle class="unitf" cx="248.4" cy="108.2" r="3"/>
+<rect class="hit" x="238.0" y="64" width="20.7" height="252"><title>2024-10: 52.9 by raw name, 66.0 by unit</title></rect>
+<circle class="rawf" cx="269.8" cy="154.9" r="3"/>
+<circle class="unitf" cx="269.8" cy="114.3" r="3"/>
+<rect class="hit" x="259.4" y="64" width="20.7" height="252"><title>2024-11: 51.2 by raw name, 64.0 by unit</title></rect>
+<circle class="rawf" cx="291.1" cy="149.8" r="3"/>
+<circle class="unitf" cx="291.1" cy="108.9" r="3"/>
+<rect class="hit" x="280.8" y="64" width="20.7" height="252"><title>2024-12: 52.8 by raw name, 65.8 by unit</title></rect>
+<circle class="rawf" cx="312.5" cy="150.8" r="3"/>
+<circle class="unitf" cx="312.5" cy="109.7" r="3"/>
+<rect class="hit" x="302.1" y="64" width="20.7" height="252"><title>2025-01: 52.5 by raw name, 65.5 by unit</title></rect>
+<circle class="rawf" cx="333.9" cy="167.5" r="3"/>
+<circle class="unitf" cx="333.9" cy="131.0" r="3"/>
+<rect class="hit" x="323.5" y="64" width="20.7" height="252"><title>2025-02: 47.2 by raw name, 58.7 by unit</title></rect>
+<circle class="rawf" cx="355.2" cy="151.4" r="3"/>
+<circle class="unitf" cx="355.2" cy="109.7" r="3"/>
+<rect class="hit" x="344.9" y="64" width="20.7" height="252"><title>2025-03: 52.3 by raw name, 65.5 by unit</title></rect>
+<circle class="rawf" cx="376.6" cy="157.3" r="3"/>
+<circle class="unitf" cx="376.6" cy="117.8" r="3"/>
+<rect class="hit" x="366.3" y="64" width="20.7" height="252"><title>2025-04: 50.4 by raw name, 62.9 by unit</title></rect>
+<circle class="rawf" cx="398.0" cy="152.5" r="3"/>
+<circle class="unitf" cx="398.0" cy="111.7" r="3"/>
+<rect class="hit" x="387.6" y="64" width="20.7" height="252"><title>2025-05: 51.9 by raw name, 64.9 by unit</title></rect>
+<circle class="rawf" cx="419.4" cy="159.5" r="3"/>
+<circle class="unitf" cx="419.4" cy="120.6" r="3"/>
+<rect class="hit" x="409.0" y="64" width="20.7" height="252"><title>2025-06: 49.7 by raw name, 62.0 by unit</title></rect>
+<circle class="rawf" cx="440.8" cy="115.9" r="3"/>
+<circle class="unitf" cx="440.8" cy="113.9" r="3"/>
+<rect class="hit" x="430.4" y="64" width="20.7" height="252"><title>2025-07: 63.5 by raw name, 64.1 by unit</title></rect>
+<circle class="rawf" cx="462.1" cy="114.0" r="3"/>
+<circle class="unitf" cx="462.1" cy="112.1" r="3"/>
+<rect class="hit" x="451.8" y="64" width="20.7" height="252"><title>2025-08: 64.1 by raw name, 64.7 by unit</title></rect>
+<circle class="rawf" cx="483.5" cy="122.8" r="3"/>
+<circle class="unitf" cx="483.5" cy="120.7" r="3"/>
+<rect class="hit" x="473.1" y="64" width="20.7" height="252"><title>2025-09: 61.3 by raw name, 62.0 by unit</title></rect>
+<circle class="rawf" cx="504.9" cy="117.0" r="3"/>
+<circle class="unitf" cx="504.9" cy="114.9" r="3"/>
+<rect class="hit" x="494.5" y="64" width="20.7" height="252"><title>2025-10: 63.2 by raw name, 63.8 by unit</title></rect>
+<circle class="rawf" cx="526.2" cy="123.5" r="3"/>
+<circle class="unitf" cx="526.2" cy="121.5" r="3"/>
+<rect class="hit" x="515.9" y="64" width="20.7" height="252"><title>2025-11: 61.1 by raw name, 61.8 by unit</title></rect>
+<circle class="rawf" cx="547.6" cy="118.3" r="3"/>
+<circle class="unitf" cx="547.6" cy="116.4" r="3"/>
+<rect class="hit" x="537.3" y="64" width="20.7" height="252"><title>2025-12: 62.7 by raw name, 63.4 by unit</title></rect>
+<circle class="rawf" cx="569.0" cy="120.1" r="3"/>
+<circle class="unitf" cx="569.0" cy="118.0" r="3"/>
+<rect class="hit" x="558.6" y="64" width="20.7" height="252"><title>2026-01: 62.2 by raw name, 62.9 by unit</title></rect>
+<circle class="rawf" cx="590.4" cy="139.2" r="3"/>
+<circle class="unitf" cx="590.4" cy="137.3" r="3"/>
+<rect class="hit" x="580.0" y="64" width="20.7" height="252"><title>2026-02: 56.1 by raw name, 56.7 by unit</title></rect>
+<circle class="rawf" cx="611.8" cy="117.5" r="3"/>
+<circle class="unitf" cx="611.8" cy="115.6" r="3"/>
+<rect class="hit" x="601.4" y="64" width="20.7" height="252"><title>2026-03: 63.0 by raw name, 63.6 by unit</title></rect>
+<circle class="rawf" cx="633.1" cy="126.8" r="3"/>
+<circle class="unitf" cx="633.1" cy="124.9" r="3"/>
+<rect class="hit" x="622.8" y="64" width="20.7" height="252"><title>2026-04: 60.1 by raw name, 60.7 by unit</title></rect>
+<circle class="rawf" cx="654.5" cy="121.0" r="3"/>
+<circle class="unitf" cx="654.5" cy="119.0" r="3"/>
+<rect class="hit" x="644.1" y="64" width="20.7" height="252"><title>2026-05: 61.9 by raw name, 62.5 by unit</title></rect>
+<circle class="rawf" cx="675.9" cy="126.3" r="3"/>
+<circle class="unitf" cx="675.9" cy="124.3" r="3"/>
+<rect class="hit" x="665.5" y="64" width="20.7" height="252"><title>2026-06: 60.2 by raw name, 60.9 by unit</title></rect>
+<circle class="rawf" cx="697.2" cy="121.7" r="3"/>
+<circle class="unitf" cx="697.2" cy="119.7" r="3"/>
+<rect class="hit" x="686.9" y="64" width="20.7" height="252"><title>2026-07: 61.7 by raw name, 62.3 by unit</title></rect>
+<circle class="rawf" cx="718.6" cy="122.5" r="3"/>
+<circle class="unitf" cx="718.6" cy="120.6" r="3"/>
+<rect class="hit" x="708.3" y="64" width="20.7" height="252"><title>2026-08: 61.4 by raw name, 62.0 by unit</title></rect>
+<circle class="rawf" cx="740.0" cy="129.0" r="3"/>
+<circle class="unitf" cx="740.0" cy="127.0" r="3"/>
+<rect class="hit" x="729.6" y="64" width="20.7" height="252"><title>2026-09: 59.4 by raw name, 60.0 by unit</title></rect>
+</svg>
