@@ -56,6 +56,7 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_silver.py
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py
 docker exec -it trino trino --execute "SELECT count(*) FROM delta.bronze.raw_transactions"
 
 # P4 gold: dbt-spark through the Spark Thrift Server

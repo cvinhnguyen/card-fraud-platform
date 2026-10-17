@@ -152,3 +152,48 @@ joining their 944,529 ecom payments to `dim_customer`:
 | Current version only (`is_current`) | 76.7% |
 
 Joining on the current version puts every payment made before a move in the wrong unit.
+
+## Labels with label delay (`spark/build_labels.py`)
+
+```bash
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py --as-of 2026-06-30
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py            # up to the last txn date
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py --report   # time travel
+```
+
+`gold.label_transaction`, one row per transaction, partitioned by `event_month`: `transaction_id`, `card_id`,
+`customer_id`, `event_timestamp`, `amount_vnd`, `is_fraud`, `fraud_reported_ts`, `label_as_of`.
+
+A fraud dispute arrives 1 to 60 days after the payment, so a label can change after it was written and the table cannot
+be append only. Each run takes `--as-of D` and sees only the transactions and disputes up to D, then `MERGE`s:
+new transactions are inserted with the disputes known so far, and older transactions whose dispute arrived since the
+last run are flipped to `is_fraud = true`. Because disputes are at most 60 days late, the `MERGE` only scans the last
+3 months of partitions. Each run is one Delta version and its commit carries `label_as_of=D`
+(`DESCRIBE HISTORY` → `userMetadata`), so `VERSION AS OF` returns the labels exactly as they were known on D.
+
+Replay, one run per month end (about 60 s each):
+
+| Version | `label_as_of` | New rows | Labels flipped | Files removed / added |
+|---:|---|---:|---:|---|
+| 0 | 2026-06-30 | 7,159,417 | | 0 / 30 |
+| 1 | 2026-07-31 | 243,823 | 369 | 2 / 3 |
+| 2 | 2026-08-31 | 242,706 | 356 | 2 / 3 |
+| 3 | 2026-09-30 | 235,497 | 346 | 2 / 3 |
+| 4 | 2026-10-15 | 118,083 | 260 | 2 / 3 |
+
+The final table has 7,999,526 rows (= `stg_transactions`) and 23,475 frauds (= confirmed fraud disputes).
+
+The fraud rate of June 2026 transactions, read from each version, versus the rate of mature rows only
+(`event_timestamp < label_as_of - 60 days`):
+
+| Version (`label_as_of`) | June 2026 fraud rate | Mature rows | Mature fraud rate |
+|---|---:|---:|---:|
+| 0 (2026-06-30) | 0.140% | 6,680,600 | 0.300% |
+| 1 (2026-07-31) | 0.286% | 6,924,346 | 0.299% |
+| 2 (2026-08-31) | 0.295% | 7,167,311 | 0.299% |
+| 3 (2026-09-30) | 0.295% | 7,403,240 | 0.299% |
+| 4 (2026-10-15) | 0.295% | 7,520,544 | 0.299% |
+
+On the day June ends, half of June's frauds are still unknown; after 60 days the rate stops moving. The mature rate is
+the same in every version, so a training set built from mature rows does not depend on when it was built. Layer 2
+reads `VERSION AS OF` the version its model was trained on and filters to mature rows.
