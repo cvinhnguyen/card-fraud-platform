@@ -27,6 +27,7 @@ MATURITY_DAYS = 60   # the longest dispute delay in the source
 
 
 def build(spark: SparkSession, as_of: dt.date) -> None:
+    """Label the transactions up to as_of: insert new ones, flip labels of late disputes (MERGE)."""
     end = as_of + dt.timedelta(days=1)
     exists = spark.catalog.tableExists(TABLE)
     prev = spark.table(TABLE).agg(F.max("label_as_of")).first()[0] if exists else None

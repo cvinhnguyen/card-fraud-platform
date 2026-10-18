@@ -44,10 +44,12 @@ def save(df: DataFrame, table: str, partition_by: str | None = None) -> None:
 
 
 def report(name: str, before: dict, after: dict) -> None:
+    """Print one before/after line of the cleaning report."""
     print(f"  {name:<34} before {before[name]:>22,}  after {after[name]:>22,}")
 
 
 def build_transactions(spark: SparkSession, units: DataFrame) -> None:
+    """Clean the new bronze export dates and MERGE them into silver.stg_transactions."""
     table = "silver.stg_transactions"
     exists = spark.catalog.tableExists(table)
     done = str(spark.table(table).agg(F.max("export_date")).first()[0]) if exists else ""
@@ -61,6 +63,7 @@ def build_transactions(spark: SparkSession, units: DataFrame) -> None:
     clean = normalize(clean, units, "txn_city", "txn_unit").cache()
 
     def stats(df: DataFrame) -> dict:
+        """Row count, unique ids, settled spend and NULL auth_method of a DataFrame."""
         settled = F.col("status") == "settled"
         return df.agg(F.count("*").alias("rows"), F.countDistinct("transaction_id").alias("unique ids"),
                       F.sum(F.when(settled, F.col("amount_vnd"))).alias("settled spend (VND)"),

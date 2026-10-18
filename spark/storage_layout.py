@@ -47,6 +47,7 @@ def scan_metrics(spark: SparkSession, label: str) -> tuple[int, float]:
 
 
 def bench(spark: SparkSession, name: str, df: DataFrame, queries: dict) -> None:
+    """Write df as one layout, then time each query and count the files it read."""
     for q, run in queries.items():
         label = f"{name} | {q}"
         spark.sparkContext.setJobDescription(label)

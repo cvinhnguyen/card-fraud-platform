@@ -26,6 +26,7 @@ FEATURES = ["txn_count_30d", "distinct_merchants_30d", "avg_amount_90d", "std_am
 
 
 def build(spark: SparkSession):
+    """Build feat_card_txn_stats_daily from the fact and the disputes (windows end the day before D)."""
     fact = spark.table("gold.fact_transaction")
     day = F.to_date("txn_ts")
     txn = (fact.groupBy("card_id", day.alias("d"))
@@ -41,9 +42,11 @@ def build(spark: SparkSession):
             .withColumn("dn", F.datediff("d", F.lit(EPOCH))))
 
     def past(days_back: int) -> Window:   # the `days_back` days before D, D itself excluded
+        """Window over the `days_back` days before D for the same card (D excluded)."""
         return Window.partitionBy("card_id").orderBy("dn").rangeBetween(-days_back, -1)
 
     def total(c: str, days_back: int) -> Column:
+        """Sum of column c over the last `days_back` days before D."""
         return F.coalesce(F.sum(c).over(past(days_back)), F.lit(0))
 
     n90 = total("n", 90)

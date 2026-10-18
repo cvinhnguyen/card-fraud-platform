@@ -18,9 +18,11 @@ class Session:
     """Collects the events of one session; each event advances the clock by a random UI gap (seconds)."""
 
     def __init__(self, rng, sid: str, cid: str, device: str, is_new: bool, t: float):
+        """Session id, customer, device, whether the device is new to the customer, start time (epoch s)."""
         self.rng, self.sid, self.cid, self.device, self.is_new, self.t, self.rows = rng, sid, cid, device, is_new, t, []
 
     def add(self, event_type: str, gap=(2, 15), **f) -> None:
+        """Append one event a random `gap` (s) after the previous one; keyword fields fill their columns."""
         self.t += self.rng.uniform(*gap)
         self.rows.append((self.sid, self.cid, event_type, self.device, self.is_new, self.t, f.get("amount_vnd"),
                           f.get("payee_id"), f.get("transfer_type"), f.get("auth_method"), f.get("result"), f.get("reason")))
@@ -42,6 +44,7 @@ def gen_app_day(rng, cfg: dict, day: pd.Timestamp, n: int, first_session: int, c
     rows, truth = [], []
 
     def verify(s: Session, reason: str, pass_rate: float) -> bool:
+        """Record a biometric_verify event that passes with probability pass_rate; return whether it passed."""
         ok = rng.random() < pass_rate
         s.add("biometric_verify", (3, 15), result="success" if ok else "failed", reason=reason)
         return ok
@@ -63,6 +66,7 @@ def gen_app_day(rng, cfg: dict, day: pd.Timestamp, n: int, first_session: int, c
         return True
 
     def legit(sid: str, c: int, t: float) -> None:
+        """Generate one normal session of customer c and append its events."""
         cid, (first, count) = ctx["customer_ids"][c], (ctx["dev_first"][c], ctx["dev_count"][c])
         k = 0 if count == 1 or rng.random() < cfg["devices"]["primary_share"] else rng.integers(1, count)
         device = ctx["dev_ids"][first + k]
@@ -101,6 +105,7 @@ def gen_app_day(rng, cfg: dict, day: pd.Timestamp, n: int, first_session: int, c
         rows.extend(s.rows)
 
     def ato(sid: str, c: int, t: float) -> None:
+        """Generate one account-takeover session (new_device, or remote_access after the cutoff) and its truth."""
         cid, at = ctx["customer_ids"][c], a["ato"]
         remote = after and rng.random() < at["remote_share"]
         if remote:   # malware drives the victim's own phone
