@@ -1,0 +1,12 @@
+# Streaming sources and the realtime feature topic (no schema registry: JSON messages).
+source:
+  type: kafka
+  config:
+    connection:
+      bootstrap: ${KAFKA_BOOTSTRAP}
+    topic_patterns:
+      allow: ["card_authorizations", "app_events", "card_features_rt"]
+sink:
+  type: datahub-rest
+  config:
+    server: ${DATAHUB_GMS_URL}

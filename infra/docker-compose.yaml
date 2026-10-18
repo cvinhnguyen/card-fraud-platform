@@ -4,7 +4,9 @@
 #   core  : postgres (core banking, "another department") + seaweedfs (S3 lake) + kafka
 #   batch : spark master + worker, hive metastore (+ its postgres), trino; needs core running
 #   dbt   : spark thrift server for dbt-spark (needs batch)
-#   (next) stream / orch / gov
+#   stream: flink jobmanager + taskmanager (PyFlink jobs in flink/); needs core
+#   orch  : airflow (webserver, scheduler, its postgres); runs DP1-DP3 on batch + dbt
+#   gov   : datahub (gms, frontend, opensearch, its postgres) on the core Kafka; lineage + validation
 #
 # Usage (from repo root):
 #   python infra/make_env.py                       # once: secrets into infra/.env + s3.json
@@ -13,6 +15,38 @@
 #   docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
 
 name: fraud
+
+# Environment shared by DataHub's system-update and GMS (gov profile).
+x-datahub-env: &datahub-env
+    EBEAN_DATASOURCE_URL: jdbc:postgresql://datahub-db:5432/datahub
+    EBEAN_DATASOURCE_DRIVER: org.postgresql.Driver
+    EBEAN_DATASOURCE_USERNAME: datahub
+    EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_DB_PASSWORD}
+    EBEAN_DATASOURCE_HOST: datahub-db:5432
+    ELASTICSEARCH_HOST: search
+    ELASTICSEARCH_PORT: "9200"
+    ELASTICSEARCH_PROTOCOL: http
+    ELASTICSEARCH_USE_SSL: "false"
+    ELASTICSEARCH_IMPLEMENTATION: opensearch
+    ELASTICSEARCH_INDEX_BUILDER_MAPPINGS_REINDEX: "true"
+    ELASTICSEARCH_INDEX_BUILDER_SETTINGS_REINDEX: "true"
+    KAFKA_BOOTSTRAP_SERVER: kafka:19092
+    KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
+    SCHEMA_REGISTRY_TYPE: INTERNAL
+    USE_CONFLUENT_SCHEMA_REGISTRY: "false"
+    GRAPH_SERVICE_IMPL: elasticsearch
+    ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+    DATAHUB_SQL_SETUP_ENABLED: "true"
+    DATAHUB_PRECREATE_TOPICS: "true"
+    PARTITIONS: "1"
+    METADATA_SERVICE_AUTH_ENABLED: "false"   # GMS is bound to 127.0.0.1 / the compose network only
+    DATAHUB_TOKEN_SERVICE_SIGNING_KEY: ${DATAHUB_TOKEN_SIGNING_KEY}
+    DATAHUB_TOKEN_SERVICE_SALT: ${DATAHUB_TOKEN_SALT}
+    DATAHUB_GMS_HOST: datahub-gms
+    DATAHUB_GMS_PORT: "8080"
+    ENTITY_VERSIONING_ENABLED: "true"
+    DATAHUB_TELEMETRY_ENABLED: "false"
+    ELASTICSEARCH_BUILD_INDICES_CLONE_INDICES: "false"
 
 services:
   # Core banking database owned by another department (source for DP1).
@@ -112,11 +146,17 @@ services:
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
     volumes:
       - ./conf/hive/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+    healthcheck:   # thrift port open = ready; the Thrift Server exits if it starts before this
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9083'"]
+      interval: 10s
+      retries: 12
+      start_period: 20s
 
   # Spark standalone. Jobs run with `docker compose exec spark-master /opt/spark/bin/spark-submit /opt/jobs/<job>.py`,
   # so the driver lives in this container (UI on :4040 while a job runs).
   spark-master:
-    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    build: ./spark   # Spark 4.1.3 + Delta / S3A / JDBC / OpenLineage jars baked in
+    image: fraud/spark:4.1.3
     profiles: [batch]
     container_name: spark-master
     hostname: spark-master
@@ -133,10 +173,10 @@ services:
     volumes: &spark-volumes
       - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - ../spark:/opt/jobs:ro
-      - spark_ivy:/opt/spark/work-dir   # Maven jars cache (spark.jars.ivy); spark-owned dir in the image
+      - spark_ivy:/opt/spark/work-dir   # event logs for the history server (named after the Ivy jar cache it held before P9)
 
   spark-worker:
-    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    image: fraud/spark:4.1.3
     profiles: [batch]
     container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
@@ -144,6 +184,10 @@ services:
     environment:
       SPARK_WORKER_CORES: 8     # 12 on the host; skew only shows when the hot key is > 1/cores of the data
       SPARK_WORKER_MEMORY: 3g   # one 2g executor + headroom; the Docker VM has 8 GB
+      # Each application gets a work dir with its own copy of the --packages jars (~600 MB) + logs, never deleted by
+      # default: after a day of DAG runs the worker's container layer held 94 GB and filled the disk. Clean finished
+      # apps' dirs every 30 min, keep 1 h for debugging.
+      SPARK_WORKER_OPTS: -Dspark.worker.cleanup.enabled=true -Dspark.worker.cleanup.interval=1800 -Dspark.worker.cleanup.appDataTtl=3600
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
     ports:
@@ -152,7 +196,7 @@ services:
 
   # UI of finished Spark apps (stage timelines for the skew benchmark), read from the shared event log dir.
   spark-history:
-    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    image: fraud/spark:4.1.3
     profiles: [batch]
     container_name: spark-history
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
@@ -167,19 +211,16 @@ services:
   # SQL endpoint for dbt-spark (novel idea 1). Own profile: while up it holds 2 cores / 1 GB on the worker,
   # so stop it during Spark benchmarks.  docker compose ... --profile dbt up -d spark-thrift
   spark-thrift:
-    image: apache/spark:4.1.3-scala2.13-java17-python3-ubuntu
+    image: fraud/spark:4.1.3
     profiles: [dbt]
     container_name: spark-thrift
     hostname: spark-thrift   # executors call back to the driver by this name
-    # S3A + Delta jars also on the JVM classpath: with --packages alone, thrift session threads miss their classes
-    # (NoClassDefFoundError). Listed one by one: the whole ivy dir brings an old jackson that breaks Spark.
-    # ponytail: paths pin the versions in spark-defaults.conf; P9 bakes the jars into the image instead.
+    depends_on:
+      hive-metastore: {condition: service_healthy}
     # optimizeMetadataQuery off: Delta answers min/max(date) from file stats as java.sql.Date, but the Thrift
     # Server runs with the java8 time API (LocalDate) -> ClassCastException.
     command: >-
       /opt/spark/sbin/start-thriftserver.sh --conf spark.cores.max=2 --conf spark.databricks.delta.optimizeMetadataQuery.enabled=false --conf spark.executor.memory=1g
-      --conf spark.driver.extraClassPath=/opt/spark/work-dir/ivy/jars/org.apache.hadoop_hadoop-aws-3.4.2.jar:/opt/spark/work-dir/ivy/jars/software.amazon.awssdk_bundle-2.29.52.jar:/opt/spark/work-dir/ivy/jars/software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar:/opt/spark/work-dir/ivy/jars/org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-spark_4.1_2.13-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-storage-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-api-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-defaults-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-unitycatalog-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-client-0.6.0.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-hadoop-0.6.0.jar Files\Git\opt\spark\work-dir\ivy\jars\org.apache.hadoop_hadoop-aws-3.4.2.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.awssdk_bundle-2.29.52.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar
-      --conf spark.executor.extraClassPath=/opt/spark/work-dir/ivy/jars/org.apache.hadoop_hadoop-aws-3.4.2.jar:/opt/spark/work-dir/ivy/jars/software.amazon.awssdk_bundle-2.29.52.jar:/opt/spark/work-dir/ivy/jars/software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar:/opt/spark/work-dir/ivy/jars/org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-spark_4.1_2.13-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-storage-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-api-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-defaults-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.delta_delta-kernel-unitycatalog-4.4.1.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-client-0.6.0.jar:/opt/spark/work-dir/ivy/jars/io.unitycatalog_unitycatalog-hadoop-0.6.0.jar Files\Git\opt\spark\work-dir\ivy\jars\org.apache.hadoop_hadoop-aws-3.4.2.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.awssdk_bundle-2.29.52.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\software.amazon.s3.analyticsaccelerator_analyticsaccelerator-s3-1.2.1.jar;C:\Program Files\Git\opt\spark\work-dir\ivy\jars\org.wildfly.openssl_wildfly-openssl-2.1.4.Final.jar
     environment:
       SPARK_NO_DAEMONIZE: "true"
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
@@ -206,9 +247,242 @@ services:
 
 # ponytail: named volumes live in Docker's WSL disk. Before the 100 GB phase, move Docker Desktop's
 # disk image to E: (Settings → Resources → Advanced → Disk image location) instead of bind-mounting NTFS.
+  # Flink 2.2 session cluster; PyFlink jobs are submitted with `flink run -py /opt/flink/jobs/<job>.py`.
+  # UI on host 8088 (8081 is the Spark worker). ponytail: one TaskManager, 4 slots (the hot-key demo runs with
+  # parallelism 4; the other jobs use 1).
+  flink-jobmanager:
+    build: ./flink
+    image: fraud/flink:2.2.1
+    profiles: [stream]
+    container_name: flink-jobmanager
+    hostname: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "127.0.0.1:8088:8081"
+    environment: &flink-env
+      ENABLE_BUILT_IN_PLUGINS: flink-s3-fs-hadoop-2.2.1.jar   # s3:// for the raw landing sink
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 1024m
+        taskmanager.memory.process.size: 2560m
+        taskmanager.numberOfTaskSlots: 4
+        parallelism.default: 2
+        s3.endpoint: http://seaweedfs:8333
+        s3.path.style.access: true
+        s3.access-key: ${S3_ACCESS_KEY}
+        s3.secret-key: ${S3_SECRET_KEY}
+    volumes: &flink-volumes
+      - ../flink:/opt/flink/jobs:ro
+      - ../generator/ref:/opt/flink/ref:ro
+
+  flink-taskmanager:
+    image: fraud/flink:2.2.1
+    profiles: [stream]
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on: [flink-jobmanager]
+    environment: *flink-env
+    volumes: *flink-volumes
+
+  # ---------- orch (P7) ----------
+  # Airflow 2.10, LocalExecutor. Spark drivers run inside the scheduler (SparkSubmitOperator, client mode), so it
+  # shares with the Spark containers: user 185 (spark), spark-defaults.conf, and the spark_ivy volume
+  # (event logs, so Airflow-run jobs show in the history server). Connections, variables and the `spark` pool are
+  # created in Airflow by airflow-init from infra/.env; the DAG code holds no host names or credentials.
+  airflow-db:
+    image: postgres:16-alpine
+    profiles: [orch]
+    container_name: airflow-db
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      retries: 5
+
+  airflow-init:
+    build: ./airflow
+    image: fraud/airflow:2.10.5
+    profiles: [orch]
+    container_name: airflow-init
+    user: "185:0"
+    depends_on:
+      airflow-db: {condition: service_healthy}
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+      AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
+    # Only the init container sees the source credentials: it stores them as (Fernet-encrypted) Airflow connections.
+    env_file: .env
+    command: >-
+      bash -c "airflow db migrate >/dev/null && echo 'metadata db ready'
+      && (airflow users create --role Admin --username admin --password \"$$AIRFLOW_ADMIN_PASSWORD\"
+      --firstname Admin --lastname Local --email admin@example.invalid >/dev/null 2>&1 || true)
+      && python /opt/airflow/setup_airflow.py"
+    volumes:
+      - ../airflow/setup_airflow.py:/opt/airflow/setup_airflow.py:ro
+
+  airflow-webserver:
+    image: fraud/airflow:2.10.5
+    profiles: [orch]
+    container_name: airflow-webserver
+    user: "185:0"
+    command: webserver
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    environment: *airflow-env
+    ports:
+      - "127.0.0.1:8082:8080"   # UI, user admin, password AIRFLOW_ADMIN_PASSWORD in infra/.env
+    volumes: &airflow-volumes
+      - ../airflow/dags:/opt/airflow/dags:ro
+      - ../spark:/opt/jobs:ro
+      - ../dbt:/opt/airflow/dbt:ro
+      - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - spark_ivy:/opt/spark/work-dir
+      - airflow_logs:/opt/airflow/logs
+      - airflow_dbt:/opt/airflow/dbt-artifacts   # dbt target/ + logs (manifest, run_results, catalog)
+
+  airflow-scheduler:
+    image: fraud/airflow:2.10.5
+    profiles: [orch]
+    container_name: airflow-scheduler
+    hostname: airflow-scheduler   # Spark executors call back to the drivers by this name
+    user: "185:0"
+    command: scheduler
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    environment: *airflow-env
+    volumes: *airflow-volumes
+
+  # ---------- gov (P8) ----------
+  # DataHub v1.5.0.6 (the course version) with its own Postgres and OpenSearch; it reuses the core Kafka
+  # (system-update creates DataHub's topics, auto-create stays off). Heaps are capped to fit next to batch + orch in
+  # the 8 GB Docker VM. ponytail: no datahub-actions (UI-triggered ingestion); recipes run from Airflow instead.
+  datahub-db:
+    image: postgres:16-alpine
+    profiles: [gov]
+    container_name: datahub-db
+    environment:
+      POSTGRES_DB: datahub
+      POSTGRES_USER: datahub
+      POSTGRES_PASSWORD: ${DATAHUB_DB_PASSWORD}
+    volumes:
+      - datahub_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datahub -d datahub"]
+      interval: 10s
+      retries: 5
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.3
+    profiles: [gov]
+    container_name: datahub-opensearch
+    hostname: search
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS --fail 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=0s'"]
+      interval: 10s
+      retries: 20
+      start_period: 60s
+
+  datahub-system-update:   # one-shot: SQL schema, search indices, Kafka topics; then exits
+    image: acryldata/datahub-upgrade:v1.5.0.6
+    profiles: [gov]
+    container_name: datahub-system-update
+    command: ["-u", "SystemUpdate"]
+    depends_on:
+      datahub-db: {condition: service_healthy}
+      opensearch: {condition: service_healthy}
+    environment:
+      <<: *datahub-env
+      # Only here, as in DataHub's quickstart: system-update registers the event schemas in GMS's internal registry.
+      # Set on GMS too (the course compose did), its Kafka consumers ask the registry for the "latest version",
+      # get "lookUpSchemaUnderSubject method not implemented" and stop: nothing is written or indexed.
+      SCHEMA_REGISTRY_SYSTEM_UPDATE: "true"
+      SPRING_KAFKA_PROPERTIES_AUTO_REGISTER_SCHEMAS: "true"
+      SPRING_KAFKA_PROPERTIES_USE_LATEST_VERSION: "true"
+      JAVA_OPTS: -Xms256m -Xmx512m
+
+  datahub-gms:
+    image: acryldata/datahub-gms:v1.5.0.6
+    profiles: [gov]
+    container_name: datahub-gms
+    hostname: datahub-gms
+    depends_on:
+      datahub-system-update: {condition: service_completed_successfully}
+    environment:
+      <<: *datahub-env
+      JAVA_OPTS: -Xms512m -Xmx1g
+      MAE_CONSUMER_ENABLED: "true"
+      MCE_CONSUMER_ENABLED: "true"
+      PE_CONSUMER_ENABLED: "true"
+      UI_INGESTION_ENABLED: "false"
+      DATAHUB_UPGRADE_HISTORY_KAFKA_CONSUMER_GROUP_ID: generic-duhe-consumer-job-client-gms
+      # NONE, not the course's WAIT_UNTIL: each bulk then waited for an index refresh (~3 s for 1-3 events on the USB
+      # HDD), so indexing fell 4,000+ events behind a pipeline run. Writes still show up after the normal refresh.
+      ES_BULK_REFRESH_POLICY: NONE
+      DATAHUB_SERVER_TYPE: quickstart
+      DATAHUB_EMIT_MODE: SYNC_PRIMARY         # REST / OpenLineage writes land in the database before the call returns
+      GRAPH_SERVICE_DIFF_MODE_ENABLED: "false"
+      ELASTICSEARCH_LIMIT_RESULTS_STRICT: "true"
+      ENTITY_SERVICE_ENABLE_RETENTION: "true"
+      ALTERNATE_MCP_VALIDATION: "true"
+      STRICT_URN_VALIDATION_ENABLED: "true"
+      # OpenLineage endpoint (/openapi/openlineage/api/v1/lineage): Spark jobs post their lineage here (novel idea 2)
+      DATAHUB_OPENLINEAGE_ENV: PROD
+      DATAHUB_OPENLINEAGE_CAPTURE_COLUMN_LEVEL_LINEAGE: "true"
+    ports:
+      - "127.0.0.1:8083:8080"   # 8080/8081 are Spark
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS --fail http://localhost:8080/health"]
+      interval: 10s
+      retries: 30
+      start_period: 90s
+
+  datahub-frontend:
+    image: acryldata/datahub-frontend-react:v1.5.0.6
+    profiles: [gov]
+    container_name: datahub-frontend
+    depends_on:
+      datahub-gms: {condition: service_healthy}
+    environment:
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: "8080"
+      DATAHUB_SECRET: ${DATAHUB_SECRET}
+      DATAHUB_APP_VERSION: v1.5.0.6
+      KAFKA_BOOTSTRAP_SERVER: kafka:19092
+      ELASTIC_CLIENT_HOST: search
+      ELASTIC_CLIENT_PORT: "9200"
+      JAVA_OPTS: -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:9002:9002"   # UI, user datahub, password DATAHUB_ADMIN_PASSWORD in infra/.env
+    volumes:
+      - ./conf/datahub/user.props:/datahub-frontend/conf/user.props:ro
+
 volumes:
   postgres_data:
   seaweedfs_data:
   kafka_data:
   metastore_db_data:
   spark_ivy:
+  airflow_db_data:
+  airflow_logs:
+  airflow_dbt:
+  datahub_db_data:
+  opensearch_data:

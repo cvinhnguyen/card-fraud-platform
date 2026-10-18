@@ -1,0 +1,14 @@
+# dbt artifacts of the last DP2 run: model descriptions, column docs, model lineage, and the dbt test results
+# (shown as assertions next to the GE ones). target_platform hive = the same table URNs OpenLineage reports.
+source:
+  type: dbt
+  config:
+    manifest_path: ${DBT_TARGET}/manifest.json
+    catalog_path: ${DBT_TARGET}/catalog.json
+    run_results_paths: ["${DBT_TARGET}/run_results.json"]
+    target_platform: hive
+    include_column_lineage: true
+sink:
+  type: datahub-rest
+  config:
+    server: ${DATAHUB_GMS_URL}

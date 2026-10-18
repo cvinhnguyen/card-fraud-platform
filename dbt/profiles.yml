@@ -1,13 +1,22 @@
 # No secrets: the thrift server listens on 127.0.0.1 only, without auth (local dev).
+#   local    by hand: through the Spark Thrift Server (compose profile dbt)
+#   session  Airflow DP2: dbt starts its own Spark session (client driver, like every other task), so the pipeline
+#            does not need the Thrift Server's 2 GB held all the time (8 GB Docker VM next to DataHub)
 card_fraud:
   target: local
   outputs:
     local:
       type: spark
       method: thrift
-      host: 127.0.0.1
-      port: 10000
+      host: "{{ env_var('DBT_SPARK_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('DBT_SPARK_PORT', '10000') | as_number }}"
       schema: gold
       threads: 2
       connect_retries: 3
       connect_timeout: 10
+    session:
+      type: spark
+      method: session
+      host: NA        # required by the adapter, unused by the session method
+      schema: gold
+      threads: 1

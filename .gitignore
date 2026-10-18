@@ -2,6 +2,7 @@
 .env
 .secrets/
 infra/conf/seaweedfs/s3.json
+infra/conf/datahub/user.props
 
 # generated data
 data/

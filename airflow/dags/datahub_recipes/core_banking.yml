@@ -1,0 +1,16 @@
+# Core banking database (another department): tables, columns, row counts. Values come from Airflow connections.
+source:
+  type: postgres
+  config:
+    host_port: ${CORE_DB_HOST_PORT}
+    database: core_banking
+    username: ${CORE_DB_USER}
+    password: ${CORE_DB_PASSWORD}
+    include_views: false
+    profiling:
+      enabled: true
+      profile_table_level_only: true   # row counts, no column statistics
+sink:
+  type: datahub-rest
+  config:
+    server: ${DATAHUB_GMS_URL}
