@@ -1,0 +1,97 @@
+// CI/CD of the RAG data pipeline (Airflow DAG rag_ingest): unit tests of the steps -> the DAG imports in the Airflow
+// image -> build the ml image the steps run in -> release it (Airflow Variable rag_image) -> run the DAG -> its
+// checks (row count, unique ids, text, embedding size, all documents, online = offline) must pass. Runs when the
+// steps, the DAG, the documents or the image changed (Jenkins polls main), or by hand. Needs Airflow up (profile
+// orch); Jenkins only holds the Airflow admin credential, not Airflow's own secrets.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 60, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    AIRFLOW = 'http://airflow-webserver:8080/api/v1'
+    DAG = 'rag_ingest'
+  }
+  stages {
+    stage('RAG pipeline') {
+      when {
+        beforeAgent true
+        anyOf {
+          changeset 'ml/jobs/rag_ingest.py'; changeset 'ml/jobs/tests/**'; changeset 'ml/feature_repo_kb/**'
+          changeset 'pipelines/airflow/dags/rag_ingest.py'; changeset 'generator/knowledge/**'; changeset 'ml/Dockerfile*'
+          triggeredBy 'UserIdCause'
+        }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image fraud/ml-train:${TAG}"
+          }
+        }
+        stage('Unit tests') {
+          steps {
+            sh 'docker build -f ml/Dockerfile --target test -t fraud/ml-train:test-$TAG .'
+            sh 'docker run --rm fraud/ml-train:test-$TAG python3 -m pytest -q tests/test_rag_ingest.py'
+          }
+        }
+        stage('DAG check') {
+          // the DAG must import in the Airflow image (operators, provider, lineage entities) and have 5 tasks
+          steps {
+            sh '''tar -C pipelines/airflow/dags -c common.py rag_ingest.py | docker run -i --rm --entrypoint bash fraud/airflow:2.10.5 -c \
+                  'mkdir -p /tmp/d && tar -x -C /tmp/d && cd /tmp/d && python -c "import rag_ingest as m; t = sorted(m.dag.task_ids); print(t); assert len(t) == 5"' '''
+          }
+        }
+        stage('Build image') {
+          steps {
+            sh 'docker build -f ml/Dockerfile -t fraud/ml-train:$TAG .'
+          }
+        }
+        stage('Release + run') {
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
+                api "$AIRFLOW/health" >/dev/null || { echo "Airflow is not up (compose profile orch)" >&2; exit 1; }
+                api -X POST "$AIRFLOW/variables" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"fraud/ml-train:$TAG\\"}" >/dev/null \
+                  || api -X PATCH "$AIRFLOW/variables/rag_image" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"fraud/ml-train:$TAG\\"}" >/dev/null
+                echo "released: rag_image = fraud/ml-train:$TAG"
+                api -X PATCH "$AIRFLOW/dags/$DAG" -d '{"is_paused": false}' >/dev/null
+                run="ci-$TAG-$(date +%s)"
+                api -X POST "$AIRFLOW/dags/$DAG/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG\\"}" >/dev/null
+                echo "$run" > run_id
+                while :; do
+                  state=$(api "$AIRFLOW/dags/$DAG/dagRuns/$run" | jq -r .state)
+                  case "$state" in success|failed) break;; esac
+                  sleep 15
+                done
+                api "$AIRFLOW/dags/$DAG/dagRuns/$run/taskInstances" | jq -r '.task_instances[] | "\\(.task_id) \\(.state) \\(.duration // 0 | floor) s"' | sort
+                echo "dag run $run: $state"
+                [ "$state" = success ]
+              '''
+            }
+          }
+        }
+        stage('Validation results') {
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                run=$(cat run_id)
+                # the checks the step printed (the run already failed in the previous stage if one of them failed)
+                printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Accept: text/plain' \
+                  "$AIRFLOW/dags/$DAG/dagRuns/$run/taskInstances/validate_rag.run_checks/logs/1?full_content=true" \
+                  | grep -E -o "(ok  |FAIL) expect_.*" || true
+              '''
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
+  }
+}

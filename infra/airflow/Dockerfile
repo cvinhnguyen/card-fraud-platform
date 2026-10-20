@@ -53,6 +53,8 @@ USER airflow
 # One layer. The Spark provider without its dependencies: it declares pyspark (340 MB) but SparkSubmitOperator only
 # calls the spark-submit binary; delta-spark (no deps) for `from delta.tables import` in the drivers. DataHub listener 1.5.0.x: the last line for Airflow 2, matching the server
 # (v1.5.0.6; 1.5.0.6 itself pins a sqlglotc build no longer on PyPI, so 1.5.0.17).
+# Docker provider 4.4.5 (the last for Airflow 2.10): the RAG DAG runs its steps in the CI-built ml image.
 RUN pip install --no-cache-dir "apache-airflow==2.10.5" "acryl-datahub-airflow-plugin==1.5.0.17" \
+      "apache-airflow-providers-docker==4.4.5" \
     && pip install --no-cache-dir --no-deps "apache-airflow-providers-apache-spark==5.0.0" "delta-spark==4.4.1" \
     && find /home/airflow/.local -depth -name __pycache__ -type d -exec rm -rf {} +

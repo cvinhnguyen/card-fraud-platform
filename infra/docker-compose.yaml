@@ -334,6 +334,8 @@ services:
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
       DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
       AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
+      # REST API with the admin user too (Jenkins releases and runs the RAG DAG: infra/jenkins, pipelines/rag/Jenkinsfile)
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
     # Only the init container sees the source credentials: it stores them as (Fernet-encrypted) Airflow connections.
     env_file: .env
     command: >-
@@ -376,7 +378,19 @@ services:
     depends_on:
       airflow-init: {condition: service_completed_successfully}
     environment: *airflow-env
-    volumes: *airflow-volumes
+    # + the Docker socket: DockerOperator tasks (RAG DAG) run as sibling containers on the compose network
+    group_add: ["0"]
+    volumes:
+      - ../pipelines/airflow/dags:/opt/airflow/dags:ro
+      - ../pipelines/spark:/opt/jobs:ro
+      - ../pipelines/dbt:/opt/airflow/dbt:ro
+      - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - spark_ivy:/opt/spark/work-dir
+      - airflow_logs:/opt/airflow/logs
+      - airflow_dbt:/opt/airflow/dbt-artifacts
+      - ../ml/feature_repo:/opt/airflow/feature_repo:ro
+      - ../ml:/opt/airflow/ml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # ---------- gov (P8) ----------
   # DataHub v1.5.0.6 (the course version) with its own Postgres and OpenSearch; it reuses the core Kafka
