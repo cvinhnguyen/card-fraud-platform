@@ -39,7 +39,7 @@ pipeline {
       steps {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh 'helm lint agents/chart -f agents/chart/values-data-agents.yaml'
-          sh 'helm template $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS | kubectl apply --dry-run=server -f - >/dev/null'
+          sh 'helm template $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS | kubectl -n kagent apply --dry-run=server -f - >/dev/null'
         }
       }
     }
