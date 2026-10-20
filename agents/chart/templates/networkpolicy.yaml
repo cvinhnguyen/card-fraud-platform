@@ -7,10 +7,10 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: card-support-agents
+  name: {{ .Release.Name }}
 spec:
   podSelector:
-    matchLabels: {app.kubernetes.io/part-of: card-support}
+    matchLabels: {card-support/release: {{ .Release.Name }}}
   policyTypes: [Ingress, Egress]
   ingress:
     - from:

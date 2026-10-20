@@ -1,8 +1,8 @@
-# System prompts, one key per agent (prompts/<name>.md)
+# System prompts of this release, one key per agent (prompts/<name>.md; from Langfuse when deployed by the pipeline)
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: agent-prompts
+  name: {{ .Release.Name }}-prompts
 data:
   {{- range $name, $a := .Values.agents }}
   {{ $name }}: |
@@ -15,12 +15,15 @@ apiVersion: kagent.dev/v1alpha2
 kind: Agent
 metadata:
   name: {{ $name }}
+  {{- with (index $.Values.promptVersions $name) }}
+  annotations: {card-support/prompt: "card-support/{{ $name }} v{{ . }}"}
+  {{- end }}
 spec:
   type: Declarative
   description: {{ $a.description | quote }}
   declarative:
     {{- include "card-support.declarative" (dict "name" $name "a" $a "root" $) | nindent 4 }}
     deployment:
-      labels: {app.kubernetes.io/part-of: card-support}
+      labels: {app.kubernetes.io/part-of: card-support, card-support/release: {{ $.Release.Name }}}
       resources: {{- toYaml $.Values.resources | nindent 8 }}
 {{- end }}

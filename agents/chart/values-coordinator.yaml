@@ -1,0 +1,12 @@
+# Release card-support-coordinator (pipeline agents/Jenkinsfile.coordinator): the agent customers talk to; it calls
+# the data agents (release card-support-data-agents) through the gateway.
+agents:
+  coordinator:
+    description: Card support assistant of the bank. Talks to the customer and asks the card data agent and the risk agent.
+    subAgents: [card-data-agent, risk-agent]
+    public: true
+    skills:
+      - id: card-support
+        name: Card support
+        description: Answers a customer's question about their card, a payment or the bank's card rules.
+        examples: ["My online payment of 45 million was declined on card card_00006087, why?"]

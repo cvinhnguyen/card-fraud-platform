@@ -4,7 +4,7 @@
 runtime: go
 modelConfig: {{ .root.Values.modelConfig }}
 stream: true
-systemMessageFrom: {type: ConfigMap, name: agent-prompts, key: {{ .name }}}
+systemMessageFrom: {type: ConfigMap, name: {{ .root.Release.Name }}-prompts, key: {{ .name }}}
 tools:
   {{- if .a.mcpServer }}
   - type: McpServer

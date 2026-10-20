@@ -1,0 +1,84 @@
+// CD of the data agents (card-data-agent, risk-agent): their system prompts come from Langfuse (label production),
+// then helm deploys release card-support-data-agents and an A2A smoke test goes through the gateway the way the
+// coordinator calls them. Runs after the MCP server pipeline, when agents/ changed, by hand, or every 15 min when a
+// new prompt version was promoted to production in Langfuse. Then the coordinator pipeline runs.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 30, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  triggers { cron('H/15 * * * *') }
+  environment {
+    RELEASE = 'card-support-data-agents'
+    AGENTS = 'card-data-agent risk-agent'
+  }
+  stages {
+    stage('Prompts from Langfuse') {
+      steps {
+        withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
+                         string(credentialsId: 'langfuse-secret-key', variable: 'LANGFUSE_SECRET_KEY'),
+                         file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          script {
+            env.PROMPT_FLAGS = sh(script: 'sh agents/fetch_prompts.sh $AGENTS', returnStdout: true).trim()
+            def deployed = sh(script: '''for a in $AGENTS; do
+                v=$(kubectl -n kagent get agent $a -o jsonpath='{.metadata.annotations.card-support/prompt}' 2>/dev/null | sed 's/.* v//')
+                printf ' --set promptVersions.%s=%s' "$a" "$v"; done''', returnStdout: true).trim()
+            def byTimerOnly = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') &&
+                              currentBuild.getBuildCauses().size() == 1
+            env.DEPLOY = (!byTimerOnly || deployed != env.PROMPT_FLAGS) ? 'true' : 'false'
+            echo "deployed:${deployed} | production:${env.PROMPT_FLAGS} | deploy: ${env.DEPLOY}"
+          }
+        }
+      }
+    }
+    stage('Validate') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh 'helm lint agents/chart -f agents/chart/values-data-agents.yaml'
+          sh 'helm template $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS | kubectl apply --dry-run=server -f - >/dev/null'
+        }
+      }
+    }
+    stage('Deploy') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS --atomic --timeout 5m'
+          sh 'for a in $AGENTS; do kubectl -n kagent wait --for=condition=Ready agent/$a --timeout=300s; done'
+        }
+      }
+    }
+    stage('Smoke test (A2A through the gateway)') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([string(credentialsId: 'a2a-key-coordinator', variable: 'A2A_KEY'),
+                         file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh '''
+            gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
+            ask() {   # agent, question, text the answer must contain
+              body=$(jq -n --arg q "$2" '{jsonrpc: "2.0", id: 1, method: "message/send",
+                params: {message: {role: "user", messageId: (now | tostring), parts: [{kind: "text", text: $q}]}}}')
+              out=$(printf 'header = "Authorization: Bearer %s"\n' "$A2A_KEY" | curl -fsS -K - --max-time 240 \
+                -H "x-kagent-host: $1.kagent" -H 'Content-Type: application/json' -d "$body" "$gw/")
+              answer=$(printf '%s' "$out" | jq -r '[.result.artifacts[]?.parts[]? | select(.kind == "text") | .text] | join(" ")')
+              echo "$1: $(printf '%s' "$out" | jq -r .result.status.state) | $answer" | cut -c1-300
+              printf '%s' "$out" | jq -e '.result.status.state == "completed"' >/dev/null
+              printf '%s' "$answer" | grep -q -i -- "$3"
+            }
+            ask card-data-agent "How many payments did card card_00006087 make in the last 30 days?" "30 days"
+            ask risk-agent "What is the foreign transaction fee?" "fee_schedule"
+          '''
+        }
+      }
+    }
+  }
+  post {
+    success {
+      script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
+    }
+  }
+}

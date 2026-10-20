@@ -1,0 +1,26 @@
+# Release card-support-data-agents (pipeline agents/Jenkinsfile.data-agents): the agents that read the card data and
+# the policies through the MCP server. Only the coordinator may call them, through the gateway.
+a2aCallers: [coordinator]
+agents:
+  card-data-agent:
+    description: Live data of the customer's card (profile, recent activity, 30/90/180-day history) and sections of the bank's card documents by id.
+    mcpServer: card-support-card-data-agent
+    tools: [get_card_data, get_policy_chunk]
+    skills:
+      - id: card-data
+        name: Card data
+        description: What the bank's live data says about one card.
+        examples: ["How many payments did card card_00006087 make in the last 30 days?"]
+  risk-agent:
+    description: Fraud check of a payment the customer describes (the bank's fraud model) and answers from the bank's card policies (RAG).
+    mcpServer: card-support-risk-agent
+    tools: [score_payment, search_policy]
+    skills:
+      - id: payment-check
+        name: Payment check
+        description: Would the bank approve, ask for extra authentication, or decline this payment, and why.
+        examples: ["Will a 45,000,000 VND online payment on card card_00006087 go through?"]
+      - id: policy
+        name: Card policy
+        description: Fees, liability, disputes and authentication rules, with the document and section.
+        examples: ["Am I liable if someone used my card abroad?"]

@@ -1,11 +1,10 @@
 # agentgateway as the A2A gateway: agents never call each other directly.
 #   agent -> agent: kagent's proxy.url sends every agent-as-tool call to the gateway with header
-#                   x-kagent-host: <agent>.<namespace>; route agents-internal, key user coordinator only
+#                   x-kagent-host: <agent>.<namespace>; route <release>-internal, key users a2aCallers only
 #   client -> agent: /a2a/<agent> for agents marked public; route a2a-<agent>, key user support-app only
 # The gateway rewrites each agent card's URL to its own address, so A2A clients keep going through it.
 {{- $gw := .Values.gateway }}
-{{- $callers := list }}
-{{- range $name, $a := .Values.agents }}{{ if $a.subAgents }}{{ $callers = append $callers $name }}{{ end }}{{ end }}
+{{- $internal := printf "%s-internal" .Release.Name }}
 {{- range $name, $a := .Values.agents }}
 ---
 apiVersion: agentgateway.dev/v1alpha1
@@ -20,7 +19,7 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: agents-internal
+  name: {{ $internal }}
   namespace: {{ $gw.namespace }}
 spec:
   parentRefs: [{name: {{ $gw.name }}}]
@@ -34,10 +33,10 @@ spec:
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
-  name: agents-internal
+  name: {{ $internal }}
   namespace: {{ $gw.namespace }}
 spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: agents-internal}]
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: {{ $internal }}}]
   traffic:
     apiKeyAuthentication:
       mode: Strict
@@ -45,7 +44,7 @@ spec:
     authorization:
       action: Allow
       policy:
-        matchExpressions: [{{ printf "apiKey.user_id in %s" (toJson $callers) | quote }}]
+        matchExpressions: [{{ printf "apiKey.user_id in %s" (toJson .Values.a2aCallers) | quote }}]
     rateLimit:
       local:
         - {requests: {{ $gw.rateLimit.requests }}, unit: Minutes, burst: {{ $gw.rateLimit.burst }}}

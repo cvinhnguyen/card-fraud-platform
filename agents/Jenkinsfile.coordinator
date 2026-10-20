@@ -1,0 +1,75 @@
+// CD of the coordinator: its system prompt comes from Langfuse (label production), helm deploys release
+// card-support-coordinator, and an A2A smoke test calls it the way a client does (public route, support-app key);
+// the answer needs both data agents. Runs after the data agents' pipeline, when agents/ changed, by hand, or every
+// 15 min when a new coordinator prompt version was promoted to production in Langfuse.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 30, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  triggers { cron('H/15 * * * *') }
+  environment {
+    RELEASE = 'card-support-coordinator'
+    AGENTS = 'coordinator'
+  }
+  stages {
+    stage('Prompt from Langfuse') {
+      steps {
+        withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
+                         string(credentialsId: 'langfuse-secret-key', variable: 'LANGFUSE_SECRET_KEY'),
+                         file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          script {
+            env.PROMPT_FLAGS = sh(script: 'sh agents/fetch_prompts.sh $AGENTS', returnStdout: true).trim()
+            def deployed = sh(script: '''v=$(kubectl -n kagent get agent coordinator -o jsonpath='{.metadata.annotations.card-support/prompt}' 2>/dev/null | sed 's/.* v//')
+                printf -- '--set promptVersions.coordinator=%s' "$v"''', returnStdout: true).trim()
+            def byTimerOnly = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') &&
+                              currentBuild.getBuildCauses().size() == 1
+            env.DEPLOY = (!byTimerOnly || deployed != env.PROMPT_FLAGS) ? 'true' : 'false'
+            echo "deployed: ${deployed} | production: ${env.PROMPT_FLAGS} | deploy: ${env.DEPLOY}"
+          }
+        }
+      }
+    }
+    stage('Validate') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh 'helm lint agents/chart -f agents/chart/values-coordinator.yaml'
+          sh 'helm template $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS | kubectl apply --dry-run=server -f - >/dev/null'
+        }
+      }
+    }
+    stage('Deploy') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS --atomic --timeout 5m'
+          sh 'kubectl -n kagent wait --for=condition=Ready agent/coordinator --timeout=300s'
+        }
+      }
+    }
+    stage('Smoke test (A2A client through the gateway)') {
+      when { environment name: 'DEPLOY', value: 'true' }
+      steps {
+        withCredentials([string(credentialsId: 'a2a-key-support-app', variable: 'A2A_KEY'),
+                         file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh '''
+            gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
+            q="How many payments did card card_00006087 make in the last 30 days, and what is the foreign transaction fee?"
+            body=$(jq -n --arg q "$q" '{jsonrpc: "2.0", id: 1, method: "message/send",
+              params: {message: {role: "user", messageId: (now | tostring), parts: [{kind: "text", text: $q}]}}}')
+            out=$(printf 'header = "Authorization: Bearer %s"\n' "$A2A_KEY" | curl -fsS -K - --max-time 280 \
+              -H 'Content-Type: application/json' -d "$body" "$gw/a2a/coordinator")
+            answer=$(printf '%s' "$out" | jq -r '[.result.artifacts[]?.parts[]? | select(.kind == "text") | .text] | join(" ")')
+            echo "coordinator: $(printf '%s' "$out" | jq -r .result.status.state) | $answer" | cut -c1-400
+            printf '%s' "$out" | jq -e '.result.status.state == "completed"' >/dev/null
+            printf '%s' "$answer" | grep -q -i "fee_schedule"
+          '''
+        }
+      }
+    }
+  }
+}
