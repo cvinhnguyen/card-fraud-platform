@@ -1,0 +1,55 @@
+# Jenkins configuration as code (JCasC). Values like ${langfuse_secret_key} are Docker secrets (/run/secrets/<name>,
+# from infra/.env through compose) and become Jenkins credentials: Jenkinsfiles only reference credential ids.
+jenkins:
+  systemMessage: "Card fraud platform CI/CD - configured as code in infra/jenkins/casc.yaml"
+  numExecutors: 1   # one pipeline at a time: the machine's RAM does not fit two heavy builds
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - {id: admin, password: "${jenkins_admin_password}"}
+  authorizationStrategy:
+    loggedInUsersCanDoAnything: {allowAnonymousRead: false}
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - file: {scope: GLOBAL, id: kubeconfig, fileName: kubeconfig, description: "kind, ServiceAccount ci/jenkins-deployer",
+                   secretBytes: "${readFileBase64:/run/secrets/kubeconfig}"}
+          - string: {scope: GLOBAL, id: langfuse-public-key, secret: "${langfuse_public_key}"}
+          - string: {scope: GLOBAL, id: langfuse-secret-key, secret: "${langfuse_secret_key}"}
+          - string: {scope: GLOBAL, id: a2a-key-coordinator, secret: "${a2a_key_coordinator}", description: "A2A smoke test of the sub-agents"}
+          - string: {scope: GLOBAL, id: a2a-key-support-app, secret: "${a2a_key_support_app}", description: "A2A smoke test of the coordinator"}
+          - string: {scope: GLOBAL, id: edge-admin-password, secret: "${edge_admin_password}", description: "NGINX basic auth (Web API smoke test)"}
+          - string: {scope: GLOBAL, id: ml-db-password, secret: "${ml_db_password}"}
+          - string: {scope: GLOBAL, id: redis-password, secret: "${redis_password}"}
+          - string: {scope: GLOBAL, id: s3-access-key, secret: "${s3_access_key}"}
+          - string: {scope: GLOBAL, id: s3-secret-key, secret: "${s3_secret_key}"}
+          - usernamePassword: {scope: GLOBAL, id: airflow-admin, username: admin, password: "${airflow_admin_password}"}
+unclassified:
+  location:
+    url: http://localhost:8095/
+# One pipeline job per Jenkinsfile, from GitHub main; polling (no webhook can reach this machine), and each
+# Jenkinsfile skips its build when nothing under its paths changed.
+jobs:
+  - script: |
+      def repo = 'https://github.com/cvinhnguyen/card-fraud-platform.git'
+      [
+        ['card-support-mcp',        'services/card_support_mcp/Jenkinsfile', 'MCP server: test, mutation test, build, helm --atomic, smoke'],
+        ['card-support-data-agents', 'agents/Jenkinsfile.data-agents',        'Card data + risk agents: prompts from Langfuse, deploy, A2A smoke'],
+        ['card-support-coordinator', 'agents/Jenkinsfile.coordinator',        'Coordinator: prompt from Langfuse, deploy, A2A smoke'],
+        ['rag-pipeline',             'pipelines/rag/Jenkinsfile',             'RAG data pipeline: test, build image, release to Airflow, run, validate'],
+        ['stream-feature-jobs',      'ml/jobs/Jenkinsfile.stream',            'Push jobs to the online + offline store: test, build, redeploy'],
+      ].each { job ->
+        pipelineJob(job[0]) {
+          description(job[2])
+          properties { pipelineTriggers { triggers { pollSCM { scmpoll_spec('H/5 * * * *') } } } }
+          definition {
+            cpsScm {
+              scm { git { remote { url(repo) }; branch('*/main') } }
+              scriptPath(job[1])
+              lightweight(true)
+            }
+          }
+        }
+      }

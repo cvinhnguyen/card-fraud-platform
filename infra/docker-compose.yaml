@@ -680,6 +680,29 @@ services:
     volumes:
       - registry_data:/var/lib/registry
 
+  # Layer 3 CI/CD: Jenkins drives the host's Docker (socket) and the kind cluster (deploy-only ServiceAccount, setup:
+  # infra/jenkins/setup.sh). Secrets reach it as Docker secrets from this .env and become Jenkins credentials
+  # (infra/jenkins/casc.yaml). UI http://localhost:8095, user admin, JENKINS_ADMIN_PASSWORD.
+  jenkins:
+    build: {context: ./jenkins}
+    image: fraud/jenkins:2.580.1
+    profiles: [cicd]
+    container_name: jenkins
+    group_add: ["0"]   # the Docker socket is root:root 0660
+    ports:
+      - "127.0.0.1:8095:8080"
+    environment:
+      LANGFUSE_HOST: ${LANGFUSE_HOST}
+      DUCKDNS_DOMAIN: ${DUCKDNS_DOMAIN}
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./jenkins/casc.yaml:/var/jenkins_home/casc.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets: [jenkins_admin_password, kubeconfig, langfuse_public_key, langfuse_secret_key, a2a_key_coordinator,
+              a2a_key_support_app, edge_admin_password, ml_db_password, redis_password, s3_access_key, s3_secret_key,
+              airflow_admin_password]
+    mem_limit: 1g
+
 volumes:
   postgres_data:
   seaweedfs_data:
@@ -695,3 +718,19 @@ volumes:
   ml_db_data:
   redis_data:
   registry_data:
+  jenkins_home:
+
+# Docker secrets of the CI/CD (values from this directory's .env, mounted at /run/secrets/<name> in Jenkins only)
+secrets:
+  jenkins_admin_password: {environment: JENKINS_ADMIN_PASSWORD}
+  kubeconfig: {file: ./.secrets/jenkins-kubeconfig}
+  langfuse_public_key: {environment: LANGFUSE_PUBLIC_KEY}
+  langfuse_secret_key: {environment: LANGFUSE_SECRET_KEY}
+  a2a_key_coordinator: {environment: A2A_KEY_COORDINATOR}
+  a2a_key_support_app: {environment: A2A_KEY_SUPPORT_APP}
+  edge_admin_password: {environment: EDGE_ADMIN_PASSWORD}
+  ml_db_password: {environment: ML_DB_PASSWORD}
+  redis_password: {environment: REDIS_PASSWORD}
+  s3_access_key: {environment: S3_ACCESS_KEY}
+  s3_secret_key: {environment: S3_SECRET_KEY}
+  airflow_admin_password: {environment: AIRFLOW_ADMIN_PASSWORD}

@@ -1,0 +1,91 @@
+// CI/CD of the card support MCP server: test -> mutation test -> build + push -> helm --atomic -> smoke test, then
+// the data agents' pipeline redeploys the agents that use these tools. Runs when services/card_support_mcp changed
+// (Jenkins polls main), or by hand. Secrets are Jenkins credentials (infra/jenkins/casc.yaml), never in this file.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    SVC = 'services/card_support_mcp'
+    IMAGE = 'localhost:5001/card-support-mcp'   // the compose registry the kind node pulls from
+  }
+  stages {
+    stage('MCP server') {
+      when {
+        beforeAgent true
+        anyOf { changeset 'services/card_support_mcp/**'; triggeredBy 'UserIdCause' }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image ${IMAGE}:${TAG}"
+          }
+        }
+        stage('Unit tests + coverage gate') {
+          // EP/BVA, hypothesis properties, REST + MCP + adapter tests; pytest.ini fails the stage under 90 % coverage
+          steps {
+            sh 'docker build --target test -t card-support-mcp:test-$TAG $SVC'
+            sh 'docker run --rm card-support-mcp:test-$TAG'
+          }
+        }
+        stage('Mutation test') {
+          // mutmut on the code with the tool rules (setup.cfg); fails under 80 % killed
+          steps {
+            sh '''
+              docker run --rm card-support-mcp:test-$TAG sh -c 'mutmut run >/dev/null 2>&1; mutmut results --all true' > mutmut.txt || true
+              total=$(grep -c ': ' mutmut.txt || true); killed=$(grep -c ': killed' mutmut.txt || true)
+              echo "mutation score: $killed / $total killed"; grep -E ': (survived|timeout|suspicious)' mutmut.txt || true
+              [ "$total" -gt 0 ] && [ $((killed * 100 / total)) -ge 80 ]
+            '''
+          }
+        }
+        stage('Build + push image') {
+          steps {
+            sh 'docker build --target runtime -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'
+          }
+        }
+        stage('Deploy (helm --atomic)') {
+          // rolling update with maxUnavailable 0; a release whose pods never get Ready is rolled back by --atomic
+          steps {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+              sh 'helm upgrade --install card-support-mcp $SVC/chart -n card-support --atomic --timeout 4m --set image.tag=$TAG'
+              sh 'kubectl -n card-support rollout status deploy/card-support-mcp --timeout=60s'
+            }
+          }
+        }
+        stage('Smoke test') {
+          steps {
+            withCredentials([string(credentialsId: 'edge-admin-password', variable: 'EDGE_PW'),
+                             file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+              sh '''
+                # Web API over HTTPS through NGINX (the domain points at 127.0.0.1: reach NGINX on the kind node)
+                node=$(getent hosts fraud-control-plane | awk '{print $1}')
+                api="https://api.$DUCKDNS_DOMAIN"
+                curl -fsS --resolve "api.$DUCKDNS_DOMAIN:443:$node" -u "admin:$EDGE_PW" "$api/healthz"
+                curl -fsS --resolve "api.$DUCKDNS_DOMAIN:443:$node" -u "admin:$EDGE_PW" "$api/v1/cards/card_00006087" \
+                  | jq -e '.found == true' >/dev/null
+                echo "Web API: card data OK over HTTPS"
+                # the agents' tool servers still accept the new release (tools/list through the gateway)
+                kubectl -n kagent annotate remotemcpserver -l app.kubernetes.io/managed-by=Helm reconcile="$(date +%s)" --overwrite >/dev/null || true
+                for s in card-support-card-data-agent card-support-risk-agent; do
+                  kubectl -n kagent wait --for=condition=Accepted remotemcpserver/$s --timeout=90s
+                done
+              '''
+            }
+          }
+        }
+      }
+      post {
+        success { build job: 'card-support-data-agents', wait: false }
+      }
+    }
+  }
+  post {
+    always { sh 'docker image rm card-support-mcp:test-$TAG >/dev/null 2>&1 || true' }
+  }
+}

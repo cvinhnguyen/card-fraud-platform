@@ -1,0 +1,56 @@
+# Jenkins deploys with this ServiceAccount, not with cluster-admin: full rights only in the namespaces the MCP server
+# and agents charts write to (their releases, their gateway routes and policies), nothing elsewhere.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ci
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins-deployer
+  namespace: ci
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-deployer-token
+  namespace: ci
+  annotations: {kubernetes.io/service-account.name: jenkins-deployer}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ci-deployer
+rules:
+  - apiGroups: ["", apps, networking.k8s.io, policy, autoscaling, batch]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [gateway.networking.k8s.io, agentgateway.dev, kagent.dev, keda.sh, monitoring.coreos.com]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployer
+  namespace: card-support
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ci-deployer}
+subjects: [{kind: ServiceAccount, name: jenkins-deployer, namespace: ci}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployer
+  namespace: kagent
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ci-deployer}
+subjects: [{kind: ServiceAccount, name: jenkins-deployer, namespace: ci}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployer
+  namespace: agentgateway-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ci-deployer}
+subjects: [{kind: ServiceAccount, name: jenkins-deployer, namespace: ci}]
