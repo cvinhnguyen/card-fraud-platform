@@ -1,0 +1,426 @@
+{
+ "uid": "llm-telemetry",
+ "title": "Card Support - LLM telemetry",
+ "description": "Every model call goes through agentgateway (route llm -> llm-d -> llama.cpp Qwen3-8B): tokens per request, round trip, TTFT, PII caught by the guardrail.",
+ "tags": [
+  "card-support",
+  "layer3"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "type": "timeseries",
+   "title": "Tokens per request (input / output / total)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"input\"}[$__rate_interval]))",
+     "legendFormat": "input",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"output\"}[$__rate_interval]))",
+     "legendFormat": "output",
+     "refId": "B"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=~\"input|output\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"output\"}[$__rate_interval]))",
+     "legendFormat": "total",
+     "refId": "C"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 1
+  },
+  {
+   "type": "stat",
+   "title": "Tokens in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (gen_ai_token_type) (increase(agentgateway_gen_ai_client_token_usage_sum[$__range]))",
+     "legendFormat": "{{gen_ai_token_type}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 2
+  },
+  {
+   "type": "stat",
+   "title": "LLM requests in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 18,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (gen_ai_request_model) (increase(agentgateway_gen_ai_server_request_duration_count[$__range]))",
+     "legendFormat": "{{gen_ai_request_model}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 3
+  },
+  {
+   "type": "timeseries",
+   "title": "Round trip of a generation (p50 / p95)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket[$__rate_interval])))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket[$__rate_interval])))",
+     "legendFormat": "p95",
+     "refId": "B"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 4
+  },
+  {
+   "type": "timeseries",
+   "title": "Time to first token (p50 / p95)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_time_to_first_token_bucket[$__rate_interval])))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(agentgateway_gen_ai_server_time_to_first_token_bucket[$__rate_interval])))",
+     "legendFormat": "p95",
+     "refId": "B"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 5
+  },
+  {
+   "type": "timeseries",
+   "title": "Time per output token (p50)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_time_per_output_token_bucket[$__rate_interval])))",
+     "legendFormat": "p50",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 6
+  },
+  {
+   "type": "timeseries",
+   "title": "Prompts / answers with PII masked by the guardrail",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (phase) (rate(agentgateway_guardrail_checks_total{action=\"Mask\"}[$__rate_interval]))",
+     "legendFormat": "{{phase}} masked",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 7
+  },
+  {
+   "type": "stat",
+   "title": "PII masked in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 0,
+    "y": 24
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (phase) (increase(agentgateway_guardrail_checks_total{action=\"Mask\"}[$__range]))",
+     "legendFormat": "{{phase}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 8
+  },
+  {
+   "type": "stat",
+   "title": "Share of guardrail checks that masked PII",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 6,
+    "y": 24
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(agentgateway_guardrail_checks_total{action=\"Mask\"}[$__range])) / sum(increase(agentgateway_guardrail_checks_total[$__range]))",
+     "legendFormat": "masked",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 9
+  }
+ ]
+}

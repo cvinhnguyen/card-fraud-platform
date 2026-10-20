@@ -47,6 +47,7 @@ helm upgrade -i kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent -n kagent --v
   --set providers.openAI.apiKeySecretRef=agentgateway-key --set providers.openAI.apiKeySecretKey=key \
   --set providers.openAI.config.baseUrl=http://agentgateway-proxy.agentgateway-system.svc.cluster.local/v1 \
   --set proxy.url=http://agentgateway-proxy.agentgateway-system.svc.cluster.local \
+  --set otel.tracing.enabled=true --set otel.tracing.exporter.otlp.endpoint=jaeger.monitoring.svc.cluster.local:4317 \
   --set controller.substrate.enabled=true --set controller.substrate.ateApiEndpoint=dns:///api.ate-system.svc:443 \
   --set controller.substrate.ateApiInsecure=true --set substrateWorkerPool.create=true \
   `# ateApiInsecure: TLS stays on but the ate-api's pod-issued certificate is not verified (kagent 0.10.3 has no CA` \

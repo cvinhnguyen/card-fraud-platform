@@ -1,0 +1,56 @@
+# Traces: Jaeger 2 all-in-one (OTLP in, UI on 16686, in-memory storage capped at 20k traces) and the gateway's
+# tracing policy. Every LLM, MCP and A2A request through agentgateway becomes a span; kagent's agents export their
+# own spans (llm-platform.sh, otel.tracing) to the same Jaeger, joined by the W3C traceparent header.
+# UI: kubectl -n monitoring port-forward svc/jaeger 16686:16686
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: jaeger}}
+  template:
+    metadata:
+      labels: {app: jaeger}
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.21.0
+          args: ["--set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=20000"]
+          ports:
+            - {name: ui, containerPort: 16686}
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+          readinessProbe:
+            httpGet: {path: /, port: ui}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: monitoring
+spec:
+  selector: {app: jaeger}
+  ports:
+    - {name: ui, port: 16686, targetPort: ui}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+---
+# Gateway-wide (all routes): sample every request, a demo-sized load
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: agentgateway-proxy}]
+  frontend:
+    tracing:
+      url: http://jaeger.monitoring.svc.cluster.local:4318
+      protocol: HTTP
+      path: /v1/traces
+      randomSampling: "true"

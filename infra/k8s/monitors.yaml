@@ -1,6 +1,7 @@
-# What Prometheus scrapes besides Kubernetes itself.
-#   agentgateway proxy :15020  requests per route / backend (LLM, MCP, A2A), tokens, guardrail checks;
-#                              KEDA scales the agents on its A2A request rate (agents/chart)
+# What Prometheus scrapes besides Kubernetes itself (the MCP server brings its own ServiceMonitor in its chart).
+#   agentgateway proxy :15020  requests per route / backend (LLM, MCP, A2A), tokens, TTFT, guardrail checks, MCP
+#                              tool calls; KEDA scales the agents on its A2A request rate (agents/chart)
+#   scoring-api (compose)      Layer 2 Fraud Scoring API, reached over the kind node's compose network
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -11,3 +12,15 @@ spec:
     matchLabels: {app.kubernetes.io/name: agentgateway-proxy}
   podMetricsEndpoints:
     - {port: metrics, path: /metrics, interval: 15s}
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: scoring-api
+  namespace: monitoring
+spec:
+  jobName: scoring-api
+  metricsPath: /metrics
+  scrapeInterval: 15s
+  staticConfigs:
+    - targets: ["scoring-api:8000"]

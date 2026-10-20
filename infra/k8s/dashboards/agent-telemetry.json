@@ -1,0 +1,347 @@
+{
+ "uid": "agent-telemetry",
+ "title": "Card Support - Agent telemetry",
+ "description": "Agents (A2A through agentgateway), MCP tools (gateway + server counters), failures per tool, and the replicas KEDA runs.",
+ "tags": [
+  "card-support",
+  "layer3"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "type": "bargauge",
+   "title": "Calls per agent in range (A2A through the gateway)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (backend) (increase(agentgateway_requests_total{protocol=\"a2a\", method=\"POST\"}[$__range]))",
+     "legendFormat": "{{backend}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "orientation": "horizontal",
+    "displayMode": "basic"
+   },
+   "id": 1
+  },
+  {
+   "type": "bargauge",
+   "title": "Calls per MCP tool in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (resource) (increase(agentgateway_mcp_requests_total{method=\"tools/call\"}[$__range]))",
+     "legendFormat": "{{resource}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "orientation": "horizontal",
+    "displayMode": "basic"
+   },
+   "id": 2
+  },
+  {
+   "type": "timeseries",
+   "title": "Agent calls per second",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (backend) (rate(agentgateway_requests_total{protocol=\"a2a\", method=\"POST\"}[$__rate_interval]))",
+     "legendFormat": "{{backend}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 3
+  },
+  {
+   "type": "timeseries",
+   "title": "Tool calls per second by outcome (MCP server)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (tool, outcome) (rate(card_support_tool_calls_total[$__rate_interval]))",
+     "legendFormat": "{{tool}} {{outcome}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 4
+  },
+  {
+   "type": "bargauge",
+   "title": "Tool call failures in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (tool) (increase(card_support_tool_calls_total{outcome=\"error\"}[$__range]))",
+     "legendFormat": "{{tool}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "orientation": "horizontal",
+    "displayMode": "basic"
+   },
+   "id": 5
+  },
+  {
+   "type": "timeseries",
+   "title": "Tool latency p95",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.95, sum by (tool, le) (rate(card_support_tool_seconds_bucket[$__rate_interval])))",
+     "legendFormat": "{{tool}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 6
+  },
+  {
+   "type": "timeseries",
+   "title": "Agent replicas (KEDA)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 24
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (deployment) (kube_deployment_status_replicas_available{namespace=\"kagent\", deployment=~\"card-data-agent|risk-agent|coordinator\"})",
+     "legendFormat": "{{deployment}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 7
+  },
+  {
+   "type": "timeseries",
+   "title": "A2A failures per agent (non-2xx)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 24
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (backend, status) (rate(agentgateway_requests_total{protocol=\"a2a\", status!~\"2..\"}[$__rate_interval]))",
+     "legendFormat": "{{backend}} {{status}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 8
+  }
+ ]
+}

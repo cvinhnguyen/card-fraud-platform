@@ -1,0 +1,224 @@
+{
+ "uid": "card-support-api",
+ "title": "Card Support - Web API",
+ "description": "Web API metrics of the card support MCP server (REST + /mcp) and the Fraud Scoring API: req/s, number of requests, failures, latency.",
+ "tags": [
+  "card-support",
+  "layer3"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "type": "timeseries",
+   "title": "Requests per second",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (job, handler) (rate(http_requests_total{job=~\"card-support-mcp|scoring-api\"}[$__rate_interval]))",
+     "legendFormat": "{{job}} {{handler}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 1
+  },
+  {
+   "type": "timeseries",
+   "title": "Failed requests per second (4xx / 5xx)",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (job, handler, status) (rate(http_requests_total{job=~\"card-support-mcp|scoring-api\", status=~\"4..|5..\"}[$__rate_interval]))",
+     "legendFormat": "{{job}} {{handler}} {{status}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 2
+  },
+  {
+   "type": "stat",
+   "title": "Requests in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-support-mcp|scoring-api\"}[$__range]))",
+     "legendFormat": "{{job}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 3
+  },
+  {
+   "type": "stat",
+   "title": "Failures in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 6,
+    "h": 8,
+    "x": 6,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-support-mcp|scoring-api\", status=~\"4..|5..\"}[$__range]))",
+     "legendFormat": "{{job}}",
+     "refId": "A",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none"
+   },
+   "id": 4
+  },
+  {
+   "type": "timeseries",
+   "title": "Latency p95 by handler",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.95, sum by (job, handler, le) (rate(http_request_duration_seconds_bucket{job=~\"card-support-mcp|scoring-api\"}[$__rate_interval])))",
+     "legendFormat": "{{job}} {{handler}}",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   },
+   "id": 5
+  }
+ ]
+}

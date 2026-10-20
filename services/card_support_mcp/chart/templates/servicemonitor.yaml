@@ -1,0 +1,13 @@
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor" }}
+# Prometheus scrapes /metrics of every replica: HTTP metrics of the REST API and calls / failures / latency per tool
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels: {app: {{ .Release.Name }}}
+spec:
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  endpoints:
+    - {port: http, path: /metrics, interval: 15s}
+{{- end }}

@@ -12,9 +12,9 @@ grafana:
     existingSecret: grafana-admin   # infra/k8s/secrets.sh (GRAFANA_ADMIN_PASSWORD)
     userKey: admin-user
     passwordKey: admin-password
-  resources:
-    requests: {cpu: 50m, memory: 128Mi}
-    limits: {memory: 384Mi}
+  resources:   # Grafana 13 builds a search index at start; at 384Mi it timed out and failed its liveness probe
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 640Mi}
 prometheus:
   prometheusSpec:
     retention: 3d
@@ -22,6 +22,7 @@ prometheus:
     # pick up PodMonitors / ServiceMonitors from every namespace and release, not only this chart's
     podMonitorSelectorNilUsesHelmValues: false
     serviceMonitorSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
     resources:
       requests: {cpu: 100m, memory: 400Mi}
       limits: {memory: 1200Mi}
