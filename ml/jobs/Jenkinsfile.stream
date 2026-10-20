@@ -1,0 +1,73 @@
+// CI/CD of the stream feature jobs (push-online -> Redis, push-offline -> Delta): unit tests in the ml image's test
+// stage -> build the runtime image -> recreate both compose services on it -> smoke test one message end to end.
+// Runs when the jobs, the ML library, the Feast repo or the image changed (Jenkins polls main), or by hand.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    COMPOSE = 'docker compose -p fraud -f infra/docker-compose.yaml'
+  }
+  stages {
+    stage('Stream feature jobs') {
+      when {
+        beforeAgent true
+        anyOf {
+          changeset 'ml/jobs/**'; changeset 'ml/fraud_ml/**'; changeset 'ml/feature_repo/**'; changeset 'ml/Dockerfile*'
+          triggeredBy 'UserIdCause'
+        }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image fraud/ml-train:${TAG}"
+          }
+        }
+        stage('Unit tests') {
+          steps {
+            sh 'docker build -f ml/Dockerfile --target test -t fraud/ml-train:test-$TAG .'
+            sh 'docker run --rm fraud/ml-train:test-$TAG'
+          }
+        }
+        stage('Build image') {
+          steps {
+            sh 'docker build -f ml/Dockerfile -t fraud/ml-train:$TAG -t fraud/ml-train:latest .'
+          }
+        }
+        stage('Deploy') {
+          // the services run fraud/ml-train:latest; Kafka is started if it is down (the jobs consume it)
+          steps {
+            withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                             string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD'),
+                             string(credentialsId: 's3-access-key', variable: 'S3_ACCESS_KEY'),
+                             string(credentialsId: 's3-secret-key', variable: 'S3_SECRET_KEY')]) {
+              sh '$COMPOSE --profile core up -d --no-deps --wait kafka'
+              sh '$COMPOSE --profile ml up -d --no-deps --force-recreate push-online push-offline'
+              sh 'sleep 5; docker ps --filter name=push- --format "{{.Names}} {{.Image}} {{.Status}}"'
+            }
+          }
+        }
+        stage('Smoke test') {
+          steps {
+            withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                             string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD'),
+                             string(credentialsId: 's3-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                             string(credentialsId: 's3-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
+              sh '''docker run --rm --network fraud_default -e ML_DB_PASSWORD -e REDIS_PASSWORD -e AWS_ACCESS_KEY_ID \
+                      -e AWS_SECRET_ACCESS_KEY fraud/ml-train:$TAG python3 /opt/ml/tools/stream_smoke.py --timeout 180'''
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
+    failure { sh 'docker logs --tail 30 push-online 2>&1 || true; docker logs --tail 30 push-offline 2>&1 || true' }
+  }
+}

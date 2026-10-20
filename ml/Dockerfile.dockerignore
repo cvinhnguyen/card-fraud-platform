@@ -1,8 +1,10 @@
 *
 !ml/fraud_ml
 !ml/feature_repo
+!ml/feature_repo_kb
 !ml/pipelines
 !ml/jobs
 !ml/tools
+!generator/knowledge
 **/__pycache__
 **/.ipynb_checkpoints
