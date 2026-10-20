@@ -27,6 +27,9 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 RUNS = 3
+WARMUP = True          # one extra, untimed run per method first
+SKEW_THRESHOLD = "8m"  # AQE skew partition threshold; the 256 MB default targets big data, at 1 GB the hot partition is ~50 MB
+ADVISORY = None        # AQE target partition size; None = same as SKEW_THRESHOLD (1 GB run), "64m" = Spark's default
 SALTS = 32
 TOP_N = 10
 METHODS = ["baseline", "salting", "aqe", "broadcast"]
@@ -39,15 +42,15 @@ def configure(spark: SparkSession, method: str) -> None:
         "spark.sql.autoBroadcastJoinThreshold": -1,            # no automatic broadcast: it would hide the skew
         "spark.sql.adaptive.autoBroadcastJoinThreshold": -1,
         "spark.sql.adaptive.skewJoin.enabled": True,
-        # The defaults (256 MB, 5x median) target big data; at 1 GB the hot partition is ~50 MB.
-        "spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes": "8m",
-        "spark.sql.adaptive.advisoryPartitionSizeInBytes": "8m",
+        "spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes": SKEW_THRESHOLD,
+        "spark.sql.adaptive.advisoryPartitionSizeInBytes": ADVISORY or SKEW_THRESHOLD,
     }
     for k, v in conf.items():
         spark.conf.set(k, str(v).lower() if isinstance(v, bool) else str(v))
 
 
 def join(txn: DataFrame, merchants: DataFrame, method: str) -> DataFrame:
+    """transactions JOIN merchants on merchant_id with one of the four methods."""
     if method == "salting":
         txn = txn.withColumn("salt", (F.rand(7) * SALTS).cast("int"))
         merchants = merchants.crossJoin(txn.sparkSession.range(SALTS).withColumnRenamed("id", "salt"))
@@ -86,23 +89,35 @@ def with_top_share(txn: DataFrame, top: list[str], others: list[str], share: flo
                           .otherwise(F.when(is_top, pick_other).otherwise(F.col("merchant_id"))))
 
 
-def bench(spark: SparkSession, txn: DataFrame, merchants: DataFrame, label: str) -> None:
-    counts = txn.groupBy("merchant_id").count()
-    n, hot = counts.agg(F.sum("count"), F.max("count")).first()
-    top = counts.where(F.col("merchant_id").isin(TOP)).agg(F.sum("count")).first()[0]
-    print(f"\n== {label}: {n:,} rows, biggest merchant {hot / n:.1%}, top-{TOP_N} {top / n:.1%}, "
-          f"{spark.sparkContext.defaultParallelism} cores")
+def bench(spark: SparkSession, txn: DataFrame, merchants: DataFrame, label: str, methods: list[str] = METHODS,
+          stats: bool = True) -> None:
+    """Time each method and print its task skew (max vs median task time, max shuffle read). A method whose job
+    fails (at 100 GB the baseline's hot partition runs out of memory) is reported as failed and the next one runs.
+    stats=False skips the full counting pass behind the header line."""
+    if stats:
+        counts = txn.groupBy("merchant_id").count()
+        n, hot = counts.agg(F.sum("count"), F.max("count")).first()
+        top = counts.where(F.col("merchant_id").isin(TOP)).agg(F.sum("count")).first()[0]
+        print(f"\n== {label}: {n:,} rows, biggest merchant {hot / n:.1%}, top-{TOP_N} {top / n:.1%}, "
+              f"{spark.sparkContext.defaultParallelism} cores")
     print(f"{'method':<10} {'median s':>9} {'runs s':<22} {'max task s':>10} {'median task s':>13} {'max read MB':>11}")
-    for method in METHODS:
+    for method in methods:
         configure(spark, method)
         times = []
-        for i in range(RUNS + 1):   # run 0 = warm-up, not counted
+        for i in range(0 if WARMUP else 1, RUNS + 1):   # run 0 = warm-up, not counted
             group = f"{label}-{method}-{i}"
             spark.sparkContext.setJobGroup(group, group)
             t0 = time.perf_counter()
-            join(txn, merchants, method).write.format("noop").mode("overwrite").save()
+            try:
+                join(txn, merchants, method).write.format("noop").mode("overwrite").save()
+            except Exception as e:   # noqa: BLE001 - Py4JJavaError; the cause is the first line of the Java error
+                cause = next((l.strip() for l in str(e).splitlines() if "Error" in l or "Exception" in l), repr(e))
+                print(f"{method:<10} FAILED after {time.perf_counter() - t0:.0f} s: {cause[:200]}", flush=True)
+                break
             if i:
                 times.append(time.perf_counter() - t0)
+        if not times:
+            continue
         time.sleep(2)   # let the listener finish before reading the REST API
         mx, med, read = task_skew(spark, group)
         print(f"{method:<10} {statistics.median(times):>9.1f} {', '.join(f'{t:.1f}' for t in times):<22} "
