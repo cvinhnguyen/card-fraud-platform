@@ -3,7 +3,7 @@
 --   2. dashboard: spend per unit over the last 7 days                                 -> BRIN (txn_ts)
 -- Each query runs twice; the second (warm cache) plan is the one to read.
 -- Run (repo root):
---   docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d serving' < sql/serving_indexes.sql
+--   docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d serving' < infra/sql/serving_indexes.sql
 
 DROP INDEX IF EXISTS mart.ix_obt_card_ts;
 DROP INDEX IF EXISTS mart.brin_obt_ts;

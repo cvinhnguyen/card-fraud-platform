@@ -5,11 +5,11 @@ and wrote those, with column-level detail) plus integrations that emit them with
 listener reads each query plan and posts the events to DataHub's OpenLineage endpoint; DataHub turns them into
 datasets, jobs and lineage edges.
 
-**The course way** (lesson L12, DAG `orders_pipeline`): every task declares its tables by hand
+In the course (lesson L12, DAG `orders_pipeline`), every task declares its tables by hand
 (`inlets=[DatahubDataset(...)]`, `outlets=[...]`) or emits `UpstreamLineage` itself. Each new job or new table means
 editing the DAG, and nothing checks that the declaration matches what the code really reads and writes.
 
-**Here:** the `openlineage-spark_2.13:1.53.0` jar in the Spark image (`infra/spark/Dockerfile`) and five lines in
+Here it takes the `openlineage-spark_2.13:1.53.0` jar in the Spark image (`infra/spark/Dockerfile`) and five lines in
 `infra/conf/spark/spark-defaults.conf`, shared by every Spark container, the Airflow image (drivers of DAG tasks,
 dbt's session) and the Thrift Server:
 
@@ -55,12 +55,11 @@ computation. For the fact built in `build_gold_pyspark.py`, DataHub shows 16 col
 | `customer_sk` | `dim_customer.customer_sk` (point-in-time join) | IDENTITY |
 
 and for silver, `stg_transactions.txn_unit <- raw_ref_province_mapping.new_unit_name` (the 63 -> 34 unit lookup), the
-example the plan asked for. Declaring this by hand, column by column, is what the course's `inlets`/`outlets` cannot
-express at all (they are table-level).
+example the plan asked for. The course's `inlets`/`outlets` are table-level, so they cannot declare this at all.
 
 ## Proof 3: a new job needs nothing
 
-`spark/build_gold_pyspark.py` (written for novel idea 1, never run by Airflow, no DataHub code) appeared in DataHub
+`pipelines/spark/build_gold_pyspark.py` (written for novel idea 1, never run by Airflow, no DataHub code) appeared in DataHub
 with its 5 output tables and 17 job-dataset edges on its first run, column lineage included. With the course's
 approach the same job would need its inputs and outputs written into a DAG first.
 
@@ -74,10 +73,10 @@ approach the same job would need its inputs and outputs written into a DAG first
 
 ## Limits seen
 
-- **Path datasets next to table datasets.** A write by path (`.save(s3a://...)`) followed by `CREATE TABLE ... LOCATION`
-  produces both an `s3` dataset (`lakehouse/bronze/raw_transactions`) and the `hive` one. Lineage is attached to the
-  hive one (the listener resolves the Delta path to the table), the s3 ones are extra entities.
-- **One job per Spark action**, not per Airflow task: a task with three writes shows three jobs. The DataHub Airflow
+- A write by path (`.save(s3a://...)`) followed by `CREATE TABLE ... LOCATION` produces both an `s3` dataset
+  (`lakehouse/bronze/raw_transactions`) and the `hive` one. Lineage is attached to the hive one (the listener
+  resolves the Delta path to the table); the s3 ones are extra entities.
+- There is one job per Spark action, not per Airflow task: a task with three writes shows three jobs. The DataHub Airflow
   listener adds the DAG / task entities next to them; the shared name (`spark.openlineage.appName = dag_id`) is what
   ties the two together.
 - `ContextFactory: Query execution is null: can't emit event` errors in the logs are commands without a query plan

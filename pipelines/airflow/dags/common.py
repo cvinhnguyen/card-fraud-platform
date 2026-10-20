@@ -28,6 +28,14 @@ CORE_DB_ENV = {
     "CORE_DB_PASSWORD": "{{ conn.core_banking_db.password }}",
 }
 GE_PYTHON = "/opt/venvs/ge/bin/python"   # driver Python with Great Expectations (Airflow image)
+# Layer 2: the Feast venv of the Airflow image; secrets rendered from connections, read by feature_store.yaml as ${...}
+FEAST = "/opt/venvs/feast/bin"
+FEAST_ENV = {
+    **S3_ENV,
+    "ML_DB_PASSWORD": "{{ conn.feast_registry.password }}",
+    "REDIS_PASSWORD": "{{ conn.feast_online.password }}",
+    "PYTHONPATH": "/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip:/opt/airflow/ml",
+}
 SPARK_CONF = {
     # ponytail: 1.5 GB executors (2 GB in spark-defaults) so a pipeline run fits next to DataHub in the 8 GB Docker VM
     "spark.executor.memory": "1536m",
@@ -38,7 +46,7 @@ SPARK_CONF = {
 
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
               conf: dict | None = None, **kwargs) -> SparkSubmitOperator:
-    """spark-submit spark/<script> to the standalone master. Pool `spark` (1 slot) runs one application at a time,
+    """spark-submit pipelines/spark/<script> to the standalone master. Pool `spark` (1 slot) runs one application at a time,
     because the 3 GB worker fits one 2 GB executor next to the Thrift Server."""
     return SparkSubmitOperator(task_id=task_id, conn_id="spark_lakehouse",
                                application="{{ var.value.spark_jobs_dir }}/" + script, application_args=args or [],
@@ -103,7 +111,7 @@ def publish_results(suite: str, ds: str | None = None, run_id: str | None = None
 
 
 def validate(suite: str) -> TaskGroup:
-    """Validate stage: GE expectations run in Spark (spark/validate.py), then the results are published and gate
+    """Validate stage: GE expectations run in Spark (pipelines/spark/validate.py), then the results are published and gate
     the pipeline. The publish step is separate so the results are recorded even when the data is bad."""
     with TaskGroup(f"validate_{suite}") as group:
         run = spark_job("run_expectations", "validate.py", ["--suite", suite, "--ds", "{{ ds }}"],

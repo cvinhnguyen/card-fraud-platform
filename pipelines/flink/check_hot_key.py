@@ -1,11 +1,11 @@
-"""Run flink/hot_key.py in both modes: compare its unit counts with the Parquet truth and print, per subtask of each
+"""Run pipelines/flink/hot_key.py in both modes: compare its unit counts with the Parquet truth and print, per subtask of each
 operator, the records read and the share of time busy / backpressured / idle (Flink REST API, after the job ends).
 
 Truth: the same replayed slice (first --limit events by received_ts from --replay-from), every message counted
 (retries included, as the job does), per unit per day of auth_ts (UTC, as Flink windows).
 
 Usage (repo root; stream profile up):
-  python flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000
+  python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000
   ... --modes two_phase --salts 16 --salt-all --no-replay      # salt every unit, reuse the loaded replay
 """
 import argparse
@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "generator"))
-sys.path.insert(0, str(ROOT / "flink"))
+sys.path.insert(0, str(ROOT / "pipelines" / "flink"))
 from check_windows import read_all, reset_topics  # noqa: E402
 from producer import load  # noqa: E402
 

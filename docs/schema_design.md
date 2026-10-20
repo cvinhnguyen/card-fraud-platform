@@ -7,9 +7,9 @@ All tables are Delta tables in the SeaweedFS bucket `lakehouse`, registered in t
 
 | Zone | Location | Written by | What it holds |
 |---|---|---|---|
-| bronze | `s3a://lakehouse/bronze/` | `spark/ingest_bronze.py` (DP1) | Faithful copies of the sources: duplicates, old province names and missing columns are kept |
-| silver | `s3a://lakehouse/silver/` | `spark/build_silver.py` (DP2) | Cleaned rows: deduplicated, locations mapped to the 34 units, `auth_method` filled |
-| gold | `s3a://lakehouse/gold/` | dbt models, `spark/build_labels.py`, `spark/build_features.py` (DP3) | Star schema for analysis, the label table and the feature table for Layer 2 |
+| bronze | `s3a://lakehouse/bronze/` | `pipelines/spark/ingest_bronze.py` (DP1) | Faithful copies of the sources: duplicates, old province names and missing columns are kept |
+| silver | `s3a://lakehouse/silver/` | `pipelines/spark/build_silver.py` (DP2) | Cleaned rows: deduplicated, locations mapped to the 34 units, `auth_method` filled |
+| gold | `s3a://lakehouse/gold/` | dbt models, `pipelines/spark/build_labels.py`, `pipelines/spark/build_features.py` (DP3) | Star schema for analysis, the label table and the feature table for Layer 2 |
 
 Bronze and silver are written by PySpark because the dedup, skew and merge demos need DataFrame-level control. Gold
 star schema models are SQL in dbt so they are tested (`dbt build`) and documented in one place.
@@ -43,7 +43,7 @@ Columns: `snake_case`; timestamps end in `_ts` (`txn_ts`, `valid_from_ts`); surr
 | `gold.dim_date` | one calendar day | `date_key` (`yyyyMMdd`) | | dbt table |
 | `gold.fact_transaction` | one **settled** transaction | `transaction_id` | `txn_month` | dbt incremental `MERGE` |
 | `gold.label_transaction` | one transaction (settled or reversed) as labelled on `label_as_of` | `transaction_id` | `event_month` | `MERGE` per `--as-of` run |
-| `gold.feat_card_txn_stats_daily` | one card on one day with a settled transaction | `card_id`, `event_timestamp` | | overwrite |
+| `gold.feat_card_txn_stats_daily` | one card after one day with activity (a settled transaction or a reported dispute) | `card_id`, `event_timestamp` | | overwrite |
 
 ## Gold ER diagram
 
@@ -131,7 +131,7 @@ erDiagram
     }
     feat_card_txn_stats_daily {
         string card_id PK
-        timestamp event_timestamp PK "day D 00:00"
+        timestamp event_timestamp PK "active day L + 1, 00:00"
         int txn_count_30d
         int distinct_merchants_30d
         double avg_amount_90d
@@ -139,22 +139,24 @@ erDiagram
         double ecom_ratio_90d
         double foreign_txn_ratio_90d
         int dispute_count_180d
+        timestamp stats_ts "copy of event_timestamp, served as a feature"
         timestamp created
     }
 ```
 
 ## Design notes
 
-- **SCD2 (`dim_customer`).** `valid_from_ts` is inclusive, `valid_to_ts` exclusive, and the open version ends at
-  9999-12-31 so a point-in-time join is always `valid_from_ts <= ts < valid_to_ts`. Versions are compared on
+- In the SCD2 `dim_customer`, `valid_from_ts` is inclusive, `valid_to_ts` exclusive, and the open version ends at
+  9999-12-31, so a point-in-time join is always `valid_from_ts <= ts < valid_to_ts`. Versions are compared on
   `customer_unit`, so relabelling an old province name on 2025-07-01 is not a new version (16,635 avoided).
-- **Point in time in the fact.** `fact_transaction.customer_sk` is resolved once, at build time, against the version
-  valid at `txn_ts`. Queries join on `customer_sk` without a date condition.
-- **Locations.** Every location keeps two columns: the 34-unit value used for grouping (`txn_unit`, `customer_unit`,
+- `fact_transaction.customer_sk` is resolved once, at build time, against the customer version valid at `txn_ts`.
+  Queries join on `customer_sk` without a date condition.
+- Every location keeps two columns: the 34-unit value used for grouping (`txn_unit`, `customer_unit`,
   `merchant_unit`) and the raw string from the source (`txn_city_raw`, `city_raw`) for lineage and audits.
-- **Labels apart from the fact.** A fraud label can flip up to 60 days after the payment, so it lives in its own table
+- A fraud label can flip up to 60 days after the payment, so labels live in their own table, apart from the fact,
   updated with `MERGE`; each run is a Delta version tagged `label_as_of=<date>` (see [spark_jobs.md](spark_jobs.md)).
-- **Features.** Windows end the day before `event_timestamp`, so a point-in-time join in Feast cannot see the payment
-  being scored. `created` is the processing time.
-- **Partitioning.** Facts are partitioned by month (`txn_month`, `event_month`), so a `MERGE` of recent data rewrites
-  only the last few partitions. Silver is partitioned by day (`txn_date`) to match the nightly export.
+- A feature row describes an active day L and carries `event_timestamp` = L + 1 day, the night it is written, so a
+  point-in-time join in Feast sees the card's last active day before the payment, never the payment being scored.
+  `created` is the processing time.
+- Facts are partitioned by month (`txn_month`, `event_month`), so a `MERGE` of recent data rewrites only the last few
+  partitions. Silver is partitioned by day (`txn_date`) to match the nightly export.

@@ -99,7 +99,7 @@ SUITES = {
         ]),
     ],
     "dp3": [
-        ("gold.feat_card_txn_stats_daily", "event_timestamp = '{ds}'", [
+        ("gold.feat_card_txn_stats_daily", "to_date(event_timestamp) = date_add('{ds}', 1)", [   # rows of activity on ds
             ("expect_table_row_count_to_be_between", {"min_value": 1}),
             ("expect_column_values_to_be_unique", {"column": "card_id"}),   # one row per card and day
             *not_null("card_id", "event_timestamp", "created", "txn_count_30d", "dispute_count_180d"),

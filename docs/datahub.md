@@ -12,7 +12,7 @@ What reaches DataHub, and from where:
 | Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in `spark-defaults.conf` -> GMS `/openapi/openlineage/api/v1/lineage` (novel idea 2) |
 | DAGs, tasks, task runs | Airflow | DataHub's Airflow listener (`acryl-datahub-airflow-plugin`) |
 | Validation results (GE) | `publish_results` task of every validate stage | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
-| Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in `airflow/dags/datahub_recipes/` |
+| Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in `pipelines/airflow/dags/datahub_recipes/` |
 
 After the DP1 -> DP2 -> DP3 runs of 2026-10-12..15 and one run of `datahub_metadata`, DataHub holds (GraphQL
 counts):
@@ -74,7 +74,7 @@ reconciliation test.
 
 ### A job nobody declared
 
-`spark/build_gold_pyspark.py` (the comparison job of novel idea 1, never run by Airflow) appears with its inputs and
+`pipelines/spark/build_gold_pyspark.py` (the comparison job of novel idea 1, never run by Airflow) appears with its inputs and
 outputs after its first run:
 
 ![lineage of gold_pyspark.fact_transaction, created by the listener alone](images/datahub_new_job_lineage.png)
@@ -85,15 +85,15 @@ which the tables written by path do not get from the listener.
 
 ## Problems met
 
-- **GMS consumers stopped, nothing was stored or searchable.** The course compose sets
+- GMS consumers stopped, so nothing was stored or searchable. The course compose sets
   `SPRING_KAFKA_PROPERTIES_USE_LATEST_VERSION` / `AUTO_REGISTER_SCHEMAS` for both the system-update job and GMS. With
   the internal schema registry, GMS's Kafka consumers then ask for the "latest version" of a schema, get
   `lookUpSchemaUnderSubject method not implemented` / `Error retrieving Avro value schema version for id 16`, and stop.
   OpenLineage events were accepted (HTTP 200) but entities had no properties and search returned 0. DataHub's own
   quickstart sets those variables (and `SCHEMA_REGISTRY_SYSTEM_UPDATE`) on system-update only; doing the same fixed it.
-- **Legacy topics.** Our broker has auto-create off; GMS still consumes `MetadataChangeEvent_v4` (and its failed /
+- Our broker has auto-create off, and GMS still consumes the legacy topic `MetadataChangeEvent_v4` (and its failed /
   audit topics), which system-update does not create. `infra/init_infra.py` creates them.
-- **Memory.** DataHub (GMS 1 GB heap, OpenSearch 512 MB) fits next to batch + orch only without the Spark Thrift
-  Server (see docs/airflow.md); in the 8 GB Docker VM, swapping made Docker's DNS fail.
-- **`acryl-datahub-airflow-plugin`** 1.6.x needs Airflow 3; 1.5.0.6 pins a `sqlglotc` build no longer on PyPI; 1.5.0.17
+- DataHub (GMS 1 GB heap, OpenSearch 512 MB) fits next to batch + orch only without the Spark Thrift Server (see
+  docs/airflow.md); in the 8 GB Docker VM, swapping made Docker's DNS fail.
+- `acryl-datahub-airflow-plugin` 1.6.x needs Airflow 3; 1.5.0.6 pins a `sqlglotc` build no longer on PyPI; 1.5.0.17
   works with Airflow 2.10 and the v1.5.0.6 server.

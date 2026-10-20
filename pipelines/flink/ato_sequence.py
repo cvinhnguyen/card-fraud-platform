@@ -5,7 +5,7 @@ in the same session. About 15% of app events reach Kafka after the next event of
   event    buffer each session's events and release them in event_ts order when the watermark (30 s behind the
            newest event) passes them, via event-time timers; then match
 
-Writes one message per matched session to `ato_alerts_<order>`. flink/check_ato.py compares with the generator truth.
+Writes one message per matched session to `ato_alerts_<order>`. pipelines/flink/check_ato.py compares with the generator truth.
 
 Usage (stream profile up; replay loaded into app_events_replay):
   docker exec flink-jobmanager flink run -py /opt/flink/jobs/ato_sequence.py --order event

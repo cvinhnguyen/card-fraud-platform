@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: silver
     schema: silver
-    description: Cleaned tables written by spark/build_silver.py (PySpark).
+    description: Cleaned tables written by pipelines/spark/build_silver.py (PySpark).
     tables:
       - name: stg_customers
         description: One row per source version of a customer; city normalized to customer_unit (34 units).
@@ -13,7 +13,7 @@ sources:
   - name: bronze
     schema: bronze
     description: >
-      Faithful copies written by spark/ingest_bronze.py. The small reference tables need no cleaning, so the gold
+      Faithful copies written by pipelines/spark/ingest_bronze.py. The small reference tables need no cleaning, so the gold
       dimensions read them directly instead of going through a silver copy.
     tables:
       - name: raw_cards

@@ -1,15 +1,15 @@
 # Flink jobs
 
 Flink 2.2.1 session cluster (compose profile `stream`: 1 JobManager, 1 TaskManager with 4 slots), PyFlink 2.2.1
-DataStream API, Kafka connector 5.0.0-2.2. Jobs live in `flink/` (mounted at `/opt/flink/jobs`). UI:
+DataStream API, Kafka connector 5.0.0-2.2. Jobs live in `pipelines/flink/` (mounted at `/opt/flink/jobs`). UI:
 http://127.0.0.1:8088.
 
 ```bash
 docker compose -f infra/docker-compose.yaml --profile core --profile stream up -d --build
-python flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000     # late events + duplicates
-python flink/check_features.py --replay-from "2025-03-01 00:00" --limit 100000   # realtime features
-python flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000        # out-of-order sessions
-python flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000   # hot key, parallelism 4
+python pipelines/flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000     # late events + duplicates
+python pipelines/flink/check_features.py --replay-from "2025-03-01 00:00" --limit 100000   # realtime features
+python pipelines/flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000        # out-of-order sessions
+python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000   # hot key, parallelism 4
 docker exec flink-jobmanager flink run -py /opt/flink/jobs/raw_landing.py         # raw events -> S3 landing
 ```
 
@@ -31,7 +31,7 @@ The producer sets each Kafka message timestamp to the event time (`auth_ts`, `ev
 would. The jobs use it directly: `WatermarkStrategy.for_bounded_out_of_orderness(...)` without a timestamp assigner,
 so watermarks are generated inside the Kafka source.
 
-## Late events and duplicates (`flink/auth_windows.py`)
+## Late events and duplicates (`pipelines/flink/auth_windows.py`)
 
 Authorizations per card per 5-minute tumbling window, watermark 5 s (normal network delay is at most 2 s). The three
 modes add one fix each. Replay: 20,000 authorizations from 2026-06-01, of which 301 are network-retry duplicates and
@@ -43,12 +43,12 @@ modes add one fix each. Replay: 20,000 authorizations from 2026-06-01, of which 
 | `lateness` | `allowed_lateness(30 min)` + side output | 0 | 98.47% | 301 | 0 |
 | `dedup` | keyed state on `auth_id` (TTL 1 h) before the window | 0 | **100.00%** | 0 | 0 |
 
-- **Baseline**: the late events miss their window and vanish (here they go to a side output, so they can be
-  counted); retries are counted twice.
-- **Allowed lateness** keeps each window's state 30 minutes past the watermark: the window fires on time and fires
-  again when a late event arrives, so results are early and still complete. Raising the watermark delay to 30 minutes
+- In `baseline` the late events miss their window and vanish (here they go to a side output, so they can be
+  counted), and retries are counted twice.
+- Allowed lateness keeps each window's state 30 minutes past the watermark. The window fires on time and fires again
+  when a late event arrives, so results are early and still complete. Raising the watermark delay to 30 minutes
   instead would hold every result back by 30 minutes.
-- **Dedup** keeps a flag per `auth_id` for 1 hour (retries come 1 to 10 s later) and passes only the first copy.
+- Dedup keeps a flag per `auth_id` for 1 hour (retries come 1 to 10 s later) and passes only the first copy.
   It runs before any count.
 
 ![auth_windows dedup job: 20,000 events in, 19,699 after dedup, 19,696 windows](images/flink_auth_windows_dedup.png)
@@ -57,14 +57,14 @@ modes add one fix each. Replay: 20,000 authorizations from 2026-06-01, of which 
 
 The first runs reported 0 late events. Three replay effects hid them, each fixed in the job or the setup:
 
-1. **A Python `TimestampAssigner` passed to `from_source` is ignored** in PyFlink 2.2: windows fell on the Kafka
-   timestamp, which was then the send time, so every event landed in the current 5 minutes. Fix: the producer writes
-   event time as the Kafka timestamp.
-2. **The watermark moves in steps.** It is emitted every 200 ms by default, and a replay covers days of event time in
-   seconds, so one step jumped hours and a 30-minute-late event still arrived "before" it. In addition the Python map
-   takes 1,000 events per bundle, letting the source run ahead. Fix: watermark every 10 ms and a Python bundle size of
+1. PyFlink 2.2 ignores a Python `TimestampAssigner` passed to `from_source`: windows fell on the Kafka timestamp,
+   which was then the send time, so every event landed in the current 5 minutes. Fix: the producer writes event time
+   as the Kafka timestamp.
+2. The watermark moves in steps. It is emitted every 200 ms by default, and a replay covers days of event time in
+   seconds, so one step jumped hours and a 30-minute-late event still arrived "before" it. The Python map also takes
+   1,000 events per bundle, which lets the source run ahead. Fix: watermark every 10 ms and a Python bundle size of
    1, so a step covers a few events, as with live traffic.
-3. **The watermark is the minimum over Kafka partitions.** With the 6-partition topic, the partitions were read at
+3. The watermark is the minimum over Kafka partitions. With the 6-partition topic, the partitions were read at
    very different speeds: a debug job measured the watermark at `Long.MIN_VALUE` for the first 30,000 events and
    then days behind the newest event, so almost nothing looked late (206 of 1,218 in a 50,000-event replay).
    Watermark alignment (`with_watermark_alignment`, which pauses partitions that run ahead) is the production fix for
@@ -74,12 +74,12 @@ The first runs reported 0 late events. Three replay effects hid them, each fixed
 
 With live traffic none of this applies: partitions advance with the wall clock and a 200 ms step covers a few events.
 
-## Realtime features (`flink/rt_features.py`)
+## Realtime features (`pipelines/flink/rt_features.py`)
 
 One feature row per authorization, computed when it arrives over the same card's earlier authorizations:
-`auth_count_10m`, `amount_sum_1h`, `distinct_merchants_1h`, `distinct_units_1h`. It is a `KeyedProcessFunction` per
-card holding the last 90 minutes of authorizations in state, not a window: the scoring model needs the features of
-the payment being authorized now, and a window only reports when it closes. Duplicates are dropped first, and
+`auth_count_10m`, `amount_sum_1h`, `distinct_merchants_1h`, `distinct_units_1h`. The job is a `KeyedProcessFunction`
+per card that holds the last 90 minutes of authorizations in state. A window would only report when it closes, and
+the scoring model needs the features of the payment being authorized now. Duplicates are dropped first, and
 locations are mapped to the 34 units (the 63-row mapping is loaded once; a broadcast stream would be needed only if
 it changed at runtime).
 
@@ -98,7 +98,7 @@ province names); 98,529 unique, one feature row each.
 108 of the 122 would be "impossible travel" alerts caused only by old and new names of the same place (for example
 "Binh Duong" and "Ho Chi Minh").
 
-## Out-of-order app events (`flink/ato_sequence.py`)
+## Out-of-order app events (`pipelines/flink/ato_sequence.py`)
 
 The `new_device` account takeover pattern: `password_reset` → `add_payee` → `transfer` within 10 minutes in one
 session. 15% of app events reach Kafka after the next event of their session (1 to 20 s, parallel uploads).
@@ -119,15 +119,15 @@ Reordering costs 30 s of latency per alert and finds every takeover; arrival ord
 about 20 alerts on sessions outside the truth query (21 and 24): the pandas query compares the first `add_payee`
 and `transfer` of the session, while the state machine takes the first ones after the `password_reset`.
 
-## Hot key (`flink/hot_key.py`)
+## Hot key (`pipelines/flink/hot_key.py`)
 
 Authorizations per unit per day (an operations metric: payment volume by province), with parallelism 4. Ho Chi Minh
 is 60% of all authorizations, so `key_by(unit)` sends 60% of the stream, plus whatever other units hash to the same
 place, to one subtask.
 
 ```bash
-python flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000                  # hot + two_phase
-python flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000 --no-replay --modes two_phase --salt-all
+python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000                  # hot + two_phase
+python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000 --no-replay --modes two_phase --salt-all
 ```
 
 Replay: 1,000,000 authorizations from 2025-01-01 (Ho Chi Minh 59.9%, Ha Noi 18.0%, Da Nang 5.0%), 4,283 unit-days.
@@ -148,7 +148,7 @@ front of it backpressured (88% and 100%): they could go faster, but the one hot 
 
 ![Data Skew tab: 100% on the counting vertex](images/flink_hot_key_skew.png)
 
-**Two-phase aggregation.** Ho Chi Minh's key gets a salt from `auth_id` (`Ho Chi Minh#0` .. `#7`), so its records
+In two-phase aggregation, Ho Chi Minh's key gets a salt from `auth_id` (`Ho Chi Minh#0` .. `#7`), so its records
 spread over all subtasks; each counts its share per day, then `key_by(unit)` adds the at most 8 partial counts of a
 unit-day. Phase 2 receives 5,165 records instead of 1,000,000. The salt comes from `auth_id`, so a network retry
 lands in the same partial count as its original. With two phases the skew of the counting vertex drops to 28% and
@@ -156,8 +156,8 @@ backpressure on the operator before it to 48%:
 
 ![two_phase: data skew 28%, upstream backpressure 48%](images/flink_hot_key_two_phase.png)
 
-**Salt only hot keys.** Salting all 34 units made the job slower (112.5 s) even though its records were spread
-better. In PyFlink each new (key, window) pair costs a state entry and a timer registration through the Python
+Only hot keys should get a salt. Salting all 34 units made the job slower (112.5 s) even though its records were
+spread better. In PyFlink each new (key, window) pair costs a state entry and a timer registration through the Python
 runtime; a small unit has a few records per day, so with 8 salts it pays that cost 8 times for almost no records.
 The measurements show it: subtasks holding many small units process about 4,500 records/s, the Ho Chi Minh subtask
 12,000 records/s, and two-phase on every unit got slower with each salt added (4 salts 102 s, 8 salts 111 s, 16 salts
@@ -169,7 +169,7 @@ The source stays backpressured in both modes: the Python operators remain the li
 the hot spot; it does not make Python faster. `key_by(card_id)` would also spread the load, but it answers a
 different question (per card, not per unit).
 
-## Raw events to bronze (`flink/raw_landing.py` + `spark/ingest_bronze.py`)
+## Raw events to bronze (`pipelines/flink/raw_landing.py` + `pipelines/spark/ingest_bronze.py`)
 
 Flink SQL copies `card_authorizations` unchanged (duplicates and late events included, plus Kafka partition and
 offset for tracing) to `s3://lakehouse/landing/card_authorizations/auth_date=YYYY-MM-DD/` as JSON lines; the file sink
@@ -184,8 +184,8 @@ loads nothing twice.
 | `ingest_bronze.py --part landing` | `bronze.raw_card_authorizations`: 50,000 rows (52 s) |
 | same command again | still 50,000 rows |
 
-JSON, not Parquet: Flink's Parquet writer needs the Hadoop client jars on the classpath; JSON needs none, and Spark
-writes Delta in the next step.
+The landing files are JSON because Flink's Parquet writer needs the Hadoop client jars on the classpath. JSON needs
+none, and Spark writes Delta in the next step.
 
 ## Notes
 

@@ -84,7 +84,7 @@ def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool) -
 
 
 def ingest_landing(spark: SparkSession) -> None:
-    """Raw authorizations written by flink/raw_landing.py. A file stream with availableNow reads every landing file
+    """Raw authorizations written by pipelines/flink/raw_landing.py. A file stream with availableNow reads every landing file
     not seen before (the checkpoint remembers them), including files a late event adds to an older auth_date."""
     fs = spark._jvm.org.apache.hadoop.fs.Path(LANDING).getFileSystem(spark._jsc.hadoopConfiguration())
     if not fs.exists(spark._jvm.org.apache.hadoop.fs.Path(LANDING)):

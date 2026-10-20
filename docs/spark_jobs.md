@@ -1,9 +1,9 @@
 # Spark jobs
 
 Spark 4.1.3 standalone (1 master, 1 worker with 8 cores / 3 GB), Delta Lake 4.4.1, Hive Metastore 3.1.3, Trino 484.
-Jobs live in `spark/` and run inside the `spark-master` container (compose profile `batch`).
+Jobs live in `pipelines/spark/` and run inside the `spark-master` container (compose profile `batch`).
 
-## DP1: source to bronze (`spark/ingest_bronze.py`)
+## DP1: source to bronze (`pipelines/spark/ingest_bronze.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py
@@ -43,7 +43,7 @@ A second run with no new files prints `nothing new after 2026-10-16` and appends
 
 Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns; later files have both.
 
-**Demo 1: reading.** `spark/schema_evolution_read.py` reads every export file at once (33 s):
+The first demo reads: `pipelines/spark/schema_evolution_read.py` reads every export file at once (33 s):
 
 | Read | Columns | Rows | Rows with `auth_method` |
 |---|---:|---:|---:|
@@ -53,7 +53,7 @@ Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns
 Without `mergeSchema` Spark takes the schema of one file (the oldest), so the two columns vanish for all rows, with no
 error. `ingest_bronze.py` reads with `mergeSchema`.
 
-**Demo 2: appending to the bronze Delta table** in steps:
+The second demo appends to the bronze Delta table in three steps:
 
 | Step | Command | Result |
 |---|---|---|
@@ -77,7 +77,7 @@ Silver (P4) maps the NULLs to `unknown_pre_regulation` instead of guessing a met
 - Trino's default per-node memory (~500 MB with a 2 GB container) is too small for an exact
   `count(DISTINCT transaction_id)` over 8M rows; `approx_distinct` works.
 
-## DP2: bronze to silver (`spark/build_silver.py`)
+## DP2: bronze to silver (`pipelines/spark/build_silver.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_silver.py
@@ -118,21 +118,21 @@ Ho Chi Minh City around the reorganization (settled spend, billion VND; share of
 | 2025-07 | 63.5 | 64.1 | 0.4 | 59.5% | 60.1% |
 | 2025-08 | 64.1 | 64.7 | 0.4 | 59.3% | 59.9% |
 
-By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat: nothing
-changed physically, only the labels.
+By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat,
+because only the labels changed.
 
 ![Ho Chi Minh City settled spend per month, by raw name and by unit](images/hcmc_spend.svg)
 
 Redraw with `python docs/diagrams/hcmc_spend.py` (reads silver through Trino). The February dips are the short month.
 
-## Gold with dbt-spark (`dbt/`, novel idea 1)
+## Gold with dbt-spark (`pipelines/dbt/`, novel idea 1)
 
 dbt runs SQL models through the Spark Thrift Server (compose profile `dbt`, port 10000), so the gold tables are Delta
 tables in `s3a://lakehouse/gold/`, registered in the same Hive Metastore and readable from Trino.
 
 ```bash
 docker compose -f infra/docker-compose.yaml --profile dbt up -d spark-thrift
-.venv/Scripts/dbt build --project-dir dbt --profiles-dir dbt     # models + tests
+.venv/Scripts/dbt build --project-dir pipelines/dbt --profiles-dir pipelines/dbt     # models + tests
 ```
 
 ### SCD2 `gold.dim_customer`
@@ -195,7 +195,7 @@ The Thrift Server runs with `spark.databricks.delta.optimizeMetadataQuery.enable
 so `dim_date` and the incremental filter failed with `ClassCastException: java.time.LocalDate cannot be cast to
 java.sql.Date`.
 
-## Labels with label delay (`spark/build_labels.py`)
+## Labels with label delay (`pipelines/spark/build_labels.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py --as-of 2026-06-30
@@ -240,29 +240,37 @@ On the day June ends, more than half of June's frauds are still unknown; after 6
 the same in every version, so a training set built from mature rows does not depend on when it was built. Layer 2
 reads `VERSION AS OF` the version its model was trained on and filters to mature rows.
 
-## DP3: features (`spark/build_features.py`)
+## DP3: features (`pipelines/spark/build_features.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_features.py
 ```
 
 `gold.feat_card_txn_stats_daily` is the offline source of the Feast feature view `card_txn_stats_daily` (Layer 2).
-One row per card and day D on which the card has a settled transaction: 7,618,305 rows, 129,214 cards, 117 s.
+One row per card and day L on which the card was active (a settled transaction or a reported dispute): 7,792,146
+rows, 129,749 cards, for the days up to 2026-11-03.
 
-| Feature | Window (days before D) | Mean |
+| Feature | Window (days up to L) | Mean |
 |---|---|---:|
-| `txn_count_30d` | 30 | 2.01 |
-| `distinct_merchants_30d` | 30 | 1.84 |
-| `avg_amount_90d`, `std_amount_90d` (VND) | 90 | 452,775 / 430,057 |
+| `txn_count_30d` | 30 | 2.97 |
+| `distinct_merchants_30d` | 30 | 2.67 |
+| `avg_amount_90d`, `std_amount_90d` (VND) | 90 | 452,293 / 453,999 |
 | `ecom_ratio_90d` | 90 | 0.719 |
 | `foreign_txn_ratio_90d` (`currency != VND`) | 90 | 0.040 |
-| `dispute_count_180d` (disputes by `reported_ts`, any reason) | 180 | 0.043 |
+| `dispute_count_180d` (disputes by `reported_ts`, any reason) | 180 | 0.047 |
 
-Every window ends at D-1 and `event_timestamp` is D 00:00, so the point-in-time join of a payment on day D never
-sees that payment or anything later. Payments earlier on the same day are left to the stream features (Flink, 1 hour
-windows). Disputes are counted on the day they were reported, not the day of the disputed payment: a dispute
-reported after D was unknown on D. `created` is the processing time (Feast uses it to break ties).
+Each window ends at L, L included, and `event_timestamp` is L + 1 day 00:00: the nightly run after day L writes the
+row, and from then on it is the card's latest value. A point-in-time join for a payment on day D therefore sees the
+row of the card's last active day before D, the same row the online store holds when that payment is scored.
+Payments earlier on the same day are left to the stream features (Flink, 1 hour windows). Disputes are counted on
+the day they were reported, not the day of the disputed payment: a dispute reported after L was unknown on L + 1.
+`stats_ts` repeats `event_timestamp` as a feature column, because Feast does not serve the event timestamp itself and
+Layer 2 derives `days_since_last_active` from it. `created` is the processing time (Feast uses it to break ties).
 
-Windows are `rangeBetween(-N, -1)` over the day number, on one row per card and day, so one sort per card serves all
-windows. The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
+Layer 2 changed this layout. The first one had a row on each payment day D with windows ending at D-1: the values
+were the same, but the row a training example joined to existed only because of the payment being scored, and the
+online store never holds such a row. Training and serving would have read different rows.
+
+Windows are `rangeBetween(-(N-1), 0)` over the day number, on one row per card and day, so one sort per card serves
+all windows. The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
 `raw_disputes` with plain date filters, and all 500 match.

@@ -14,8 +14,11 @@ __pycache__/
 *.pyc
 
 # dbt
-dbt/target/
-dbt/logs/
-dbt/dbt_packages/
-dbt/.user.yml
+pipelines/dbt/target/
+pipelines/dbt/logs/
+pipelines/dbt/dbt_packages/
+pipelines/dbt/.user.yml
 logs/
+
+# notebook outputs
+ml/notebooks/models/

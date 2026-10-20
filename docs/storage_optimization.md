@@ -1,9 +1,10 @@
 # Storage optimization
 
-Two stores, two kinds of reader: the lakehouse (Delta on SeaweedFS) is scanned by Spark and Trino, the serving
-database (Postgres) answers small queries from people. The lakehouse is tuned by file layout, Postgres by indexes.
+The platform has two stores with different readers: Spark and Trino scan the lakehouse (Delta on SeaweedFS), and the
+serving database (Postgres) answers small queries from people. The lakehouse is tuned by file layout, Postgres by
+indexes.
 
-## Lakehouse layout (`spark/storage_layout.py`)
+## Lakehouse layout (`pipelines/spark/storage_layout.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/storage_layout.py
@@ -33,34 +34,34 @@ Every task of the 200-way shuffle holds rows of every partition value, so it wri
 Queries: all payments of the busiest card (fraud investigation); spend per unit in 2026-06 (reporting); spend in
 raw city "Da Nang".
 
-- **Small files cost more than bytes.** The naive month layout reads the same 555 MB as after `OPTIMIZE` but takes
-  7.6× longer: opening 6,800 objects on S3 dominates. `OPTIMIZE` (bin-packing) turns them into 165 files and the
-  scans drop from ~15 s to ~2 s.
-- **Partition by what queries filter on, with low cardinality and even sizes.** Partitioning by city wins the city
+- The number of files costs more than the bytes. The naive month layout reads the same 555 MB as after `OPTIMIZE`
+  but takes 7.6× longer, because opening 6,800 objects on S3 dominates. `OPTIMIZE` (bin-packing) turns them into 165
+  files and the scans drop from ~15 s to ~2 s.
+- Partition by what queries filter on, with low cardinality and even sizes. Partitioning by city wins the city
   query (only its 200 files are read) and loses everything else, and the city with 60% of the rows makes partitions
   very uneven. Month is what reports and the nightly loads filter on, and its partitions are about the same size.
-- **Z-order is for a high-cardinality column you cannot partition by.** `card_id` has 130k values. After
+- Z-order suits a high-cardinality column you cannot partition by. `card_id` has 130k values. After
   `ZORDER BY (card_id)` each file holds a narrow `card_id` range, so the min/max statistics in the Delta log skip
   66 of the 100 files: the card shows up in every month, so one file per month remains (34). Sorting also improves
   compression (475 MB → 374 MB), which helps the other queries a little.
-- **File size target.** `OPTIMIZE` aims at 1 GB files. At 1 GB of data that is one file per month: a first run with
-  the default gave 34 files, card lookup 0.60 s, and Z-order skipped nothing (34 files read before and after).
-  The job sets `spark.databricks.delta.optimize.maxFileSize` to 4 MB so a month has several files, as it would at
-  100 GB (about 3 GB per month).
+- `OPTIMIZE` aims at 1 GB files. At 1 GB of data that is one file per month: a first run with the default gave 34
+  files, card lookup 0.60 s, and Z-order skipped nothing (34 files read before and after). The job sets
+  `spark.databricks.delta.optimize.maxFileSize` to 4 MB so a month has several files, as it would at 100 GB (about
+  3 GB per month).
 
 The gold tables are partitioned by month for the same reason (`fact_transaction` by `txn_month`, `label_transaction` by
 `event_month`).
 
-## Serving database (Postgres, `sql/serving_indexes.sql`)
+## Serving database (Postgres, `infra/sql/serving_indexes.sql`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d core_banking -c "CREATE DATABASE serving"'
 docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d serving -c "CREATE SCHEMA mart"'
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/load_serving.py
-docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d serving' < sql/serving_indexes.sql
+docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d serving' < infra/sql/serving_indexes.sql
 ```
 
-`spark/load_serving.py` copies the last 180 days of `fact_transaction`, joined with the merchant name, into one flat
+`pipelines/spark/load_serving.py` copies the last 180 days of `fact_transaction`, joined with the merchant name, into one flat
 table `mart.obt_card_txn` (1,392,065 rows, 209 MB), written in `txn_ts` order like a daily append. Dashboards and
 the analyst's screen read it without joins. It shares the Postgres instance with `core_banking` to save RAM on a
 laptop; a real setup gives it its own server.

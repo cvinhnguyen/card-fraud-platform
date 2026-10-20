@@ -1,10 +1,10 @@
-"""Run flink/ato_sequence.py in arrival order and in event-time order on a replay of app events, and compare.
+"""Run pipelines/flink/ato_sequence.py in arrival order and in event-time order on a replay of app events, and compare.
 
 Truth: sessions whose events, sorted by event_ts, contain password_reset -> add_payee -> transfer within 10 minutes;
 and among them the new_device ATO sessions from the generator (data/source/_truth).
 
 Usage (repo root; stream profile up):
-  python flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000   # before the biometric rule stops most ATO
+  python pipelines/flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000   # before the biometric rule stops most ATO
 """
 import argparse
 import subprocess

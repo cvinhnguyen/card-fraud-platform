@@ -8,15 +8,15 @@ code); everything after silver that is "join and reshape" is dbt.
 
 | Where | What |
 |---|---|
-| `dbt/models/gold/*.sql` | 5 models; `fact_transaction` is `incremental` with `merge` on `transaction_id` and `partition_by txn_month` |
-| `dbt/models/gold/schema.yml` | 19 generic tests (unique, not_null, relationships fact -> each dim) + descriptions |
-| `dbt/tests/*.sql` | 3 singular tests: one current version per customer, no gaps/overlaps between versions, fact reconciles with silver |
-| `dbt/profiles.yml` | `local`: Spark Thrift Server (by hand, :10000); `session`: dbt's own Spark session (Airflow DP2) |
-| `airflow/dags/dp2_bronze_to_gold.py` | `dbt_build` + `dbt_docs` tasks after silver is validated |
+| `pipelines/dbt/models/gold/*.sql` | 5 models; `fact_transaction` is `incremental` with `merge` on `transaction_id` and `partition_by txn_month` |
+| `pipelines/dbt/models/gold/schema.yml` | 19 generic tests (unique, not_null, relationships fact -> each dim) + descriptions |
+| `pipelines/dbt/tests/*.sql` | 3 singular tests: one current version per customer, no gaps/overlaps between versions, fact reconciles with silver |
+| `pipelines/dbt/profiles.yml` | `local`: Spark Thrift Server (by hand, :10000); `session`: dbt's own Spark session (Airflow DP2) |
+| `pipelines/airflow/dags/dp2_bronze_to_gold.py` | `dbt_build` + `dbt_docs` tasks after silver is validated |
 
 ## Proof 1: the same tables as the taught way
 
-To have something to compare with, `spark/build_gold_pyspark.py` builds the same five tables by hand in PySpark (the
+To have something to compare with, `pipelines/spark/build_gold_pyspark.py` builds the same five tables by hand in PySpark (the
 way the course writes Spark jobs) into the database `gold_pyspark`, and runs the same 22 checks as assertions. Then
 it compares both results row by row (`EXCEPT ALL` in both directions):
 
@@ -28,7 +28,7 @@ it compares both results row by row (`EXCEPT ALL` in both directions):
 | `dim_date` | 1,019 | 1,019 | 8 | 0 | 0 |
 | `fact_transaction` | 7,879,773 | 7,879,773 | 16 | 0 | 0 |
 
-So dbt-spark produces exactly what hand-written Spark produces; the difference is in how the work is expressed.
+dbt-spark produces exactly the rows hand-written Spark produces. The two differ in how the work is written down.
 
 ## Proof 2: what it costs to write and run
 
@@ -46,15 +46,15 @@ the USB HDD), full build of all five tables:
 | Full build + tests | 171 s build + 87 s checks = 258 s (inside the job) | `dbt build --full-refresh`: 477 s (wall, incl. starting the session) |
 | Daily run | full rebuild every day (as above) | `dbt build`, nothing new: 405 s; in Airflow 158 s for one new export date (SSD, before the disk move) |
 
-dbt is slower to run here, not faster: it runs one model and one test query at a time (threads 1 in the session
+dbt is slower to run here. It runs one model and one test query at a time (threads 1 in the session
 target), rebuilds the four dimension tables on every run (materialized `table`), and pays for starting a session.
 The PySpark job computes everything in one session and counts its 22 checks in a few shared scans. With a long-lived
 Thrift Server and `threads: 2` (target `local`) the session cost goes away; making the dimensions incremental would
 cut the daily run further.
 
-The line counts are close too: dbt's win is not less code or less time but less *plumbing*. The PySpark version needs a `save()`
-helper, table registration, an explicit build order and an assertion per test; in dbt those are a materialization
-config, `ref()`, and one word per test.
+The line counts are close too. What dbt saves is plumbing: the PySpark version needs a `save()` helper, table
+registration, an explicit build order and an assertion per test; in dbt those are a materialization config, `ref()`,
+and one word per test.
 
 ### Adding one more dimension
 
@@ -85,12 +85,13 @@ so its SQL, column docs and the 27 test results sit on the table's page next to 
 
 ## Problems met
 
-- **SCD2 as a snapshot vs a model.** The plan was a dbt `snapshot`, but the source already holds every version since
-  2024 and a snapshot only records changes from its first run, so `dim_customer` is a model (lag over a hash of the
-  tracked attributes, city compared after normalization). Decision recorded 2026-10-17.
-- **Thrift Server + Delta.** `min/max(date)` failed with `ClassCastException LocalDate -> java.sql.Date` (Delta's
-  metadata-only query vs the Thrift Server's java8 time API): `spark.databricks.delta.optimizeMetadataQuery.enabled=false`.
-- **Thrift Server memory.** It holds a 1 GB driver and a 1 GB executor all the time. Next to DataHub in the 8 GB
+- The plan for SCD2 was a dbt `snapshot`, but the source already holds every version since 2024 and a snapshot only
+  records changes from its first run, so `dim_customer` is a model (lag over a hash of the tracked attributes, city
+  compared after normalization). Decision recorded 2026-10-17.
+- With Delta on the Thrift Server, `min/max(date)` failed with `ClassCastException LocalDate -> java.sql.Date`
+  (Delta's metadata-only query vs the Thrift Server's java8 time API). Fix:
+  `spark.databricks.delta.optimizeMetadataQuery.enabled=false`.
+- The Thrift Server holds a 1 GB driver and a 1 GB executor all the time. Next to DataHub in the 8 GB
   Docker VM that pushed the VM into swap, and Docker's DNS started failing (`Unable to execute HTTP request:
   seaweedfs`). In Airflow, dbt therefore uses the `session` target: it starts its own Spark session for the length
   of the task, queued in the `spark` pool like the other jobs; the Thrift Server stays for interactive use.

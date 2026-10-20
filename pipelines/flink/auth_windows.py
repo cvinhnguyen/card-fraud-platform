@@ -14,7 +14,7 @@ Kafka source. Reads the replay topic `card_auth_replay` (1 partition) from the e
   - with 6 partitions read at uneven speed the watermark (minimum over partitions) lagged days behind, so the replay
     topic has one partition and the job runs with parallelism 1
 Writes JSON results to `auth_counts_<mode>` and late events to `auth_late_<mode>`;
-flink/check_windows.py compares them with counts computed from the Parquet files.
+pipelines/flink/check_windows.py compares them with counts computed from the Parquet files.
 
 Usage (stream profile up, replay loaded):
   docker exec flink-jobmanager flink run -py /opt/flink/jobs/auth_windows.py --mode dedup

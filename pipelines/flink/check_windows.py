@@ -1,10 +1,10 @@
-"""Run flink/auth_windows.py in each mode and compare its window counts with the truth from the Parquet files.
+"""Run pipelines/flink/auth_windows.py in each mode and compare its window counts with the truth from the Parquet files.
 
 Truth: the same replayed slice (first --limit events by received_ts from --replay-from), one count per auth_id,
 per card per 5-minute window of auth_ts. A window "matches" when Flink's final count equals the truth.
 
 Usage (repo root; stream profile up). Loads the replay into the 1-partition topic card_auth_replay, then runs:
-  python flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000
+  python pipelines/flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000
 """
 import argparse
 import json
@@ -17,7 +17,7 @@ import pandas as pd
 from confluent_kafka import Consumer
 from confluent_kafka.admin import AdminClient, NewTopic
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "generator"))
 from producer import load  # noqa: E402
 

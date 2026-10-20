@@ -1,8 +1,9 @@
 # Airflow pipelines (DP1, DP2, DP3)
 
 Airflow 2.10.5 (LocalExecutor), compose profile `orch`, UI http://127.0.0.1:8082 (user `admin`, password
-`AIRFLOW_ADMIN_PASSWORD` in `infra/.env`). Three DAGs in `airflow/dags/`, one per pipeline, each with an ingest stage
-and a validate stage:
+`AIRFLOW_ADMIN_PASSWORD` in `infra/.env`). Three of the DAGs in `pipelines/airflow/dags/` are the data pipelines, each with an
+ingest stage and a validate stage. The other three are `datahub_metadata` ([datahub.md](datahub.md)) and, for
+Layer 2, `feast_materialize` ([feature_store.md](feature_store.md)) and `drift_monitoring` ([drift.md](drift.md)).
 
 | DAG | Schedule | Ingest stage | Validate stage |
 |---|---|---|---|
@@ -21,19 +22,18 @@ docker exec airflow-scheduler airflow dags backfill dp1_source_to_bronze -s 2026
 
 ## How the pieces fit
 
-- **Spark from Airflow.** `SparkSubmitOperator` submits `spark/*.py` to the standalone master (connection
+- `SparkSubmitOperator` submits `pipelines/spark/*.py` to the standalone master (connection
   `spark_lakehouse`). Standalone has no cluster deploy mode for Python, so the driver runs inside the scheduler
   container. The Airflow image therefore carries the same JRE and `/opt/spark` as the Spark image (copied from it in
   the Dockerfile), so the driver has the cluster's Spark 4.1.3 and the executors' Python 3.10. The scheduler runs as
   uid 185 (the Spark user) and mounts the same `spark-defaults.conf` and the `spark_ivy` volume, where event logs land
   for the history server (:18080), so a run started by Airflow can be opened there like any other. The Delta / S3A /
   JDBC / OpenLineage jars are in the image (`fraud/spark`, P9), so nothing is downloaded at run time.
-- **Pool `spark` (1 slot).** The worker has 3 GB: one executor (1.5 GB for DAG tasks) at a time, with room left for
-  the Thrift Server's 1 GB executor when it is up. Every Spark
-  task takes the pool slot, so Spark applications from overlapping DAG runs queue in Airflow instead of waiting for
-  executors inside Spark.
-- **Connections and variables live in Airflow.** `airflow-init` creates them from `infra/.env`
-  (`airflow/setup_airflow.py`); passwords are stored encrypted with the Fernet key. The DAG code holds no host name or
+- The pool `spark` has 1 slot. The worker has 3 GB: one executor (1.5 GB for DAG tasks) at a time, with room left
+  for the Thrift Server's 1 GB executor when it is up. Every Spark task takes the pool slot, so Spark applications
+  from overlapping DAG runs queue in Airflow instead of waiting for executors inside Spark.
+- Connections and variables live in Airflow. `airflow-init` creates them from `infra/.env`
+  (`pipelines/airflow/setup_airflow.py`); passwords are stored encrypted with the Fernet key. The DAG code holds no host name or
   credential: tasks render them at run time (`{{ conn.lakehouse_s3.password }}`), and Spark jobs read them from
   their environment (`CORE_DB_URL`, `CORE_DB_USER`, `AWS_ACCESS_KEY_ID`, ...). The task logs contain none of the
   secret values (checked by searching the logs for them).
@@ -43,26 +43,26 @@ docker exec airflow-scheduler airflow dags backfill dp1_source_to_bronze -s 2026
 | `spark_lakehouse` | spark, `spark://spark-master:7077`, client mode | every Spark task |
 | `core_banking_db` | postgres, `postgres:5432/core_banking` | DP1 snapshot (JDBC URL, user, password) |
 | `lakehouse_s3` | aws, endpoint `http://seaweedfs:8333` | S3 sensor, S3 credentials of the drivers, reading GE results |
-| `spark_thrift` | generic, `spark-thrift:10000` | dbt by hand / BI tools (`dbt/profiles.yml` target `local`) |
+| `spark_thrift` | generic, `spark-thrift:10000` | dbt by hand / BI tools (`pipelines/dbt/profiles.yml` target `local`) |
 | `kafka_broker` | generic, `kafka:19092` | DataHub ingestion of the topics (`datahub_metadata` DAG) |
 | `datahub_rest_default` | datahub_rest, `http://datahub-gms:8080` | DataHub listener, GE results as assertions |
 
 | Variable | Value |
 |---|---|
-| `spark_jobs_dir` | `/opt/jobs` (the `spark/` folder, mounted in the Spark and Airflow containers) |
+| `spark_jobs_dir` | `/opt/jobs` (the `pipelines/spark/` folder, mounted in the Spark and Airflow containers) |
 | `dbt_project_dir`, `dbt_artifacts_dir` | `/opt/airflow/dbt` (read-only), `/opt/airflow/dbt-artifacts` (target + logs volume) |
 | `export_bucket`, `lakehouse_bucket`, `validation_prefix` | `core-banking-export`, `lakehouse`, `_validation` |
 
-- **dbt runs as a Spark application too.** In DP2, dbt uses its `session` target: it opens its own Spark session in
+- dbt runs as a Spark application too. In DP2, dbt uses its `session` target: it opens its own Spark session in
   the task (same `spark-defaults.conf`, so OpenLineage sees its SQL), queued in the `spark` pool. The Spark Thrift
   Server (target `local`) is for interactive use: it holds a 1 GB driver and a 1 GB executor all the time, which next
   to DataHub pushed the 8 GB Docker VM into swap; Docker's DNS then failed (`Unable to execute HTTP request:
   seaweedfs`) and tasks failed at random.
-- **`depends_on_past` on every task.** All loads are incremental, so day D must not run before D-1 succeeded. The first
+- Every task has `depends_on_past`. All loads are incremental, so day D must not run before D-1 succeeded. The first
   backfill showed why: a Docker DNS error failed DP2 for 10-13, DP2 for 10-14 ran first, and its labels (as of 10-14)
   made the 10-13 label step a no-op, so the 10-13 validation would have failed with no rows labelled as of 10-13.
-- **XCom carries paths only.** Data moves through the lakehouse; the only XCom value is the path of a results file.
-- **Idempotent, incremental tasks.** Bronze appends only export dates it does not have, silver and the fact MERGE
+- XCom carries paths only. Data moves through the lakehouse; the only XCom value is the path of a results file.
+- Tasks are idempotent and incremental. Bronze appends only export dates it does not have, silver and the fact MERGE
   on `transaction_id`, labels skip an `as_of` already written. A retry or a rerun of an old date adds nothing twice.
 
 ## DP1: source -> bronze
@@ -72,7 +72,7 @@ docker exec airflow-scheduler airflow dags backfill dp1_source_to_bronze -s 2026
 
 | Task | What it does |
 |---|---|
-| `wait_for_export` | waits for `s3://core-banking-export/transactions/export_date={{ data_interval_end \| ds }}/*.parquet`; frees its worker slot between checks |
+| `wait_for_export` | waits for `s3://core-banking-export/transactions/export_date={{ macros.ds_add(ds, 1) }}/*.parquet`; frees its worker slot between checks |
 | `snapshot_core_banking` | `ingest_bronze.py --part core_banking`: JDBC snapshot of the 6 Postgres tables (overwrite; Delta keeps the old versions) |
 | `ingest_exports` | `ingest_bronze.py --part exports --until <ds+1>`: appends new export dates to `bronze.raw_transactions` (mergeSchema) |
 | `ingest_stream_landing` | `ingest_bronze.py --part landing`: Flink's raw authorization files -> `bronze.raw_card_authorizations` |
@@ -99,39 +99,42 @@ Silver is validated before dbt reads it, so a bad silver batch never reaches gol
 | Task | What it does |
 |---|---|
 | `build_features` | `feat_card_txn_stats_daily` (windows end the day before `event_timestamp`); the job fails if a brute-force recount of 500 random rows differs (leakage check) |
-| `validate_dp3` | GE on the rows of day `ds`: one row per card, no NULL keys / timestamps, counts >= 0, ratios in [0, 1] |
+| `validate_dp3` | GE on the rows written for active day `ds` (`event_timestamp` = `ds` + 1): one row per card, no NULL keys / timestamps, counts >= 0, ratios in [0, 1] |
+| `trigger_feast_materialize` | Layer 2: starts `feast_materialize`, which loads the new rows into the Redis online store |
 
 ## Validate stage
 
-`spark/validate.py` runs Great Expectations 0.18 (`SparkDFDataset`, the same `expect_*` calls as the course's
+`pipelines/spark/validate.py` runs Great Expectations 0.18 (`SparkDFDataset`, the same `expect_*` calls as the course's
 `ge.from_pandas`) inside a Spark driver, on the slice the run wrote, so its cost does not grow with the table. It
 writes `s3://lakehouse/_validation/<suite>/ds=<ds>/results.json` and exits 0; `publish_results` then fails the run if
 any expectation failed. Recording first and failing second means the reason of a stopped pipeline is always written
 down (and, from P8, sent to DataHub).
 
-GE runs on Spark, not pandas: at 100 GB a day's export no longer fits a pandas DataFrame. GE has its own venv in the
+![publish_results of DP2 silver for 2026-10-15: one ok line per expectation, 13 assertion results sent to DataHub](images/airflow_validate_log.png)
+
+GE runs on Spark because at 100 GB a day's export no longer fits a pandas DataFrame. GE has its own venv in the
 image (`/opt/venvs/ge`); the task sets `spark.pyspark.driver.python` to it.
 
 ## Backfill run
 
-`spark/rewind_days.py --from 2026-10-12` deleted the last 4 export dates from bronze, silver and the fact and restored
+`pipelines/spark/rewind_days.py --from 2026-10-12` deleted the last 4 export dates from bronze, silver and the fact and restored
 the label table to its 2026-09-30 version; the backfill above then reloaded them day by day.
 
 All 12 DAG runs (3 DAGs x 4 business days) succeeded; the DataHub ingestion DAG ran next to them.
 
 ![DAG list: 4 DAGs, 0 failed](images/airflow_dags.png)
 
-**DP1.** The sensor gates `ingest_exports` only; the Postgres snapshot and the landing load do not wait for the
+In DP1 the sensor gates `ingest_exports` only; the Postgres snapshot and the landing load do not wait for the
 export file. The three Spark tasks queue in the `spark` pool.
 
 ![dp1_source_to_bronze graph, 4 green runs](images/airflow_dp1_graph.png)
 
-**DP2.** Silver is validated before dbt reads it; labels run next to dbt (they read silver, not gold); the gold
+In DP2, silver is validated before dbt reads it, labels run next to dbt (they read silver, not gold), and the gold
 validation waits for both.
 
 ![dp2_bronze_to_gold graph](images/airflow_dp2_graph.png)
 
-**DP3.**
+![dp2_bronze_to_gold grid: 4 backfill runs, every task green; mean run 01:13:57, max 02:47:38](images/airflow_dp2_grid.png)
 
 ![dp3_gold_to_features graph](images/airflow_dp3_graph.png)
 
@@ -170,8 +173,9 @@ longer for reasons outside the DAGs, all in `docs/datahub.md` and below:
   name lookups until dbt moved off the Thrift Server;
 - the Spark worker kept every application's work dir (each with its own copy of the `--packages` jars) and its
   container layer reached 94 GB; with Docker's disk image back on C: after a Docker Desktop update, C: filled up and
-  the engine hung mid-run. The worker now cleans finished applications (`SPARK_WORKER_OPTS`), and the disk image is
-  on E: again (a USB HDD, so later runs were I/O bound).
+  the engine hung mid-run. The worker now cleans finished applications (`SPARK_WORKER_OPTS`). The disk image went
+  back to E: (a USB HDD, so later runs were I/O bound) and moved to the C: SSD (`C:\DockerDesktopWSL`) on
+  2026-10-19.
 
 Every task is incremental and idempotent, so after the restart the interrupted runs were cleared and finished with
 the same results.

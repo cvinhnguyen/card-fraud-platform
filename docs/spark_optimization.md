@@ -1,6 +1,6 @@
 # Spark optimization
 
-## Merchant join skew (`spark/skew_join.py`)
+## Merchant join skew (`pipelines/spark/skew_join.py`)
 
 ```bash
 docker compose -f infra/docker-compose.yaml stop spark-thrift      # it holds worker cores
@@ -19,7 +19,7 @@ warm up, then 3 times; the table shows the median. Task numbers come from the sl
 | AQE skew join | `spark.sql.adaptive.enabled`, skew threshold 8 MB | 38.0 | 35.8, 38.0, 38.6 | 2.1 s | 1.68 s |
 | broadcast | merchants (5.2k rows) sent to every executor | 23.9 | 24.1, 23.2, 23.9 | 1.5 s | 1.35 s |
 
-For salting, AQE and broadcast the slowest stage is the scan of the transactions, not the join: the skew is gone.
+With salting, AQE and broadcast the skew is gone: their slowest stage is the scan of the transactions.
 Broadcast's 23.9 s is roughly the cost of reading the data, so the join itself costs about 27 s in the baseline,
 22 s with salting, 14 s with AQE and almost nothing with broadcast.
 
@@ -79,6 +79,6 @@ generated data), so compare methods within a row, not across rows. Median of 3 r
 - At 30% the biggest key (8.1%) is below one core's fair share (12.5%). Salting gains nothing over the baseline
   (44.4 s both): what it saves on the hot task it pays back for the extra column and the 32 copies of `merchants`.
   AQE is still 5.7 s faster, because the baseline's slowest task still reads 175 MB (9.2 s) and AQE splits it.
-- From 60% the hot key exceeds the fair share: the baseline grows by 1.5–4 s per step while salting and AQE stay
+- From 60% the hot key exceeds the fair share: the baseline grows by 1.5 to 4 s per step while salting and AQE stay
   within a second of each other.
 - Broadcast does not depend on skew at all, because the transactions are never shuffled.

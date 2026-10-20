@@ -3,7 +3,7 @@
   gold.fact_transaction (last DAYS days) + dim_merchant -> serving.mart.obt_card_txn (one big table, no joins at read time)
 
 Rows are written in txn_ts order, as a daily append would, so a BRIN index on txn_ts stays useful.
-Indexes and the EXPLAIN before/after live in sql/serving_indexes.sql.
+Indexes and the EXPLAIN before/after live in infra/sql/serving_indexes.sql.
 ponytail: same Postgres instance as core_banking to save RAM on the laptop; a real setup gives serving its own server.
 
 Usage (repo root; the `serving` database must exist, see docs/storage_optimization.md):

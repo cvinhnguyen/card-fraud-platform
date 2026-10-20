@@ -1,10 +1,10 @@
-"""Run flink/rt_features.py on a replay and recompute every feature with pandas.
+"""Run pipelines/flink/rt_features.py on a replay and recompute every feature with pandas.
 
 Same semantics as the job: arrival order, first copy of each auth_id only, and for each authorization the same
 card's authorizations that arrived before it (or are it) with auth_ts in [auth_ts - 1 h, auth_ts].
 
 Usage (repo root; stream profile up):
-  python flink/check_features.py --replay-from "2025-03-01 00:00" --limit 100000
+  python pipelines/flink/check_features.py --replay-from "2025-03-01 00:00" --limit 100000
 """
 import argparse
 import subprocess

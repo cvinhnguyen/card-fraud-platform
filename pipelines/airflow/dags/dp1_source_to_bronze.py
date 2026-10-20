@@ -1,11 +1,12 @@
 """DP1: core banking sources -> bronze Delta tables, unchanged, then validated.
 
 Runs daily for business day `ds`. The core banking system exports day ds into `export_date = ds + 1` between 01:00
-and 03:00, so the run waits for that folder before reading it.
+and 03:00, so the run waits for that folder before reading it. `ds + 1`, not `data_interval_end`: the same day the
+validation checks (pipelines/spark/validate.py), also for a manual run, whose data interval ends on ds itself.
 
 | Task | What it does |
 |---|---|
-| `wait_for_export` | S3 sensor on `core-banking-export/transactions/export_date={{ data_interval_end \\| ds }}/` (reschedule mode: frees the worker slot while waiting) |
+| `wait_for_export` | S3 sensor on `core-banking-export/transactions/export_date={{ macros.ds_add(ds, 1) }}/` (reschedule mode: frees the worker slot while waiting) |
 | `snapshot_core_banking` | Spark JDBC: full snapshot of the 6 Postgres tables into `bronze.raw_*` (overwrite; Delta keeps the old versions) |
 | `ingest_exports` | Spark: appends the new export dates to `bronze.raw_transactions` (mergeSchema for the 2024-07-01 auth columns) |
 | `ingest_stream_landing` | Spark file stream (availableNow): Flink's raw authorization files -> `bronze.raw_card_authorizations` |
@@ -25,11 +26,11 @@ from common import CORE_DB_ENV, DEFAULT_ARGS, spark_job, validate
 with DAG("dp1_source_to_bronze", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False,
          max_active_runs=1, default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp1", "bronze"]) as dag:
     wait = S3KeySensor(task_id="wait_for_export", aws_conn_id="lakehouse_s3", bucket_name="{{ var.value.export_bucket }}",
-                       bucket_key="transactions/export_date={{ data_interval_end | ds }}/*.parquet", wildcard_match=True,
+                       bucket_key="transactions/export_date={{ macros.ds_add(ds, 1) }}/*.parquet", wildcard_match=True,
                        mode="reschedule", poke_interval=300, timeout=6 * 3600)
     snapshot = spark_job("snapshot_core_banking", "ingest_bronze.py", ["--part", "core_banking"], env=CORE_DB_ENV)
     exports = spark_job("ingest_exports", "ingest_bronze.py",
-                        ["--part", "exports", "--until", "{{ data_interval_end | ds }}"])
+                        ["--part", "exports", "--until", "{{ macros.ds_add(ds, 1) }}"])
     landing = spark_job("ingest_stream_landing", "ingest_bronze.py", ["--part", "landing"])
     trigger = TriggerDagRunOperator(task_id="trigger_dp2", trigger_dag_id="dp2_bronze_to_gold",
                                     logical_date="{{ logical_date }}", reset_dag_run=True)

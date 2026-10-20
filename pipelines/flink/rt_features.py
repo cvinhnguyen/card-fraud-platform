@@ -9,16 +9,21 @@ impossible journey. distinct_cities_raw_1h is the same count on raw names, kept 
 
 Usage (stream profile up; replay loaded into card_auth_replay):
   docker exec flink-jobmanager flink run -py /opt/flink/jobs/rt_features.py
+  ... rt_features.py --topic card_authorizations            # Layer 2: whole topic (history backfill), then stops
+  ... rt_features.py --topic card_authorizations --live     # Layer 2: unbounded, from the committed offsets
+Layer 2's push jobs read `card_features_rt` into Feast (online and offline store), so training and serving see the
+values of this one job.
 """
+import argparse
 import csv
 import json
 from datetime import datetime, timezone
 
-from pyflink.common import Time, Types, WatermarkStrategy
+from pyflink.common import Configuration, Time, Types, WatermarkStrategy
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import (KafkaOffsetsInitializer, KafkaRecordSerializationSchema, KafkaSink,
-                                                 KafkaSource)
+from pyflink.datastream.connectors.kafka import (KafkaOffsetResetStrategy, KafkaOffsetsInitializer,
+                                                 KafkaRecordSerializationSchema, KafkaSink, KafkaSource)
 from pyflink.datastream.functions import KeyedProcessFunction, RuntimeContext
 from pyflink.datastream.state import StateTtlConfig, ValueStateDescriptor
 
@@ -87,15 +92,28 @@ class CardFeatures(KeyedProcessFunction):
 
 
 if __name__ == "__main__":
-    env = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(1)
-    source = (KafkaSource.builder().set_bootstrap_servers(KAFKA).set_topics("card_auth_replay").set_group_id("rt_features")
-              .set_starting_offsets(KafkaOffsetsInitializer.earliest()).set_bounded(KafkaOffsetsInitializer.latest())
-              .set_value_only_deserializer(SimpleStringSchema()).build())
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--topic", default="card_auth_replay")
+    ap.add_argument("--live", action="store_true", help="unbounded, resume from the group's committed offsets")
+    ap.add_argument("--parallelism", type=int, default=1, help="> 1 for the history backfill (state is keyed by card)")
+    args = ap.parse_args()
+    # Python keeps up to this many keys' state; the default (1,000) makes most of 130k cards a JVM round trip
+    conf = Configuration()
+    conf.set_integer("python.state.cache-size", 30_000)
+    env = StreamExecutionEnvironment.get_execution_environment(conf)
+    env.set_parallelism(args.parallelism)
+    builder = (KafkaSource.builder().set_bootstrap_servers(KAFKA).set_topics(args.topic).set_group_id("rt_features")
+               .set_value_only_deserializer(SimpleStringSchema()))
+    if args.live:
+        env.enable_checkpointing(10_000)   # offsets are committed on checkpoints
+        builder = builder.set_starting_offsets(KafkaOffsetsInitializer.committed_offsets(KafkaOffsetResetStrategy.EARLIEST))
+    else:
+        builder = builder.set_starting_offsets(KafkaOffsetsInitializer.earliest()).set_bounded(KafkaOffsetsInitializer.latest())
+    source = builder.build()
     sink = (KafkaSink.builder().set_bootstrap_servers(KAFKA)
             .set_record_serializer(KafkaRecordSerializationSchema.builder().set_topic("card_features_rt")
                                    .set_value_serialization_schema(SimpleStringSchema()).build()).build())
-    (env.from_source(source, WatermarkStrategy.no_watermarks(), "kafka card_auth_replay")   # arrival order, no windows
+    (env.from_source(source, WatermarkStrategy.no_watermarks(), f"kafka {args.topic}")   # arrival order, no windows
      .map(parse, output_type=AUTH)
      .key_by(lambda e: e[0], key_type=Types.STRING()).process(FirstSeen(), output_type=AUTH)
      .key_by(lambda e: e[1], key_type=Types.STRING()).process(CardFeatures(), output_type=Types.STRING())

@@ -10,7 +10,7 @@
 Same result in both modes. Event time is the Kafka timestamp; the watermark waits 31 minutes, longer than the latest
 POS event (30 min), so no window fires before all its events are in and phase 2 never receives a partial count twice
 (allowed_lateness would re-fire phase-1 windows and double count). Reads the 1-partition replay topic
-`card_auth_replay` with one source subtask, bounded; flink/check_hot_key.py loads the replay, runs both modes and
+`card_auth_replay` with one source subtask, bounded; pipelines/flink/check_hot_key.py loads the replay, runs both modes and
 reads per-subtask records and busy / backpressured time from the Flink REST API.
 
 Usage (stream profile up, replay loaded):

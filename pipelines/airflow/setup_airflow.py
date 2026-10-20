@@ -28,14 +28,26 @@ CONNECTIONS = [
                description="Kafka broker (internal listener): streaming sources, DataHub's event bus"),
     Connection(conn_id="datahub_rest_default", conn_type="datahub_rest", host="http://datahub-gms:8080",
                description="DataHub GMS (gov profile): Airflow listener + GE assertion results"),
+    # Layer 2 (ml profile + kind cluster, whose node joins the compose network as fraud-control-plane)
+    Connection(conn_id="feast_registry", conn_type="postgres", host="ml-db", port=5432, schema="feast", login="ml",
+               password=E["ML_DB_PASSWORD"], description="Feast SQL registry"),
+    Connection(conn_id="feast_online", conn_type="redis", host="redis", port=6379, password=E["REDIS_PASSWORD"],
+               description="Feast online store (Redis)"),
+    Connection(conn_id="mlflow", conn_type="http", host="http://mlflow:5000",
+               description="MLflow tracking server + model registry"),
+    Connection(conn_id="kfp_api", conn_type="http", host="http://fraud-control-plane:31888",
+               description="Kubeflow Pipelines API (NodePort of the kind cluster): retraining runs"),
 ]
 VARIABLES = {
-    "spark_jobs_dir": "/opt/jobs",                         # spark/ is mounted here in the Spark and Airflow containers
+    "spark_jobs_dir": "/opt/jobs",                         # pipelines/spark/ is mounted here in the Spark and Airflow containers
     "dbt_project_dir": "/opt/airflow/dbt",
     "dbt_artifacts_dir": "/opt/airflow/dbt-artifacts",
     "export_bucket": "core-banking-export",                # nightly transaction exports, one folder per export_date
     "lakehouse_bucket": "lakehouse",
     "validation_prefix": "_validation",                    # GE results: s3://lakehouse/_validation/<suite>/ds=<ds>/
+    "feast_repo": "/opt/airflow/feature_repo",             # Layer 2: ml/feature_repo/ mounted read-only
+    "drift_psi_threshold": "0.25",                         # PSI above this on any input = major drift
+    "drift_pr_auc_drop": "0.05",                           # PR-AUC this far below the model's test PR-AUC = decay
 }
 
 if __name__ == "__main__":

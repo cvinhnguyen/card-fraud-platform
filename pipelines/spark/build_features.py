@@ -1,15 +1,19 @@
 """DP3: gold -> feat_card_txn_stats_daily, the batch feature view `card_txn_stats_daily` of Layer 2 (Feast).
 
-One row per card and day D on which the card has a settled transaction. Every feature uses only what happened
-before D (windows end at D-1), and event_timestamp = D 00:00, so a point-in-time join for a payment on day D
-can never see that payment or anything after it. Same-day activity is the stream features' job (Flink, 1 hour).
+One row per card and day L on which the card had activity (a settled transaction or a dispute reported), with
+windows ending at L (L included) and event_timestamp = L + 1 day 00:00: the nightly run after day L writes it, and
+from then on it is the card's latest value. A point-in-time join for a payment on day D therefore sees the row of
+the card's last active day before D, exactly the row the online store holds when the payment is scored.
+(Layer 2 found the earlier layout, one row on each *payment* day D with windows ending at D-1, gave training a
+row that only existed because of the payment being scored: serving never has it. Same values, different rows.)
+Same-day activity is the stream features' job (Flink, 1 hour).
 
-  txn_count_30d, distinct_merchants_30d         settled transactions in the 30 days before D
-  avg_amount_90d, std_amount_90d                amount_vnd over the 90 days before D (NULL if none)
+  txn_count_30d, distinct_merchants_30d         settled transactions in the 30 days up to L
+  avg_amount_90d, std_amount_90d                amount_vnd over the 90 days up to L (NULL if none)
   ecom_ratio_90d, foreign_txn_ratio_90d         share of online / cross-border (currency != VND) payments
-  dispute_count_180d                            disputes *reported* in the 180 days before D (any reason)
+  dispute_count_180d                            disputes *reported* in the 180 days up to L (any reason)
 
-Disputes are counted by reported_ts, not by the transaction date: a dispute reported after D was unknown on D.
+Disputes are counted by reported_ts, not by the transaction date: a dispute reported after L was unknown on L + 1.
 
 Usage (repo root):
   docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_features.py
@@ -26,7 +30,7 @@ FEATURES = ["txn_count_30d", "distinct_merchants_30d", "avg_amount_90d", "std_am
 
 
 def build(spark: SparkSession):
-    """Build feat_card_txn_stats_daily from the fact and the disputes (windows end the day before D)."""
+    """Build feat_card_txn_stats_daily from the fact and the disputes (a row the day after each active day)."""
     fact = spark.table("gold.fact_transaction")
     day = F.to_date("txn_ts")
     txn = (fact.groupBy("card_id", day.alias("d"))
@@ -41,18 +45,18 @@ def build(spark: SparkSession):
             .fillna(0, ["n", "s", "s2", "ecom", "foreign", "k"])
             .withColumn("dn", F.datediff("d", F.lit(EPOCH))))
 
-    def past(days_back: int) -> Window:   # the `days_back` days before D, D itself excluded
-        """Window over the `days_back` days before D for the same card (D excluded)."""
-        return Window.partitionBy("card_id").orderBy("dn").rangeBetween(-days_back, -1)
+    def past(days_back: int) -> Window:   # the `days_back` days up to L, L included (= before the row's day L + 1)
+        """Window over the `days_back` days ending at L for the same card."""
+        return Window.partitionBy("card_id").orderBy("dn").rangeBetween(-(days_back - 1), 0)
 
     def total(c: str, days_back: int) -> Column:
-        """Sum of column c over the last `days_back` days before D."""
+        """Sum of column c over the `days_back` days ending at L."""
         return F.coalesce(F.sum(c).over(past(days_back)), F.lit(0))
 
     n90 = total("n", 90)
     avg = total("s", 90) / n90
     feats = (days.select(
-        "card_id", "d", "n",
+        "card_id", "d", "n", "k",
         total("n", 30).cast("int").alias("txn_count_30d"),
         F.size(F.array_distinct(F.flatten(F.collect_list(F.coalesce("merchants", F.array())).over(past(30)))))
          .alias("distinct_merchants_30d"),
@@ -61,8 +65,9 @@ def build(spark: SparkSession):
         F.when(n90 > 0, total("ecom", 90) / n90).alias("ecom_ratio_90d"),
         F.when(n90 > 0, total("foreign", 90) / n90).alias("foreign_txn_ratio_90d"),
         total("k", 180).cast("int").alias("dispute_count_180d"))
-        .where("n > 0").drop("n")
-        .withColumn("event_timestamp", F.col("d").cast("timestamp_ntz"))
+        .where("n > 0 OR k > 0").drop("n", "k")
+        .withColumn("event_timestamp", F.date_add("d", 1).cast("timestamp_ntz"))
+        .withColumn("stats_ts", F.col("event_timestamp"))   # as a feature: Layer 2 derives days_since_last_active
         .withColumn("created", F.current_timestamp())
         .drop("d"))
     # ponytail: full rebuild (~7.6M rows); incremental for Airflow = recompute the new days from 180 days of history
@@ -71,8 +76,8 @@ def build(spark: SparkSession):
 
 
 def check(spark: SparkSession) -> None:
-    """Re-compute SAMPLE random rows straight from the fact with a plain date filter; any difference means a
-    window includes day D (leakage) or misses a day."""
+    """Re-compute SAMPLE random rows straight from the fact with a plain date filter over [E - 30, E - 1], E the
+    row's event day; any difference means a window includes day E or later (leakage) or misses a day."""
     f = spark.table(TABLE).orderBy(F.rand(1)).limit(SAMPLE).withColumn("d", F.to_date("event_timestamp"))
     fact = spark.table("gold.fact_transaction")
     t = fact.select("card_id", F.to_date("txn_ts").alias("td"), "merchant_id")
