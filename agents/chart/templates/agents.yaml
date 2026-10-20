@@ -3,6 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-prompts
+  namespace: {{ .Release.Namespace }}
 data:
   {{- range $name, $a := .Values.agents }}
   {{ $name }}: |
@@ -15,6 +16,7 @@ apiVersion: kagent.dev/v1alpha2
 kind: Agent
 metadata:
   name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
   {{- with (index $.Values.promptVersions $name) }}
   annotations: {card-support/prompt: "card-support/{{ $name }} v{{ . }}"}
   {{- end }}

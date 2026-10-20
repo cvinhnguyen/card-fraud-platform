@@ -7,6 +7,7 @@ apiVersion: kagent.dev/v1alpha2
 kind: SandboxAgent
 metadata:
   name: {{ $name }}-sandbox
+  namespace: {{ $.Release.Namespace }}
 spec:
   type: Declarative
   description: {{ printf "%s (sandboxed)" $a.description | quote }}

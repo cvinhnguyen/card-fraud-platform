@@ -6,12 +6,12 @@ apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
   name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
 spec:
   scaleTargetRef: {name: {{ $name }}}
   minReplicaCount: {{ $as.minReplicas }}
   maxReplicaCount: {{ $as.maxReplicas }}
-  pollingInterval: 15
-  cooldownPeriod: 120
+  pollingInterval: 15   # scale-down: the HPA's 5 min stabilization (cooldownPeriod applies only to scale-to-zero)
   triggers:
     - type: prometheus
       metadata:
