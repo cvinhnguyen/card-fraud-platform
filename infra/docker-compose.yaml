@@ -378,8 +378,8 @@ services:
     depends_on:
       airflow-init: {condition: service_completed_successfully}
     environment: *airflow-env
-    # + the Docker socket: DockerOperator tasks (RAG DAG) run as sibling containers on the compose network
-    group_add: ["0"]
+    # DockerOperator tasks (RAG DAG) run as sibling containers on the compose network, through docker-proxy only
+    networks: [default, airflow-docker]
     volumes:
       - ../pipelines/airflow/dags:/opt/airflow/dags:ro
       - ../pipelines/spark:/opt/jobs:ro
@@ -390,7 +390,26 @@ services:
       - airflow_dbt:/opt/airflow/dbt-artifacts
       - ../ml/feature_repo:/opt/airflow/feature_repo:ro
       - ../ml:/opt/airflow/ml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+
+  # The scheduler's only way to the Docker daemon (no socket in Airflow): the API sections DockerOperator needs
+  # (containers create/start/wait/logs/remove, images, version); exec, build, volumes, networks, swarm and system
+  # are denied. On an internal network only the scheduler joins.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    profiles: [orch]
+    container_name: docker-proxy
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+      EXEC: 0
+      BUILD: 0
+      VOLUMES: 0
+      NETWORKS: 0
+      INFO: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [airflow-docker]
 
   # ---------- gov (P8) ----------
   # DataHub v1.5.0.6 (the course version) with its own Postgres and OpenSearch; it reuses the core Kafka
@@ -733,6 +752,9 @@ volumes:
   redis_data:
   registry_data:
   jenkins_home:
+
+networks:
+  airflow-docker: {internal: true}   # scheduler <-> docker-proxy only
 
 # Docker secrets of the CI/CD (values from this directory's .env, mounted at /run/secrets/<name> in Jenkins only)
 secrets:
