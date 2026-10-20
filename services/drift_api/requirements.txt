@@ -1,0 +1,7 @@
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+redis==8.1.0
+prometheus-client==0.26.0
+prometheus-fastapi-instrumentator==8.1.0

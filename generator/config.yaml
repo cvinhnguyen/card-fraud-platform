@@ -94,6 +94,23 @@ app_events:                      # Kafka source 2: mobile banking app, one sessi
     pass_rate_legit: 0.99
     pass_rate_ato: 0.10
 
+drift:                           # Layer 2: live period after the training data (generator/generate_drift.py)
+  start: 2026-10-16
+  end: 2026-11-15
+  daily_transactions: 8000       # the 2026 daily volume of the training period
+  phases:                        # a day takes every phase whose [from, to] covers it (no `to` = until end)
+    - name: sale_season          # 11/11 shopping festival (data drift: volume, channel mix, amounts)
+      from: 2026-11-09
+      to: 2026-11-12
+      volume_scale: 2.0
+      online_weight: 2.0         # online merchants' share of payments x2 (renormalized)
+      amount_scale: 1.6
+    - name: fraud_shift          # fraud rings switch to large night payments from the victim's own phone (malware):
+      from: 2026-10-26           # concept drift, the "new device" signal fades
+      fraud_rate: 0.005
+      risk_weights: {ecom: 2.0, night: 5.0, high_amount: 4.0, foreign: 1.0}
+      fraud_known_device_share: 0.6
+
 schema_evolution:                # Decision 2345/QĐ-NHNN + Circular 18/2024/TT-NHNN both effective 2024-07-01
   cutoff: 2024-07-01             # auth_method + three_ds_version exist only from this transaction date
   auth_method:                   # how the card payment was authenticated, per channel (assumed shares)

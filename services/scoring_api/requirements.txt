@@ -1,0 +1,9 @@
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+httpx==0.28.1
+aiokafka==0.14.0
+prometheus-client==0.24.1   # feast 0.66 pins prometheus_client < 0.25
+prometheus-fastapi-instrumentator==8.1.0
+feast[redis,postgres]==0.66.0

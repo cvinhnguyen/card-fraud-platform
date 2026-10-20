@@ -28,6 +28,9 @@ NEW_VALUE = {   # key -> how to make its value; keys added later are appended to
     "DATAHUB_TOKEN_SIGNING_KEY": lambda: base64.b64encode(secrets.token_bytes(32)).decode(),
     "DATAHUB_TOKEN_SALT": lambda: secrets.token_urlsafe(24),
     "DATAHUB_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),  # UI user `datahub` (written to user.props)
+    "ML_DB_PASSWORD": lambda: secrets.token_urlsafe(24),          # Layer 2: Feast registry + MLflow backend
+    "REDIS_PASSWORD": lambda: secrets.token_urlsafe(24),          # Layer 2: Feast online store
+    "JUPYTER_TOKEN": lambda: secrets.token_urlsafe(24),           # Layer 2: notebook login
 }
 DATAHUB_USERS = INFRA / "conf" / "datahub" / "user.props"   # frontend login file, replaces the default datahub:datahub
 

@@ -1,0 +1,32 @@
+# Feast repo of the card fraud model (Layer 2). Secrets come from the environment (${...}), never from this file.
+# Hosts are compose service names: reachable from the compose network and from kind pods (node joined to it).
+project: card_fraud
+provider: local
+registry:
+  registry_type: sql   # concurrent writers (CI feast apply, Airflow, notebooks) need a database, not a file
+  path: postgresql+psycopg://ml:${ML_DB_PASSWORD}@ml-db:5432/feast
+  cache_ttl_seconds: 60
+  sqlalchemy_config_kwargs:
+    pool_pre_ping: true
+online_store:
+  type: redis
+  connection_string: redis:6379,password=${REDIS_PASSWORD}
+offline_store:
+  type: spark   # point-in-time joins over the Delta feature tables of the lakehouse
+  spark_conf:   # used when Feast starts the session itself (materialize, push to offline); jobs may bring their own
+    spark.master: local[2]
+    spark.driver.memory: 1g
+    spark.sql.session.timeZone: UTC   # naive timestamps of every source are read as UTC wall clock, like Flink does
+    spark.sql.extensions: io.delta.sql.DeltaSparkSessionExtension
+    spark.sql.catalog.spark_catalog: org.apache.spark.sql.delta.catalog.DeltaCatalog
+    spark.hadoop.fs.s3a.endpoint: http://lakehouse-s3:8333
+    spark.hadoop.fs.s3a.endpoint.region: us-east-1
+    spark.hadoop.fs.s3a.path.style.access: "true"
+    spark.hadoop.fs.s3a.connection.ssl.enabled: "false"
+    spark.ui.enabled: "false"
+    spark.sql.warehouse.dir: /tmp/spark-warehouse   # path-based tables only: no spark-warehouse/ in the working dir
+materialization:
+  # Without it Feast 0.66's local engine pulls every row of the window and keeps the latest per key in pandas:
+  # 7.6M daily-stats rows -> 5.7 GB in Python, killed. With it Spark returns one row per card (ROW_NUMBER).
+  pull_latest_features: true
+entity_key_serialization_version: 3

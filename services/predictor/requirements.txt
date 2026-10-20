@@ -1,0 +1,2 @@
+kserve==0.21.0
+xgboost-cpu==3.2.0

@@ -1,0 +1,871 @@
+# PIPELINE DEFINITION
+# Name: train-fraud-model
+# Description: Card fraud model: Feast -> distributed XGBoost -> MLflow
+# Inputs:
+#    executors: int [Default: 2.0]
+#    feature_service: str [Default: 'fraud_model_v1']
+#    label_as_of: str [Default: '2026-10-15']
+#    learning_rate: float [Default: 0.08]
+#    max_depth: int [Default: 6.0]
+#    min_pr_auc_gain: float [Default: 0.005]
+#    n_estimators: int [Default: 400.0]
+#    negative_rate: float [Default: 0.02]
+#    num_workers: int [Default: 2.0]
+components:
+  comp-condition-1:
+    dag:
+      tasks:
+        register:
+          cachingOptions: {}
+          componentRef:
+            name: comp-register
+          inputs:
+            parameters:
+              feature_service:
+                componentInputParameter: pipelinechannel--feature_service
+              label_as_of:
+                componentInputParameter: pipelinechannel--label_as_of
+              model_dir:
+                componentInputParameter: pipelinechannel--train-Output
+              run_id:
+                componentInputParameter: pipelinechannel--load-labels-Output
+              test_path:
+                componentInputParameter: pipelinechannel--time-split-test
+          taskInfo:
+            name: register
+    inputDefinitions:
+      parameters:
+        pipelinechannel--evaluate-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--feature_service:
+          parameterType: STRING
+        pipelinechannel--label_as_of:
+          parameterType: STRING
+        pipelinechannel--load-labels-Output:
+          parameterType: STRING
+        pipelinechannel--time-split-test:
+          parameterType: STRING
+        pipelinechannel--train-Output:
+          parameterType: STRING
+  comp-evaluate:
+    executorLabel: exec-evaluate
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        min_pr_auc_gain:
+          parameterType: NUMBER_DOUBLE
+        model_dir:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        test_path:
+          parameterType: STRING
+        val_path:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: BOOLEAN
+  comp-get-training-data:
+    executorLabel: exec-get-training-data
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        label_as_of:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: NUMBER_INTEGER
+  comp-load-labels:
+    executorLabel: exec-load-labels
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        kfp_run_id:
+          parameterType: STRING
+        label_as_of:
+          parameterType: STRING
+        negative_rate:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-register:
+    executorLabel: exec-register
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        label_as_of:
+          parameterType: STRING
+        model_dir:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        test_path:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: NUMBER_INTEGER
+  comp-time-split:
+    executorLabel: exec-time-split
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        label_as_of:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        version:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        test:
+          parameterType: STRING
+        train:
+          parameterType: STRING
+        val:
+          parameterType: STRING
+  comp-train:
+    executorLabel: exec-train
+    inputDefinitions:
+      parameters:
+        executors:
+          parameterType: NUMBER_INTEGER
+        feature_service:
+          parameterType: STRING
+        learning_rate:
+          parameterType: NUMBER_DOUBLE
+        max_depth:
+          parameterType: NUMBER_INTEGER
+        n_estimators:
+          parameterType: NUMBER_INTEGER
+        num_workers:
+          parameterType: NUMBER_INTEGER
+        run_id:
+          parameterType: STRING
+        train_path:
+          parameterType: STRING
+        val_path:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-validate-data:
+    executorLabel: exec-validate-data
+    inputDefinitions:
+      parameters:
+        feature_service:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        version:
+          parameterType: NUMBER_INTEGER
+deploymentSpec:
+  executors:
+    exec-evaluate:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate(run_id: str, model_dir: str, val_path: str, test_path:\
+          \ str, feature_service: str,\n             min_pr_auc_gain: float, metrics:\
+          \ dsl.Output[dsl.Metrics]) -> bool:\n    \"\"\"Step 6: thresholds, test\
+          \ metrics vs baseline and production; returns `passed` (also shown in the\
+          \ KFP UI).\"\"\"\n    import json\n    from fraud_ml import steps\n    passed\
+          \ = steps.evaluate(run_id, model_dir, val_path, test_path, feature_service,\
+          \ min_pr_auc_gain)\n    with steps.s3().open_input_stream(f\"{model_dir.removeprefix('s3a://')}/evaluation.json\"\
+          ) as f:\n        ev = json.loads(f.read())\n    for k in (\"pr_auc\", \"\
+          roc_auc\", \"recall_at_1pct_fpr\", \"precision_at_t_high\", \"decline_rate\"\
+          , \"step_up_rate\"):\n        metrics.log_metric(k, round(ev[\"test\"][k],\
+          \ 5))\n        metrics.log_metric(f\"baseline_{k}\", round(ev[\"baseline\"\
+          ][k], 5))\n    metrics.log_metric(\"passed\", int(passed))\n    return passed\n\
+          \n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 3.221225472
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 3Gi
+          resourceMemoryRequest: 1Gi
+    exec-get-training-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - get_training_data
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef get_training_data(run_id: str, label_as_of: str, feature_service:\
+          \ str) -> int:\n    \"\"\"Step 2: Feast point-in-time features -> versioned\
+          \ training set; returns its Delta version.\"\"\"\n    from fraud_ml import\
+          \ steps\n    return steps.get_training_data(run_id, label_as_of, feature_service)\n\
+          \n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 2.0
+          memoryLimit: 5.36870912
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '2'
+          resourceMemoryLimit: 5Gi
+          resourceMemoryRequest: 1Gi
+    exec-load-labels:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - load_labels
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef load_labels(label_as_of: str, negative_rate: float, feature_service:\
+          \ str, kfp_run_id: str) -> str:\n    \"\"\"Step 1: labels as of label_as_of\
+          \ + entity rows; starts the MLflow run and returns its id.\"\"\"\n    from\
+          \ fraud_ml import steps\n    return steps.load_labels(label_as_of, negative_rate,\
+          \ feature_service, {\"kfp_run_id\": kfp_run_id})\n\n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 2.0
+          memoryLimit: 3.221225472
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '2'
+          resourceMemoryLimit: 3Gi
+          resourceMemoryRequest: 1Gi
+    exec-register:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register(run_id: str, model_dir: str, test_path: str, label_as_of:\
+          \ str, feature_service: str) -> int:\n    \"\"\"Step 7: MLflow model version,\
+          \ alias challenger (production on the first run).\"\"\"\n    from fraud_ml\
+          \ import steps\n    return steps.register(run_id, model_dir, test_path,\
+          \ True, label_as_of, feature_service)\n\n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 2.147483648
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 2Gi
+          resourceMemoryRequest: 1Gi
+    exec-time-split:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - time_split
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef time_split(run_id: str, version: int, label_as_of: str, feature_service:\
+          \ str) -> NamedTuple(\n        \"Splits\", train=str, val=str, test=str):\n\
+          \    \"\"\"Step 4: train / val / test parquet with the gaps checked.\"\"\
+          \"\n    from fraud_ml import steps\n    p = steps.time_split(run_id, version,\
+          \ label_as_of, feature_service)\n    return p[\"train\"], p[\"val\"], p[\"\
+          test\"]\n\n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 1Gi
+    exec-train:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train(run_id: str, train_path: str, val_path: str, feature_service:\
+          \ str, num_workers: int, executors: int,\n          max_depth: int, learning_rate:\
+          \ float, n_estimators: int) -> str:\n    \"\"\"Step 5: baseline + distributed\
+          \ XGBoost; returns the model directory.\"\"\"\n    from fraud_ml import\
+          \ steps\n    return steps.train(run_id, train_path, val_path, feature_service,\
+          \ num_workers, executors,\n                       {\"max_depth\": max_depth,\
+          \ \"learning_rate\": learning_rate, \"n_estimators\": n_estimators})\n\n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 3.221225472
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 3Gi
+          resourceMemoryRequest: 1Gi
+    exec-validate-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - validate_data
+        command:
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef validate_data(run_id: str, version: int, feature_service: str):\n\
+          \    \"\"\"Step 3: data checks; raises (and stops the run) on failure.\"\
+          \"\"\n    from fraud_ml import steps\n    steps.validate_data(run_id, version,\
+          \ feature_service)\n\n"
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow:5000
+        - name: ML_IMAGE
+          value: localhost:5001/fraud/ml-train:latest
+        image: localhost:5001/fraud/ml-train:latest
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 4.294967296
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceMemoryLimit: 4Gi
+          resourceMemoryRequest: 1Gi
+pipelineInfo:
+  description: 'Card fraud model: Feast -> distributed XGBoost -> MLflow'
+  name: train-fraud-model
+root:
+  dag:
+    tasks:
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - evaluate
+        - load-labels
+        - time-split
+        - train
+        inputs:
+          parameters:
+            pipelinechannel--evaluate-Output:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: evaluate
+            pipelinechannel--feature_service:
+              componentInputParameter: feature_service
+            pipelinechannel--label_as_of:
+              componentInputParameter: label_as_of
+            pipelinechannel--load-labels-Output:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            pipelinechannel--time-split-test:
+              taskOutputParameter:
+                outputParameterKey: test
+                producerTask: time-split
+            pipelinechannel--train-Output:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: train
+        taskInfo:
+          name: condition-1
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--evaluate-Output'] ==
+            true
+      evaluate:
+        cachingOptions: {}
+        componentRef:
+          name: comp-evaluate
+        dependentTasks:
+        - load-labels
+        - time-split
+        - train
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            min_pr_auc_gain:
+              componentInputParameter: min_pr_auc_gain
+            model_dir:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: train
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            test_path:
+              taskOutputParameter:
+                outputParameterKey: test
+                producerTask: time-split
+            val_path:
+              taskOutputParameter:
+                outputParameterKey: val
+                producerTask: time-split
+        taskInfo:
+          name: evaluate
+      get-training-data:
+        cachingOptions: {}
+        componentRef:
+          name: comp-get-training-data
+        dependentTasks:
+        - load-labels
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            label_as_of:
+              componentInputParameter: label_as_of
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+        taskInfo:
+          name: get-training-data
+      load-labels:
+        cachingOptions: {}
+        componentRef:
+          name: comp-load-labels
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            kfp_run_id:
+              runtimeValue:
+                constant: '{{$.pipeline_job_uuid}}'
+            label_as_of:
+              componentInputParameter: label_as_of
+            negative_rate:
+              componentInputParameter: negative_rate
+        taskInfo:
+          name: load-labels
+      time-split:
+        cachingOptions: {}
+        componentRef:
+          name: comp-time-split
+        dependentTasks:
+        - get-training-data
+        - load-labels
+        - validate-data
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            label_as_of:
+              componentInputParameter: label_as_of
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            version:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: get-training-data
+        taskInfo:
+          name: time-split
+      train:
+        cachingOptions: {}
+        componentRef:
+          name: comp-train
+        dependentTasks:
+        - load-labels
+        - time-split
+        inputs:
+          parameters:
+            executors:
+              componentInputParameter: executors
+            feature_service:
+              componentInputParameter: feature_service
+            learning_rate:
+              componentInputParameter: learning_rate
+            max_depth:
+              componentInputParameter: max_depth
+            n_estimators:
+              componentInputParameter: n_estimators
+            num_workers:
+              componentInputParameter: num_workers
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            train_path:
+              taskOutputParameter:
+                outputParameterKey: train
+                producerTask: time-split
+            val_path:
+              taskOutputParameter:
+                outputParameterKey: val
+                producerTask: time-split
+        taskInfo:
+          name: train
+      validate-data:
+        cachingOptions: {}
+        componentRef:
+          name: comp-validate-data
+        dependentTasks:
+        - get-training-data
+        - load-labels
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            version:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: get-training-data
+        taskInfo:
+          name: validate-data
+  inputDefinitions:
+    parameters:
+      executors:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      feature_service:
+        defaultValue: fraud_model_v1
+        isOptional: true
+        parameterType: STRING
+      label_as_of:
+        defaultValue: '2026-10-15'
+        isOptional: true
+        parameterType: STRING
+      learning_rate:
+        defaultValue: 0.08
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      max_depth:
+        defaultValue: 6.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      min_pr_auc_gain:
+        defaultValue: 0.005
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      n_estimators:
+        defaultValue: 400.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      negative_rate:
+        defaultValue: 0.02
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      num_workers:
+        defaultValue: 2.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-evaluate:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-get-training-data:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-load-labels:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-register:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-time-split:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-train:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials
+        exec-validate-data:
+          fieldPathAsEnv:
+          - fieldPath: status.podIP
+            name: POD_IP
+          - fieldPath: metadata.namespace
+            name: POD_NAMESPACE
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: access_key
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: secret_key
+            optional: false
+            secretName: s3-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-credentials
+          - keyToEnv:
+            - envVar: ML_DB_PASSWORD
+              secretKey: ml_db_password
+            - envVar: REDIS_PASSWORD
+              secretKey: redis_password
+            optional: false
+            secretName: feast-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: feast-credentials

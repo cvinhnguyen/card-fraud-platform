@@ -7,8 +7,10 @@ from confluent_kafka.admin import AdminClient, NewTopic
 
 from make_env import read_env
 
-BUCKETS = ["core-banking-export", "lakehouse"]   # another department's exports | our bronze/silver/gold
-TOPICS = {"card_authorizations": 6, "app_events": 6}   # name -> partitions
+BUCKETS = ["core-banking-export", "lakehouse", "mlflow"]   # another department's exports | our lake | MLflow artifacts
+TOPICS = {"card_authorizations": 6, "app_events": 6,   # name -> partitions
+          "card_features_rt": 6, "card_device_seen": 6,   # Layer 2: Flink features -> Feast push jobs
+          "fraud_predictions": 6}                         # Layer 2: prediction log of the scoring API
 # DataHub (gov profile): its system-update creates the v1 topics, but GMS still consumes these legacy ones, and
 # auto-create is off on our broker. Without them the MCE consumer loops on UNKNOWN_TOPIC_OR_PARTITION.
 DATAHUB_TOPICS = ["MetadataChangeEvent_v4", "FailedMetadataChangeEvent_v4", "MetadataAuditEvent_v4"]

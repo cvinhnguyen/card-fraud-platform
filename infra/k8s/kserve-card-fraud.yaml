@@ -1,0 +1,22 @@
+# The model server: model-inside-image (fraud/predictor:<model version>, built from the MLflow alias
+# `production`). Standard (raw Deployment) mode: no Knative, so it fits the local cluster. The Scoring API (compose) calls
+# it through NodePort 31080 (infra/k8s/nodeports.yaml): http://fraud-control-plane:31080/v1/models/card-fraud:predict
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: card-fraud
+  namespace: serving
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 3
+    containers:
+      - name: kserve-container
+        image: localhost:5001/fraud/predictor:MODEL_VERSION
+        args: ["--model_name", "card-fraud", "--http_port", "8080"]
+        ports: [{containerPort: 8080, protocol: TCP}]
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: "1", memory: 512Mi}

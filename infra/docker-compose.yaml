@@ -4,7 +4,7 @@
 #   core  : postgres (core banking, "another department") + seaweedfs (S3 lake) + kafka
 #   batch : spark master + worker, hive metastore (+ its postgres), trino; needs core running
 #   dbt   : spark thrift server for dbt-spark (needs batch)
-#   stream: flink jobmanager + taskmanager (PyFlink jobs in flink/); needs core
+#   stream: flink jobmanager + taskmanager (PyFlink jobs in pipelines/flink/); needs core
 #   orch  : airflow (webserver, scheduler, its postgres); runs DP1-DP3 on batch + dbt
 #   gov   : datahub (gms, frontend, opensearch, its postgres) on the core Kafka; lineage + validation
 #
@@ -80,6 +80,11 @@ services:
     volumes:
       - ./conf/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs_data:/data
+    networks:
+      default:
+        # Layer 2 code uses this name: KFP runs its own `seaweedfs` Service in namespace kubeflow, and a pod's
+        # short name `seaweedfs` resolves to that one (search domains first) -> 403 with our keys.
+        aliases: [lakehouse-s3]
 
   # Kafka in KRaft mode. Containers use kafka:19092, the host uses 127.0.0.1:9092.
   kafka:
@@ -172,7 +177,7 @@ services:
       - "127.0.0.1:4040:4040"   # driver UI
     volumes: &spark-volumes
       - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-      - ../spark:/opt/jobs:ro
+      - ../pipelines/spark:/opt/jobs:ro
       - spark_ivy:/opt/spark/work-dir   # event logs for the history server (named after the Ivy jar cache it held before P9)
 
   spark-worker:
@@ -264,15 +269,19 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         jobmanager.memory.process.size: 1024m
-        taskmanager.memory.process.size: 2560m
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 3584m
+        taskmanager.numberOfTaskSlots: 6
         parallelism.default: 2
+        # checkpoints on S3: the default keeps them in JobManager memory, capped at 5 MB; rt_features' live state
+        # passed it, every checkpoint failed and the job looped through restarts (Layer 2 replay)
+        execution.checkpointing.storage: filesystem
+        execution.checkpointing.dir: s3://lakehouse/flink/checkpoints
         s3.endpoint: http://seaweedfs:8333
         s3.path.style.access: true
         s3.access-key: ${S3_ACCESS_KEY}
         s3.secret-key: ${S3_SECRET_KEY}
     volumes: &flink-volumes
-      - ../flink:/opt/flink/jobs:ro
+      - ../pipelines/flink:/opt/flink/jobs:ro
       - ../generator/ref:/opt/flink/ref:ro
 
   flink-taskmanager:
@@ -319,6 +328,9 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      # Layer 2's live period (generate_drift.py) is dated after the machine clock: DP1's TriggerDagRunOperator runs of
+      # DP2 / DP3 / feast_materialize (schedule None) carry those future logical dates, which the scheduler skips without it
+      AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE: "true"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
       DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
       AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
@@ -330,7 +342,7 @@ services:
       --firstname Admin --lastname Local --email admin@example.invalid >/dev/null 2>&1 || true)
       && python /opt/airflow/setup_airflow.py"
     volumes:
-      - ../airflow/setup_airflow.py:/opt/airflow/setup_airflow.py:ro
+      - ../pipelines/airflow/setup_airflow.py:/opt/airflow/setup_airflow.py:ro
 
   airflow-webserver:
     image: fraud/airflow:2.10.5
@@ -344,13 +356,15 @@ services:
     ports:
       - "127.0.0.1:8082:8080"   # UI, user admin, password AIRFLOW_ADMIN_PASSWORD in infra/.env
     volumes: &airflow-volumes
-      - ../airflow/dags:/opt/airflow/dags:ro
-      - ../spark:/opt/jobs:ro
-      - ../dbt:/opt/airflow/dbt:ro
+      - ../pipelines/airflow/dags:/opt/airflow/dags:ro
+      - ../pipelines/spark:/opt/jobs:ro
+      - ../pipelines/dbt:/opt/airflow/dbt:ro
       - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - spark_ivy:/opt/spark/work-dir
       - airflow_logs:/opt/airflow/logs
       - airflow_dbt:/opt/airflow/dbt-artifacts   # dbt target/ + logs (manifest, run_results, catalog)
+      - ../ml/feature_repo:/opt/airflow/feature_repo:ro   # Layer 2: Feast repo (materialize, drift job)
+      - ../ml:/opt/airflow/ml:ro                       # Layer 2: fraud_ml library + drift job
 
   airflow-scheduler:
     image: fraud/airflow:2.10.5
@@ -475,6 +489,176 @@ services:
     volumes:
       - ./conf/datahub/user.props:/datahub-frontend/conf/user.props:ro
 
+  # ---------- ml (Layer 2) ----------
+  # The ML platform's stateful services. Kubernetes workloads (KFP, KServe, the APIs) run in the kind cluster, whose
+  # node joins this compose network (infra/k8s/up.sh), so pods reach these services by name.
+  # Feast SQL registry (database feast) + MLflow backend store (database mlflow). Ours, not in core banking.
+  ml-db:
+    image: postgres:16-alpine
+    profiles: [ml]
+    container_name: ml-db
+    environment:
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: ml
+      POSTGRES_PASSWORD: ${ML_DB_PASSWORD}
+    volumes:
+      - ml_db_data:/var/lib/postgresql/data
+      - ./conf/ml-db:/docker-entrypoint-initdb.d:ro   # creates the feast database on first start
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ml -d mlflow"]
+      interval: 10s
+      retries: 5
+
+  # Feast online store.
+  redis:
+    image: redis:7.4-alpine
+    profiles: [ml]
+    container_name: redis
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}   # for the healthcheck, keeps the password off the command line
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  # Experiment tracking + model registry. Artifacts go through the server (--serve-artifacts) to s3://mlflow,
+  # so training pods and CI need the MLflow URL only, not the S3 keys.
+  mlflow:
+    build: ./mlflow
+    image: fraud/mlflow:3.16.1
+    profiles: [ml]
+    container_name: mlflow
+    depends_on:
+      ml-db: {condition: service_healthy}
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://ml:${ML_DB_PASSWORD}@ml-db:5432/mlflow
+      # lakehouse-s3, not seaweedfs: MLflow 3 hands clients presigned URLs on this host, and in a kind pod the name
+      # `seaweedfs` is KFP's own SeaweedFS (the evaluate step could not download the production model)
+      MLFLOW_S3_ENDPOINT_URL: http://lakehouse-s3:8333
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"   # GenAI job runner: 7 extra Python processes, ~1.7 GB; unused here
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    command: >-
+      mlflow server --host 0.0.0.0 --port 5000 --workers 1 --serve-artifacts --artifacts-destination s3://mlflow
+      --allowed-hosts "mlflow,mlflow:5000,mlflow.ml.svc,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"
+    ports:
+      - "127.0.0.1:5000:5000"   # UI + API
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 15s
+      retries: 10
+
+  # JupyterLab on the training image (ml/notebooks/): same library, Feast repo and Spark as the pipeline components.
+  notebook:
+    image: fraud/ml-train:latest   # docker build -f ml/Dockerfile -t fraud/ml-train:latest .
+    profiles: [ml]
+    container_name: notebook
+    command: >-
+      jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --notebook-dir /opt/ml/notebooks
+      --IdentityProvider.token="$$JUPYTER_TOKEN"
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN}
+      ML_DB_PASSWORD: ${ML_DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_PYTHON_REFRESH: quiet   # MLflow asks GitPython for the commit; the image has no git
+      HOME: /tmp                  # user 185 (spark) has HOME=/nonexistent: Jupyter needs a writable runtime dir
+    ports:
+      - "127.0.0.1:8899:8888"   # token JUPYTER_TOKEN in infra/.env
+    volumes:   # code mounted over the image's copy: edits apply without a rebuild
+      - ../ml/notebooks:/opt/ml/notebooks
+      - ./conf/notebook/ipython_kernel_config.py:/etc/ipython/ipython_kernel_config.py:ro   # JVM logs -> container log
+      - ../ml/fraud_ml:/opt/ml/fraud_ml:ro
+      - ../ml/feature_repo:/opt/ml/feature_repo:ro
+
+  # Feast push jobs: Flink's card_features_rt + card_device_seen -> online store (A) / offline Delta tables (B).
+  # Two processes, two consumer groups: a slow Delta append never delays online freshness. B stays a single writer.
+  push-online:
+    image: fraud/ml-train:latest
+    profiles: [ml]
+    container_name: push-online
+    command: [python3, /opt/ml/jobs/push_job.py, --to, online, --repo, /opt/ml/feature_repo, --batch, "2000"]
+    environment: &ml-secrets
+      ML_DB_PASSWORD: ${ML_DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    restart: unless-stopped
+
+  push-offline:
+    image: fraud/ml-train:latest
+    profiles: [ml]
+    container_name: push-offline
+    command: [python3, /opt/ml/jobs/push_job.py, --to, offline, --repo, /opt/ml/feature_repo, --batch, "50000",
+              --max-wait, "30"]
+    environment: *ml-secrets
+    restart: unless-stopped
+
+  # Fraud Scoring API: Feast online features -> KServe predictor in kind (NodePort 31080) -> decision.
+  scoring-api:
+    build: {context: ../services/scoring_api, target: runtime}
+    image: fraud/scoring-api:latest
+    profiles: [ml]
+    container_name: scoring-api
+    environment:
+      ML_DB_PASSWORD: ${ML_DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MODEL_URL: http://fraud-control-plane:31080/v1/models/card-fraud:predict
+      # risk team's thresholds, set to model v1's validated ones (MLflow tags t_low at 1% FPR, t_high at 0.1% FPR):
+      # scores are calibrated to the real 0.3% fraud rate, so a 0.5 cut-off would decline almost nothing
+      T_LOW: "0.0018"
+      T_HIGH: "0.058"
+      FEATURE_TIMEOUT_S: "0.2"
+      MODEL_TIMEOUT_S: "0.2"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 15s
+      retries: 5
+
+  # Drift Detection API + the forwarder that feeds it from the prediction log.
+  drift-api:
+    build: {context: ../services/drift_api, target: runtime}
+    image: fraud/drift-api:latest
+    profiles: [ml]
+    container_name: drift-api
+    environment:
+      REDIS_URL: redis://redis:6379/1
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      WINDOW_MINUTES: "15"
+    volumes:   # written by services/predictor/fetch_model.py with the model it describes
+      - ../services/predictor/model/reference_profile.json:/config/reference_profile.json:ro
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  drift-forwarder:
+    image: fraud/ml-train:latest
+    profiles: [ml]
+    container_name: drift-forwarder
+    command: [python3, /opt/ml/jobs/drift_forwarder.py, --api, "http://drift-api:8000"]
+    restart: unless-stopped
+
+  # Image registry for the kind cluster: host pushes to 127.0.0.1:5001, the node pulls registry:5000.
+  registry:
+    image: registry:3
+    profiles: [ml]
+    container_name: registry
+    ports:
+      - "127.0.0.1:5001:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+
 volumes:
   postgres_data:
   seaweedfs_data:
@@ -486,3 +670,6 @@ volumes:
   airflow_dbt:
   datahub_db_data:
   opensearch_data:
+  ml_db_data:
+  redis_data:
+  registry_data:

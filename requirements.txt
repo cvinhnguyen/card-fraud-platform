@@ -4,7 +4,8 @@ pyarrow>=18
 pyyaml>=6
 boto3>=1.35
 confluent-kafka>=2.6
+httpx>=0.28        # ml/tools/replay_scoring.py (Layer 2 replay against the Scoring API)
 psycopg[binary]>=3.2
 diagrams>=0.25   # docs/diagrams/deployment.py, needs Graphviz
-dbt-core==1.11.16  # gold layer (dbt/), through the Spark Thrift Server
+dbt-core==1.11.16  # gold layer (pipelines/dbt/), through the Spark Thrift Server
 dbt-spark[PyHive]==1.11.0

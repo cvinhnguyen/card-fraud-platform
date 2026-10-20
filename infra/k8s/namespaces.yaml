@@ -1,0 +1,4 @@
+# Namespace of the model server (KFP installs into kubeflow itself).
+apiVersion: v1
+kind: Namespace
+metadata: {name: serving}

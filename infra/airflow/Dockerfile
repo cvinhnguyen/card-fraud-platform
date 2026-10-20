@@ -2,7 +2,7 @@
 # drivers in the scheduler container (client mode; standalone has no cluster mode for Python).
 # Multi-stage (docs/docker_optimization.md):
 #   spark  the image the workers run: the final stage copies its JRE and only the Spark parts a client needs
-#   venvs  Great Expectations, dbt and the DataHub CLI, each in its own venv (pins clash with Airflow's),
+#   venvs  Great Expectations, dbt, the DataHub CLI and (Layer 2) Feast, each in its own venv (pins clash with Airflow's),
 #          built here and copied without pip, bytecode caches and test suites
 # infra/spark/Dockerfile: Spark 4.1.3 + the lakehouse jars, the image the cluster runs
 FROM fraud/spark:4.1.3 AS spark
@@ -20,9 +20,14 @@ RUN python -m venv /opt/venvs/dbt && /opt/venvs/dbt/bin/pip install --no-cache-d
 # no hive-metastore extra: it compiles sasl). Lakehouse tables reach DataHub through OpenLineage.
 RUN python -m venv /opt/venvs/datahub && /opt/venvs/datahub/bin/pip install --no-cache-dir \
       "acryl-datahub[datahub-rest,postgres,kafka,dbt]==1.5.0.17"
+# Layer 2: Feast (materialize to Redis; the drift job reads the offline store and scores with the production model).
+# pyspark comes from SPARK_HOME at run time, as for dbt; delta-spark without deps for `delta.tables`.
+RUN python -m venv /opt/venvs/feast && /opt/venvs/feast/bin/pip install --no-cache-dir "feast[redis,postgres]==0.66.0" \
+      "mlflow-skinny==3.16.1" "xgboost-cpu==3.2.0" "scikit-learn==1.7.2" "kfp==2.17.0" "deltalake==0.25.5" \
+    && /opt/venvs/feast/bin/pip install --no-cache-dir --no-deps "delta-spark==4.4.1"
 # Test suites of the packages go, except two that are code: dbt/include/*/macros/materializations/tests holds the `test`
 # materialization and get_where_subquery (without it every dbt test fails to compile), and numpy 2 imports
-# numpy._core.tests._natype at run time (numpy.testing). Both found by the P9 functional run.
+# numpy._core.tests._natype at run time (numpy.testing, pulled by scipy / xgboost). Both found by the P9 functional run.
 RUN find /opt/venvs -depth \( -name __pycache__ -o \( -name tests -not -path "*/site-packages/dbt/*" \
       -not -path "*/site-packages/numpy/*" \) \) -type d \
       -exec rm -rf {} + \

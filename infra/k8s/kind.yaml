@@ -1,0 +1,7 @@
+# Local Kubernetes for the two Layer 2 pieces that need it: Kubeflow Pipelines and KServe. Everything else (APIs,
+# push jobs, MLflow, Redis) runs in compose; the node joins the compose network (up.sh). Created by infra/k8s/up.sh.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: fraud
+nodes:
+  - role: control-plane

@@ -7,6 +7,7 @@ Late, duplicate and out-of-order events are already in the data; the producer is
 duplicates of its own. Timestamps are 'YYYY-MM-DD HH:MM:SS.fff' (Flink SQL JSON format).
 
 Usage: python generator/producer.py [--topic app_events] [--speed 200] [--replay-from "2025-06-30 23:00"] [--limit 1000]
+       python generator/producer.py --stream-dir data/drift/stream --speed 0     # Layer 2: the live period
        (after generate.py and infra/init_infra.py; Ctrl-C stops and prints where to resume)
 """
 import argparse
@@ -35,7 +36,7 @@ def load(src: Path, replay_from: pd.Timestamp | None, limit: int | None) -> pd.D
 def main(args: argparse.Namespace) -> None:
     """Send every event, paced to --speed events/s (0 = as fast as possible)."""
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
-    df = load(ROOT / cfg["output_dir"] / "stream" / args.topic, args.replay_from, args.limit)
+    df = load((args.stream_dir or ROOT / cfg["output_dir"] / "stream") / args.topic, args.replay_from, args.limit)
     ts_cols = df.select_dtypes("datetime").columns
     out = df.assign(**{c: df[c].dt.strftime("%Y-%m-%d %H:%M:%S.%f").str[:-3] for c in ts_cols})
     values = out.to_json(orient="records", lines=True).splitlines()   # nulls stay null
@@ -76,4 +77,6 @@ if __name__ == "__main__":
     ap.add_argument("--replay-from", type=pd.Timestamp, help="start at this received_ts")
     ap.add_argument("--limit", type=int, help="stop after this many events")
     ap.add_argument("--target", help="send to this topic instead of --topic (e.g. a 1-partition replay topic)")
+    ap.add_argument("--stream-dir", type=Path, help="read from here instead of <output_dir>/stream "
+                    "(Layer 2 live period: data/drift/stream)")
     main(ap.parse_args())
