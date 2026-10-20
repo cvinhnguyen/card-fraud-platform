@@ -89,8 +89,8 @@ def create_app(service_factory=build_service, settings: Settings | None = None, 
         return await run("search_policy", app.state.service.search(question, k))
 
     @mcp.tool()
-    async def score_payment(card_id: str, customer_id: str, amount_vnd: int, channel: Channel, currency: str = "VND",
-                            device_id: str | None = None) -> ScoreResult:
+    async def score_payment(card_id: str, amount_vnd: int, channel: Channel, customer_id: str = "unknown",
+                            currency: str = "VND", device_id: str | None = None) -> ScoreResult:
         """Fraud score and decision (approve / step_up / decline) for a payment the customer describes, from the
         bank's fraud model. channel: ecom (online), pos (shop terminal) or atm. fallback=true means the model was
         unavailable and a safe rule decided."""

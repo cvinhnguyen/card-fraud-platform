@@ -1,0 +1,62 @@
+# The agent registry's catalog of the card support system (agentregistry 0.4, ar.dev/v1alpha1): which agents exist,
+# which version, which runtime image, where their definition lives, and which MCP server they use.
+# The agents themselves run as kagent declarative Agents (agents/chart); this is the governance record.
+# Publish (registry UI/API on :12121):
+#   kubectl -n agentregistry port-forward svc/agentregistry 12121:12121
+#   arctl apply -f agents/registry/catalog.yaml && arctl get agents && arctl get mcps
+apiVersion: ar.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: card-support-mcp
+  tag: "0.1.3"
+spec:
+  title: Card support tools
+  description: >-
+    get_card_data, get_policy_chunk, search_policy (RAG), score_payment (fraud model). Reached only through
+    agentgateway; each agent's API key sees only its own tools.
+  remote:
+    type: streamable-http
+    url: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/mcp
+---
+apiVersion: ar.dev/v1alpha1
+kind: Agent
+metadata:
+  name: card-data-agent
+  tag: "0.1.0"
+spec:
+  title: Card data agent
+  description: Live data of the customer's card (profile, recent activity, history) and sections of the bank's card documents by id. Tools get_card_data, get_policy_chunk.
+  source:
+    image: ghcr.io/kagent-dev/kagent/golang-adk:0.10.3
+    repository:
+      url: https://github.com/cvinhnguyen/card-fraud-platform
+  mcpServers:
+    - {kind: MCPServer, name: card-support-mcp, tag: "0.1.3"}
+---
+apiVersion: ar.dev/v1alpha1
+kind: Agent
+metadata:
+  name: risk-agent
+  tag: "0.1.0"
+spec:
+  title: Risk agent
+  description: Fraud check of a payment the customer describes (the bank's fraud model) and answers from the bank's card policies (RAG). Tools score_payment, search_policy.
+  source:
+    image: ghcr.io/kagent-dev/kagent/golang-adk:0.10.3
+    repository:
+      url: https://github.com/cvinhnguyen/card-fraud-platform
+  mcpServers:
+    - {kind: MCPServer, name: card-support-mcp, tag: "0.1.3"}
+---
+apiVersion: ar.dev/v1alpha1
+kind: Agent
+metadata:
+  name: coordinator
+  tag: "0.1.0"
+spec:
+  title: Card support coordinator
+  description: The bank's card support assistant. Talks to the customer and calls card-data-agent and risk-agent over A2A through agentgateway; public A2A endpoint /a2a/coordinator.
+  source:
+    image: ghcr.io/kagent-dev/kagent/golang-adk:0.10.3
+    repository:
+      url: https://github.com/cvinhnguyen/card-fraud-platform

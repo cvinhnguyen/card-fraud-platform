@@ -33,8 +33,9 @@ def test_score_request_partitions(field, value, ok):
             ScorePaymentRequest(**body)
 
 
-def test_score_request_defaults_to_vnd():
-    assert ScorePaymentRequest(**BASE).currency == "VND"
+def test_score_request_defaults():
+    req = ScorePaymentRequest(card_id="card_00001", amount_vnd=1, channel="pos")
+    assert (req.currency, req.customer_id, req.device_id) == ("VND", "unknown", None)
 
 
 @pytest.mark.parametrize("length, ok", [(2, False), (3, True), (500, True), (501, False)])

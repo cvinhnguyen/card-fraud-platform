@@ -1,0 +1,22 @@
+{{- $as := .Values.autoscaling }}
+{{- range $name, $a := .Values.agents }}
+---
+# KEDA owns the replicas of the Deployment kagent creates for the agent (the Agent leaves replicas unset)
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+spec:
+  scaleTargetRef: {name: {{ $name }}}
+  minReplicaCount: {{ $as.minReplicas }}
+  maxReplicaCount: {{ $as.maxReplicas }}
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $as.prometheus }}
+        query: sum(rate(agentgateway_requests_total{backend="{{ $.Values.gateway.namespace }}/agent-{{ $name }}"}[1m]))
+        threshold: {{ $as.requestsPerSecond | quote }}
+        ignoreNullValues: "true"
+{{- end }}

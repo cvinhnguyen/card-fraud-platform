@@ -1,0 +1,31 @@
+# kube-prometheus-stack 91.9.0 (release monitoring, namespace monitoring): Prometheus + Grafana + node and
+# kube-state metrics, sized for the 10 GB Docker VM. Monitors in infra/k8s/monitors.yaml.
+alertmanager:
+  enabled: false
+# kind runs these on the node's localhost: their targets would only show as down
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+grafana:
+  admin:
+    existingSecret: grafana-admin   # infra/k8s/secrets.sh (GRAFANA_ADMIN_PASSWORD)
+    userKey: admin-user
+    passwordKey: admin-password
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    scrapeInterval: 15s
+    # pick up PodMonitors / ServiceMonitors from every namespace and release, not only this chart's
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 400Mi}
+      limits: {memory: 1200Mi}
+prometheusOperator:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}

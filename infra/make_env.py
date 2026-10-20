@@ -36,6 +36,9 @@ NEW_VALUE = {   # key -> how to make its value; keys added later are appended to
     "AGW_API_KEY": lambda: secrets.token_urlsafe(24),             # Layer 3: clients (agents) -> agentgateway
     "MCP_KEY_CARD_DATA_AGENT": lambda: secrets.token_urlsafe(24), # Layer 3: card data agent -> MCP route (its tools only)
     "MCP_KEY_RISK_AGENT": lambda: secrets.token_urlsafe(24),      # Layer 3: risk agent -> MCP route (its tools only)
+    "A2A_KEY_COORDINATOR": lambda: secrets.token_urlsafe(24),     # Layer 3: coordinator -> sub-agents (A2A route)
+    "A2A_KEY_SUPPORT_APP": lambda: secrets.token_urlsafe(24),     # Layer 3: chat front-end / load test -> coordinator
+    "GRAFANA_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),  # Layer 3: Grafana user `admin`
 }
 DATAHUB_USERS = INFRA / "conf" / "datahub" / "user.props"   # frontend login file, replaces the default datahub:datahub
 

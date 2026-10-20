@@ -503,7 +503,7 @@ services:
       POSTGRES_PASSWORD: ${ML_DB_PASSWORD}
     volumes:
       - ml_db_data:/var/lib/postgresql/data
-      - ./conf/ml-db:/docker-entrypoint-initdb.d:ro   # creates the feast database on first start
+      - ./conf/ml-db:/docker-entrypoint-initdb.d:ro   # creates the feast and agentregistry databases on first start
     ports:
       - "127.0.0.1:5434:5432"
     healthcheck:

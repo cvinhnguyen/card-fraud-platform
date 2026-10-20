@@ -1,0 +1,15 @@
+# agentregistry 0.4.0 (release agentregistry, namespace agentregistry): the catalog of the bank's agents and MCP
+# servers (governance: what exists, who owns it, which tools it uses). Entries in agents/registry/catalog.yaml.
+#   helm upgrade -i agentregistry oci://ghcr.io/agentregistry-dev/agentregistry/charts/agentregistry --version 0.4.0 \
+#     -n agentregistry -f agents/registry/values.yaml --wait
+#   UI + API: kubectl -n agentregistry port-forward svc/agentregistry 12121:12121
+database:
+  postgres:
+    type: external   # its own database in ml-db (infra/conf/ml-db/init.sql), URL from infra/k8s/secrets.sh
+    external:
+      secretRef: {name: agentregistry-db, key: AGENT_REGISTRY_DATABASE_URL}
+rbac:
+  watchedNamespaces: [kagent]   # it may only manage resources where the agents run
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 512Mi}

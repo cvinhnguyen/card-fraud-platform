@@ -1,0 +1,13 @@
+# What Prometheus scrapes besides Kubernetes itself.
+#   agentgateway proxy :15020  requests per route / backend (LLM, MCP, A2A), tokens, guardrail checks;
+#                              KEDA scales the agents on its A2A request rate (agents/chart)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: agentgateway-proxy
+  namespace: agentgateway-system
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: agentgateway-proxy}
+  podMetricsEndpoints:
+    - {port: metrics, path: /metrics, interval: 15s}

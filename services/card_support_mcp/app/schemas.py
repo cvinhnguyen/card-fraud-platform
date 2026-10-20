@@ -80,7 +80,7 @@ class SearchResult(BaseModel):
 class ScorePaymentRequest(BaseModel):
     """A payment to score: the one the customer asks about, as they describe it."""
     card_id: str = Field(pattern=CARD_ID)
-    customer_id: str = Field(pattern=CARD_ID)
+    customer_id: str = Field("unknown", pattern=CARD_ID)   # only logged by the Scoring API, not a model feature
     amount_vnd: int = Field(gt=0, le=10_000_000_000)
     channel: Channel
     currency: str = Field("VND", pattern=r"^[A-Z]{3}$")

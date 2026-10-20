@@ -1,0 +1,87 @@
+# agentgateway as the A2A gateway: agents never call each other directly.
+#   agent -> agent: kagent's proxy.url sends every agent-as-tool call to the gateway with header
+#                   x-kagent-host: <agent>.<namespace>; route agents-internal, key user coordinator only
+#   client -> agent: /a2a/<agent> for agents marked public; route a2a-<agent>, key user support-app only
+# The gateway rewrites each agent card's URL to its own address, so A2A clients keep going through it.
+{{- $gw := .Values.gateway }}
+{{- $callers := list }}
+{{- range $name, $a := .Values.agents }}{{ if $a.subAgents }}{{ $callers = append $callers $name }}{{ end }}{{ end }}
+{{- range $name, $a := .Values.agents }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: agent-{{ $name }}
+  namespace: {{ $gw.namespace }}
+spec:
+  a2a: {host: {{ $name }}.{{ $.Release.Namespace }}.svc.cluster.local, port: 8080}
+{{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agents-internal
+  namespace: {{ $gw.namespace }}
+spec:
+  parentRefs: [{name: {{ $gw.name }}}]
+  rules:
+    {{- range $name, $a := .Values.agents }}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{name: x-kagent-host, value: {{ $name }}.{{ $.Release.Namespace }}}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
+      timeouts: {request: 300s}
+    {{- end }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: agents-internal
+  namespace: {{ $gw.namespace }}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: agents-internal}]
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions: [{{ printf "apiKey.user_id in %s" (toJson $callers) | quote }}]
+    rateLimit:
+      local:
+        - {requests: {{ $gw.rateLimit.requests }}, unit: Minutes, burst: {{ $gw.rateLimit.burst }}}
+{{- range $name, $a := .Values.agents }}{{ if $a.public }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: a2a-{{ $name }}
+  namespace: {{ $gw.namespace }}
+spec:
+  parentRefs: [{name: {{ $gw.name }}}]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /a2a/{{ $name }}}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
+      timeouts: {request: 300s}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: a2a-{{ $name }}
+  namespace: {{ $gw.namespace }}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: a2a-{{ $name }}}]
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions: ['apiKey.user_id == "support-app"']
+    rateLimit:
+      local:
+        - {requests: {{ $gw.rateLimit.requests }}, unit: Minutes, burst: {{ $gw.rateLimit.burst }}}
+{{- end }}{{ end }}

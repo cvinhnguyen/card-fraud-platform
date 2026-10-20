@@ -3,7 +3,7 @@
 # --atomic: if the new pods are not Ready in time, Helm rolls the release back to the last good revision.
 image:
   repository: localhost:5001/card-support-mcp
-  tag: "0.1.2"
+  tag: "0.1.3"
 replicas: 2
 resources:
   requests: {cpu: 100m, memory: 256Mi}

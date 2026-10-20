@@ -1,0 +1,21 @@
+{{- if .Values.sandbox.enabled }}
+{{- range $name, $a := .Values.agents }}
+---
+# The same agent in a sandbox on Agent Substrate: each conversation runs in its own gVisor actor on the worker
+# pool, restored from a warm snapshot (no cold start), with network egress limited to allowedDomains.
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: {{ $name }}-sandbox
+spec:
+  type: Declarative
+  description: {{ printf "%s (sandboxed)" $a.description | quote }}
+  declarative:
+    {{- include "card-support.declarative" (dict "name" $name "a" $a "root" $) | nindent 4 }}
+  sandbox:
+    network:
+      allowedDomains: {{ toJson $.Values.sandbox.allowedDomains }}
+  substrate:
+    workerPoolRef: {name: {{ $.Values.sandbox.workerPool }}}
+{{- end }}
+{{- end }}
