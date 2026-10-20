@@ -332,6 +332,9 @@ services:
       # DP2 / DP3 / feast_materialize (schedule None) carry those future logical dates, which the scheduler skips without it
       AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE: "true"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      # 1 gunicorn worker, 10 min to start: with 4 workers and the 120 s default it failed to start on a busy machine
+      AIRFLOW__WEBSERVER__WORKERS: "1"
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "600"
       DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
       AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
       # REST API with the admin user too (Jenkins releases and runs the RAG DAG: infra/jenkins, pipelines/rag/Jenkinsfile)
