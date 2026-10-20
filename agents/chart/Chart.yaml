@@ -4,5 +4,5 @@ description: >-
   The card support agents on kagent (card data agent, risk agent, coordinator), their system prompts, their A2A
   routes on agentgateway and their autoscaling.
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "0.1.0"

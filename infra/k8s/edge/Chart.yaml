@@ -1,0 +1,8 @@
+apiVersion: v2
+name: edge
+description: >-
+  External routing of the platform: one NGINX Ingress per UI / API with basic auth and rate limits, and HTTPS from a
+  wildcard certificate once it exists (infra/k8s/edge.sh).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

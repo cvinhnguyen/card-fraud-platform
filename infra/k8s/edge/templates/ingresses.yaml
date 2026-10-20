@@ -1,0 +1,40 @@
+{{- range $r := .Values.routes }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $r.name }}
+  namespace: {{ $r.namespace }}
+  annotations:
+    {{- if $r.auth }}
+    nginx.org/basic-auth-secret: {{ $.Values.basicAuthSecret }}
+    nginx.org/basic-auth-realm: "Card fraud platform"
+    {{- end }}
+    nginx.org/limit-req-rate: {{ $r.rate }}
+    nginx.org/limit-req-burst: {{ $r.burst | quote }}
+    nginx.org/limit-req-no-delay: "true"
+    nginx.org/limit-req-reject-code: "429"
+    {{- if $r.streaming }}
+    nginx.org/proxy-buffering: "false"
+    nginx.org/proxy-read-timeout: "300s"
+    {{- end }}
+    {{- if $.Values.tls }}
+    nginx.org/redirect-to-https: "true"
+    {{- end }}
+spec:
+  ingressClassName: nginx
+  {{- if $.Values.tls }}
+  tls:
+    - hosts: [{{ printf "%s.%s" $r.host $.Values.domain }}]   # no secretName: the controller's wildcard TLS secret
+  {{- end }}
+  rules:
+    - host: {{ printf "%s.%s" $r.host $.Values.domain }}
+      http:
+        paths:
+          {{- range ($r.paths | default (list (dict "path" "/" "type" "Prefix"))) }}
+          - path: {{ .path }}
+            pathType: {{ .type }}
+            backend:
+              service: {name: {{ $r.service.name }}, port: {number: {{ $r.service.port }}}}
+          {{- end }}
+{{- end }}

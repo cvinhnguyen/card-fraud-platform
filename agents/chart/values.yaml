@@ -20,6 +20,11 @@ autoscaling:
   requestsPerSecond: "0.04"
   prometheus: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
 
+# Network: agents accept and open connections only on the gateway path (templates/networkpolicy.yaml)
+networkPolicy:
+  enabled: true
+  tracingNamespace: monitoring
+
 # Agent Substrate (warm-up, agent fleet): a <name>-sandbox SandboxAgent per agent, all sharing the worker pool.
 # Egress only to the gateway (LLM, MCP, A2A) and the kagent controller (sessions).
 sandbox:

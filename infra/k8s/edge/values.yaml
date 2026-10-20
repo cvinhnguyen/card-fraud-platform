@@ -1,0 +1,55 @@
+# Every UI and the public Web API behind the F5 NGINX Ingress Controller (release nginx-ingress), host <name>.<domain>.
+# domain: the DuckDNS subdomain (DUCKDNS_DOMAIN in infra/.env, pointed at 127.0.0.1) or localtest.me until it exists.
+# tls: true once the wildcard certificate *.<domain> exists (NGINX serves it as its wildcard TLS secret).
+domain: localtest.me
+tls: false
+basicAuthSecret: edge-basic-auth   # htpasswd (user admin, EDGE_ADMIN_PASSWORD), one copy per namespace (secrets.sh)
+
+# auth: basic auth at NGINX (Grafana has its own login). rate / burst: per client IP (limit_req).
+routes:
+  - name: agent-ui            # UI to chat with and test the agents (kagent)
+    namespace: kagent
+    host: agents
+    service: {name: kagent-ui, port: 8080}
+    auth: true
+    rate: 20r/s
+    burst: 60
+    streaming: true            # chat answers stream (SSE): no buffering, long reads
+  - name: agent-registry      # UI of the agent registry
+    namespace: agentregistry
+    host: registry
+    service: {name: agentregistry, port: 12121}
+    auth: true
+    rate: 20r/s
+    burst: 60
+  - name: grafana             # metrics
+    namespace: monitoring
+    host: grafana
+    service: {name: monitoring-grafana, port: 80}
+    auth: false
+    rate: 20r/s
+    burst: 60
+  - name: logs                # VictoriaLogs UI (/select/vmui)
+    namespace: monitoring
+    host: logs
+    service: {name: victoria-logs-victoria-logs-single-server, port: 9428}
+    auth: true
+    rate: 20r/s
+    burst: 60
+  - name: traces              # Jaeger UI
+    namespace: monitoring
+    host: traces
+    service: {name: jaeger, port: 16686}
+    auth: true
+    rate: 20r/s
+    burst: 60
+  - name: web-api             # card support Web API: card data and chunks by id, policy search, fraud score
+    namespace: card-support
+    host: api
+    service: {name: card-support-mcp, port: 8000}
+    auth: true
+    rate: 5r/s
+    burst: 10
+    paths:                     # REST only: /mcp is reachable only through agentgateway, /metrics only by Prometheus
+      - {path: /v1, type: Prefix}
+      - {path: /healthz, type: Exact}

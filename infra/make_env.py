@@ -39,6 +39,8 @@ NEW_VALUE = {   # key -> how to make its value; keys added later are appended to
     "A2A_KEY_COORDINATOR": lambda: secrets.token_urlsafe(24),     # Layer 3: coordinator -> sub-agents (A2A route)
     "A2A_KEY_SUPPORT_APP": lambda: secrets.token_urlsafe(24),     # Layer 3: chat front-end / load test -> coordinator
     "GRAFANA_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),  # Layer 3: Grafana user `admin`
+    "EDGE_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),     # Layer 3: NGINX basic auth user `admin` (UIs, Web API)
+    "VAULT_ROOT_TOKEN": lambda: secrets.token_urlsafe(24),        # Layer 3: Vault (dev mode) root token, infra/k8s/vault.sh
 }
 DATAHUB_USERS = INFRA / "conf" / "datahub" / "user.props"   # frontend login file, replaces the default datahub:datahub
 

@@ -1,0 +1,37 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $gw := .Values.gateway }}
+# The gateway is not only configured as the agents' path, it is the only one the network allows:
+#   in   A2A on 8080 only from the gateway proxy (agent -> agent) and kagent-controller (UI chat, its control path)
+#   out  DNS, the gateway (LLM, MCP, A2A), kagent-controller (sessions) and Jaeger (spans); an agent cannot reach
+#        the MCP server, the model server or another agent directly
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: card-support-agents
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: card-support}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $gw.namespace }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: {{ $gw.name }}}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}}
+      ports: [{port: 8080, protocol: TCP}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $gw.namespace }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: {{ $gw.name }}}}
+      ports: [{port: 80, protocol: TCP}]
+    - to:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}}
+      ports: [{port: 8083, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.tracingNamespace }}}}
+          podSelector: {matchLabels: {app: jaeger}}
+      ports: [{port: 4317, protocol: TCP}]
+{{- end }}

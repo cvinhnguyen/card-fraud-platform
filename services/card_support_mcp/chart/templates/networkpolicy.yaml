@@ -1,0 +1,22 @@
+{{- if .Values.networkPolicy.enabled }}
+# Who may reach the tools: the gateway (agents, with per-agent tool rules), Prometheus (/metrics), the NGINX
+# ingress (public Web API /v1, basic auth + HTTPS there) and pods of this namespace (load tests). Agents cannot
+# skip the gateway's tool rules by calling the server directly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels: {app: {{ .Release.Name }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.gateway.namespace }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: {{ .Values.gateway.name }}}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}}}
+        - podSelector: {}
+      ports: [{port: 8000, protocol: TCP}]
+{{- end }}

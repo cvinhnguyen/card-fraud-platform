@@ -15,6 +15,11 @@ env:
   TIMEOUT_S: "5"
 secretName: card-support-mcp   # ML_DB_PASSWORD, REDIS_PASSWORD, VECTOR_DB_PASSWORD, LLM_API_KEY
 
+networkPolicy:   # templates/networkpolicy.yaml
+  enabled: true
+  monitoringNamespace: monitoring
+  ingressNamespace: nginx-ingress
+
 gateway:
   namespace: agentgateway-system
   name: agentgateway-proxy
