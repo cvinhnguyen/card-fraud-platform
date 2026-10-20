@@ -25,13 +25,17 @@ pipeline {
             env.PROMPT_FLAGS = sh(script: 'sh agents/fetch_prompts.sh $AGENTS', returnStdout: true).trim()
             def deployed = sh(script: '''v=$(kubectl -n kagent get agent coordinator -o jsonpath='{.metadata.annotations.card-support/prompt}' 2>/dev/null | sed 's/.* v//')
                 printf -- '--set promptVersions.coordinator=%s' "$v"''', returnStdout: true).trim()
-            def byTimerOnly = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') &&
-                              currentBuild.getBuildCauses().size() == 1
-            env.DEPLOY = (!byTimerOnly || deployed != env.PROMPT_FLAGS) ? 'true' : 'false'
-            echo "deployed: ${deployed} | production: ${env.PROMPT_FLAGS} | deploy: ${env.DEPLOY}"
+            env.DEPLOY = (deployed != env.PROMPT_FLAGS) ? 'true' : 'false'   // a new production prompt
+            echo "deployed: ${deployed} | production: ${env.PROMPT_FLAGS} | new prompt: ${env.DEPLOY}"
           }
         }
       }
+    }
+    stage('Changed?') {
+      // deploy on a new production prompt (above), a change under agents/, or a manual / upstream trigger; a poll
+      // or timer run with nothing new does nothing
+      when { anyOf { changeset 'agents/**'; triggeredBy 'UserIdCause'; triggeredBy 'UpstreamCause' } }
+      steps { script { env.DEPLOY = 'true' } }
     }
     stage('Validate') {
       when { environment name: 'DEPLOY', value: 'true' }

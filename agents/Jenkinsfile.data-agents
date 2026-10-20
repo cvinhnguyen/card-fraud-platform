@@ -1,6 +1,6 @@
 // CD of the data agents (card-data-agent, risk-agent): their system prompts come from Langfuse (label production),
 // then helm deploys release card-support-data-agents and an A2A smoke test goes through the gateway the way the
-// coordinator calls them. Runs after the MCP server pipeline, when agents/ changed, by hand, or every 15 min when a
+// coordinator calls them. Runs after the MCP server pipeline, when agents/ changed, by hand, or (checked every 15 min) when a
 // new prompt version was promoted to production in Langfuse. Then the coordinator pipeline runs.
 pipeline {
   agent any
@@ -26,13 +26,17 @@ pipeline {
             def deployed = sh(script: '''for a in $AGENTS; do
                 v=$(kubectl -n kagent get agent $a -o jsonpath='{.metadata.annotations.card-support/prompt}' 2>/dev/null | sed 's/.* v//')
                 printf ' --set promptVersions.%s=%s' "$a" "$v"; done''', returnStdout: true).trim()
-            def byTimerOnly = currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') &&
-                              currentBuild.getBuildCauses().size() == 1
-            env.DEPLOY = (!byTimerOnly || deployed != env.PROMPT_FLAGS) ? 'true' : 'false'
-            echo "deployed:${deployed} | production:${env.PROMPT_FLAGS} | deploy: ${env.DEPLOY}"
+            env.DEPLOY = (deployed != env.PROMPT_FLAGS) ? 'true' : 'false'   // a new production prompt
+            echo "deployed: ${deployed} | production: ${env.PROMPT_FLAGS} | new prompt: ${env.DEPLOY}"
           }
         }
       }
+    }
+    stage('Changed?') {
+      // deploy on a new production prompt (above), a change under agents/, or a manual / upstream trigger; a poll
+      // or timer run with nothing new does nothing
+      when { anyOf { changeset 'agents/**'; triggeredBy 'UserIdCause'; triggeredBy 'UpstreamCause' } }
+      steps { script { env.DEPLOY = 'true' } }
     }
     stage('Validate') {
       when { environment name: 'DEPLOY', value: 'true' }
