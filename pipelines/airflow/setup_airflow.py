@@ -37,6 +37,11 @@ CONNECTIONS = [
                description="MLflow tracking server + model registry"),
     Connection(conn_id="kfp_api", conn_type="http", host="http://fraud-control-plane:31888",
                description="Kubeflow Pipelines API (NodePort of the kind cluster): retraining runs"),
+    # Layer 3 (RAG knowledge base)
+    Connection(conn_id="feast_kb_online", conn_type="postgres", host="vector-db", port=5432, schema="kb", login="kb",
+               password=E["VECTOR_DB_PASSWORD"], description="Feast online store of the RAG knowledge base (pgvector)"),
+    Connection(conn_id="llm_embeddings", conn_type="http", host="http://host.docker.internal:8086",
+               password=E["LLM_API_KEY"], description="Embedding server (llama.cpp on the host GPU machine)"),
 ]
 VARIABLES = {
     "spark_jobs_dir": "/opt/jobs",                         # pipelines/spark/ is mounted here in the Spark and Airflow containers
@@ -46,6 +51,7 @@ VARIABLES = {
     "lakehouse_bucket": "lakehouse",
     "validation_prefix": "_validation",                    # GE results: s3://lakehouse/_validation/<suite>/ds=<ds>/
     "feast_repo": "/opt/airflow/feature_repo",             # Layer 2: ml/feature_repo/ mounted read-only
+    "feast_kb_repo": "/opt/airflow/ml/feature_repo_kb",    # Layer 3: the knowledge base's Feast repo (in the ml/ mount)
     "drift_psi_threshold": "0.25",                         # PSI above this on any input = major drift
     "drift_pr_auc_drop": "0.05",                           # PR-AUC this far below the model's test PR-AUC = decay
 }

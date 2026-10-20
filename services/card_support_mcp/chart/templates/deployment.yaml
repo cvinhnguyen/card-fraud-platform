@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: {app: {{ .Release.Name }}}
+spec:
+  replicas: {{ .Values.replicas }}
+  # Rolling update: a new pod must be Ready before an old one stops, so the tools never go below
+  # {{ .Values.replicas }} serving pods; a release whose pods never get Ready is rolled back by helm --atomic.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  minReadySeconds: 5
+  progressDeadlineSeconds: 120
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000}
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000, name: http}]
+          env:
+            {{- range $k, $v := .Values.env }}
+            - {name: {{ $k }}, value: {{ $v | quote }}}
+            {{- end }}
+          envFrom: [{secretRef: {name: {{ .Values.secretName }}}}]
+          # startup: imports + the two Feast registries load; liveness: the process answers;
+          # readiness: both online stores answer (/readyz), else the pod gets no traffic
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false}

@@ -1,0 +1,9 @@
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+hypothesis==6.168.3
+respx==0.23.1
+mutmut==3.8.0
+locust==2.46.7
+crosshair-tool==0.0.111
+hypothesis-crosshair==0.0.31   # hypothesis backend="crosshair": symbolic execution finds edge inputs

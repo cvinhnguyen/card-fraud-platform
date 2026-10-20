@@ -1,7 +1,14 @@
-# Local Kubernetes for the two Layer 2 pieces that need it: Kubeflow Pipelines and KServe. Everything else (APIs,
-# push jobs, MLflow, Redis) runs in compose; the node joins the compose network (up.sh). Created by infra/k8s/up.sh.
+# Local Kubernetes for the pieces that need it: Kubeflow Pipelines and KServe (Layer 2), the agent platform
+# (Layer 3). Everything else (APIs, push jobs, MLflow, Redis) runs in compose; the node joins the compose network
+# (up.sh). Ports 80/443 on 127.0.0.1 go to the ingress controller on the node (label ingress-ready).
+# Created by infra/k8s/up.sh.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: fraud
 nodes:
   - role: control-plane
+    labels:
+      ingress-ready: "true"
+    extraPortMappings:
+      - {containerPort: 80, hostPort: 80, listenAddress: "127.0.0.1", protocol: TCP}
+      - {containerPort: 443, hostPort: 443, listenAddress: "127.0.0.1", protocol: TCP}

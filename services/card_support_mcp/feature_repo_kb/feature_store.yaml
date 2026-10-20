@@ -1,0 +1,22 @@
+# The card support server's view of the knowledge base Feast repo (ml/feature_repo_kb): same project, registry and
+# online store (pgvector); online reads only. Definitions come from the SQL registry.
+project: card_support_kb
+provider: local
+registry:
+  registry_type: sql
+  path: postgresql+psycopg://ml:${ML_DB_PASSWORD}@ml-db:5432/feast
+  cache_ttl_seconds: 60
+  sqlalchemy_config_kwargs:
+    pool_pre_ping: true
+online_store:
+  type: postgres
+  host: vector-db
+  port: 5432
+  database: kb
+  user: kb
+  password: ${VECTOR_DB_PASSWORD}
+  sslmode: disable
+  vector_enabled: true
+offline_store:
+  type: file
+entity_key_serialization_version: 3

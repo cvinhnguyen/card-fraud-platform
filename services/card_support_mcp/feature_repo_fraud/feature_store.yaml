@@ -1,0 +1,16 @@
+# The card support server's view of the fraud Feast repo (ml/feature_repo): same project, registry and online store,
+# no Spark offline store (online reads only). Definitions come from the SQL registry.
+project: card_fraud
+provider: local
+registry:
+  registry_type: sql
+  path: postgresql+psycopg://ml:${ML_DB_PASSWORD}@ml-db:5432/feast
+  cache_ttl_seconds: 60
+  sqlalchemy_config_kwargs:
+    pool_pre_ping: true
+online_store:
+  type: redis
+  connection_string: redis:6379,password=${REDIS_PASSWORD}
+offline_store:
+  type: file
+entity_key_serialization_version: 3

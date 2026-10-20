@@ -1,0 +1,8 @@
+apiVersion: v2
+name: card-support-mcp
+description: >-
+  Card support MCP server (4 tools), its MCP route on agentgateway (API key per agent, rate limit, tool access per
+  agent) and one kagent RemoteMCPServer per agent.
+type: application
+version: 0.1.2
+appVersion: "0.1.2"

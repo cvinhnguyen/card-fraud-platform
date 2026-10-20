@@ -1,0 +1,31 @@
+# Values of the llm-d router (chart llm-d-router-gateway v0.9.0, release qwen3-8b): InferencePool qwen3-8b over the
+# pods labelled app=qwen3-8b, and its endpoint picker. No HTTPRoute from the chart: agentgateway.yaml routes /v1 to
+# the pool through an AgentgatewayBackend, so the gateway's LLM policy (auth, rate limits, PII) covers every call.
+router:
+  modelServers:
+    matchLabels: {app: qwen3-8b}
+  epp:
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {memory: 512Mi}
+    # The default scorers read vLLM's queue and KV-cache metrics, which llama.cpp does not publish. These two need
+    # none: the picker's own count of in-flight requests per endpoint, and the prompt prefixes it has routed before.
+    pluginsConfigFile: llama-cpp.yaml
+    pluginsCustomConfig:
+      llama-cpp.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - type: active-request-scorer
+        - type: prefix-cache-scorer
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: active-request-scorer
+            weight: 2
+          - pluginRef: prefix-cache-scorer
+            weight: 3
+provider:
+  name: none
+httpRoute:
+  create: false

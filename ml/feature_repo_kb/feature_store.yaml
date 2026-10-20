@@ -1,0 +1,24 @@
+# Feast repo of the RAG knowledge base (Layer 3): chunks of the bank's card documents with their embeddings.
+# Same SQL registry as the fraud repo (ml/feature_repo, project card_fraud) but its own project and online store:
+# vector search needs Postgres + pgvector (Feast's Redis store has none, and Feast 0.66's hybrid store routes
+# neither vector search nor async reads). Secrets come from the environment (${...}), never from this file.
+project: card_support_kb
+provider: local
+registry:
+  registry_type: sql
+  path: postgresql+psycopg://ml:${ML_DB_PASSWORD}@ml-db:5432/feast
+  cache_ttl_seconds: 60
+  sqlalchemy_config_kwargs:
+    pool_pre_ping: true
+online_store:
+  type: postgres
+  host: vector-db
+  port: 5432
+  database: kb
+  user: kb
+  password: ${VECTOR_DB_PASSWORD}
+  sslmode: disable   # Feast defaults to require; the local Postgres has no TLS
+  vector_enabled: true
+offline_store:
+  type: file   # the chunk history is one small Parquet table in the lakehouse: no Spark needed
+entity_key_serialization_version: 3

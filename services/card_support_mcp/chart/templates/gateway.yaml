@@ -1,0 +1,56 @@
+# The MCP entry point on agentgateway: agents call the gateway, never the server directly.
+{{- $ns := .Values.gateway.namespace }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ $ns }}
+spec:
+  mcp:
+    sessionRouting: Stateless   # the server keeps no MCP session: any replica answers any call
+    targets:
+      - name: card-support
+        static:
+          host: {{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local
+          port: 8000
+          path: /mcp
+          protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ $ns }}
+spec:
+  parentRefs: [{name: {{ .Values.gateway.name }}}]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: {{ .Values.gateway.path }}}}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: {{ .Release.Name }}}]
+---
+# Who: an API key from agentgateway-api-keys. How much: a request rate limit. What: per agent, only its tools, both in
+# tools/list (the rule runs once per listed tool) and in tools/call.
+{{- $rules := list }}
+{{- range $agent, $tools := .Values.agents.access }}
+{{- $rules = append $rules (printf "(apiKey.user_id == %q && mcp.tool.name in %s)" $agent (toJson $tools)) }}
+{{- end }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ $ns }}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: {{ .Release.Name }}}]
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    rateLimit:
+      local:
+        - {requests: {{ .Values.gateway.rateLimit.requests }}, unit: Minutes, burst: {{ .Values.gateway.rateLimit.burst }}}
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+            - {{ join " || " $rules | quote }}

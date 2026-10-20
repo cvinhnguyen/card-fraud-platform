@@ -57,7 +57,8 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
 def emit_assertions(report: dict, run_id: str) -> int:
     """Send every expectation result to DataHub as an assertion on its table (Validation tab): AssertionInfo says what
     is checked, AssertionRunEvent says whether this run passed. The assertion id is stable per (table, expectation,
-    column), so each table shows the history across runs. Tables are hive URNs, the same names OpenLineage reports."""
+    column), so each table shows the history across runs. Tables are hive URNs, the same names OpenLineage reports
+    (a result may name another platform, e.g. feast for the RAG knowledge base)."""
     from datahub.emitter.mce_builder import datahub_guid, make_assertion_urn, make_dataset_urn
     from datahub.emitter.mcp import MetadataChangeProposalWrapper
     from datahub.metadata.schema_classes import (AssertionInfoClass, AssertionResultClass, AssertionResultTypeClass,
@@ -69,7 +70,8 @@ def emit_assertions(report: dict, run_id: str) -> int:
     emitter = DatahubRestHook("datahub_rest_default").make_emitter()
     now = int(datetime.now(timezone.utc).timestamp() * 1000)
     for r in report["results"]:
-        dataset, col = make_dataset_urn("hive", r["table"], "PROD"), r["kwargs"].get("column")
+        dataset = make_dataset_urn(r.get("platform", "hive"), r["table"], "PROD")   # Layer 3 results name feast
+        col = r["kwargs"].get("column")
         urn = make_assertion_urn(datahub_guid({"table": r["table"], "expectation": r["expectation"], "column": col}))
         info = AssertionInfoClass(type=AssertionTypeClass.DATASET, description=f"{r['expectation']} {r['kwargs']}",
                                   datasetAssertion=DatasetAssertionInfoClass(

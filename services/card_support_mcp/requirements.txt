@@ -1,0 +1,9 @@
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+httpx==0.28.1
+mcp==1.30.0                  # 1.x: the session-based MCP revision kagent 0.10 speaks (2.x moved to the sessionless one)
+prometheus-client==0.24.1    # feast 0.66 pins prometheus_client < 0.25
+prometheus-fastapi-instrumentator==8.1.0
+feast[redis,postgres]==0.66.0

@@ -2,9 +2,10 @@
 
   core_banking/*.parquet          -> Postgres database `core_banking` (tables recreated)
   core-banking-export/...parquet  -> SeaweedFS bucket `core-banking-export` (files overwritten)
+  generator/knowledge/*.md        -> SeaweedFS bucket `bank-documents` (the bank's card documents, Layer 3 RAG source)
 
-Both stores belong to the source side; our pipelines (DP1) only read from them.
-Usage: python generator/load_source.py [--config generator/config.yaml]
+All stores belong to the source side; our pipelines (DP1, rag_ingest) only read from them.
+Usage: python generator/load_source.py [--config generator/config.yaml] [--part core_banking|exports|documents]
 """
 import argparse
 import io
@@ -36,6 +37,7 @@ DDL = {
                 "is_confirmed_fraud boolean",
 }
 BUCKET = "core-banking-export"
+DOCS_BUCKET = "bank-documents"
 
 
 def load_postgres(env: dict[str, str], src: Path) -> None:
@@ -70,15 +72,31 @@ def upload_exports(env: dict[str, str], export_root: Path) -> None:
     print(f"s3://{BUCKET}: {len(keys):,} export files")
 
 
-def main(config_path: Path) -> None:
-    """Load Postgres tables and upload export files."""
+def upload_documents(env: dict[str, str], doc_dir: Path) -> None:
+    """Upload the bank's documents (Markdown) as `<name>.md`; the RAG pipeline reads them from this bucket."""
+    s3 = boto3.client("s3", endpoint_url="http://localhost:8333", region_name="us-east-1",
+                      aws_access_key_id=env["S3_ACCESS_KEY"], aws_secret_access_key=env["S3_SECRET_KEY"])
+    docs = sorted(doc_dir.glob("*.md"))
+    for d in docs:
+        s3.upload_file(str(d), DOCS_BUCKET, d.name, ExtraArgs={"ContentType": "text/markdown"})
+    print(f"s3://{DOCS_BUCKET}: {len(docs)} documents")
+
+
+def main(config_path: Path, part: str | None) -> None:
+    """Load Postgres tables, upload export files and documents (or only one part)."""
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     src, env = ROOT / cfg["output_dir"], read_env()
-    load_postgres(env, src / "core_banking")
-    upload_exports(env, src / "core-banking-export")
+    if part in (None, "core_banking"):
+        load_postgres(env, src / "core_banking")
+    if part in (None, "exports"):
+        upload_exports(env, src / "core-banking-export")
+    if part in (None, "documents"):
+        upload_documents(env, Path(__file__).parent / "knowledge")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Load generated source data into Postgres and SeaweedFS.")
     ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.yaml")
-    main(ap.parse_args().config)
+    ap.add_argument("--part", choices=["core_banking", "exports", "documents"], help="load only this part")
+    a = ap.parse_args()
+    main(a.config, a.part)

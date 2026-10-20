@@ -511,6 +511,27 @@ services:
       interval: 10s
       retries: 5
 
+  # Layer 3: Feast online store with vector search for the RAG knowledge base (Feast project card_support_kb).
+  # Separate from ml-db: pgvector's image is Debian-based, and moving ml-db's Alpine data dir to it risks collation
+  # differences; Redis (the fraud features' online store) has no vector search in Feast.
+  vector-db:
+    image: pgvector/pgvector:0.8.1-pg16
+    profiles: [ml]
+    container_name: vector-db
+    environment:
+      POSTGRES_DB: kb
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: ${VECTOR_DB_PASSWORD}
+    volumes:
+      - vector_db_data:/var/lib/postgresql/data
+      - ./conf/vector-db:/docker-entrypoint-initdb.d:ro   # CREATE EXTENSION vector (Feast does not create it)
+    ports:
+      - "127.0.0.1:5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 10s
+      retries: 5
+
   # Feast online store.
   redis:
     image: redis:7.4-alpine
@@ -670,6 +691,7 @@ volumes:
   airflow_dbt:
   datahub_db_data:
   opensearch_data:
+  vector_db_data:
   ml_db_data:
   redis_data:
   registry_data:

@@ -1,0 +1,30 @@
+# Install (namespace card-support; secrets from infra/k8s/secrets.sh, image pushed to the compose registry):
+#   helm upgrade --install card-support-mcp services/card_support_mcp/chart -n card-support --atomic --timeout 3m
+# --atomic: if the new pods are not Ready in time, Helm rolls the release back to the last good revision.
+image:
+  repository: localhost:5001/card-support-mcp
+  tag: "0.1.2"
+replicas: 2
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 768Mi}
+# Settings of app/settings.py (env names = upper-case field names); passwords come from secretName
+env:
+  SCORING_URL: http://scoring-api:8000/v1/score          # compose service, reached over the kind node's network
+  EMBEDDINGS_URL: http://host.docker.internal:8086       # llama.cpp embedding server on the host
+  TIMEOUT_S: "5"
+secretName: card-support-mcp   # ML_DB_PASSWORD, REDIS_PASSWORD, VECTOR_DB_PASSWORD, LLM_API_KEY
+
+gateway:
+  namespace: agentgateway-system
+  name: agentgateway-proxy
+  path: /mcp
+  rateLimit: {requests: 300, burst: 50}   # per minute, all agents together
+
+# Who may see and call which tool through the gateway: API key user_id (infra/k8s/secrets.sh) -> tools.
+# Any other key (e.g. the agents' LLM key) passes authentication but is allowed no tool.
+agents:
+  namespace: kagent
+  access:
+    card-data-agent: [get_card_data, get_policy_chunk]
+    risk-agent: [score_payment, search_policy]
