@@ -1,0 +1,19 @@
+{{- range $name, $m := .Values.modelConfigs }}
+---
+# Model config of an A/B variant: the global one (gateway /v1, model qwen3-8b, the agents' key) with other sampling
+# settings ($m: temperature, maxTokens, topP, ...)
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  provider: OpenAI
+  model: qwen3-8b
+  apiKeySecret: agentgateway-key
+  apiKeySecretKey: key
+  openAI:
+    apiFormat: chatCompletions
+    baseUrl: http://{{ $.Values.gateway.name }}.{{ $.Values.gateway.namespace }}.svc.cluster.local/v1
+    {{- toYaml $m | nindent 4 }}
+{{- end }}

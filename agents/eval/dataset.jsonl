@@ -1,0 +1,12 @@
+{"id": "fee-foreign-debit", "doc": "fee_schedule", "question": "What is the foreign transaction fee on a debit card?", "expect": [["2.5%"]]}
+{"id": "fee-foreign-credit", "doc": "fee_schedule", "question": "What is the foreign transaction fee on a credit card?", "expect": [["3%", "3.0%"]]}
+{"id": "fee-replace-credit", "doc": "fee_schedule", "question": "How much does it cost to replace a lost credit card?", "expect": [["100,000", "100000", "100.000"]]}
+{"id": "fee-annual-credit", "doc": "fee_schedule", "question": "What is the annual fee of a credit card, and when is it waived?", "expect": [["300,000", "300000", "300.000"], ["50,000,000", "50000000", "50.000.000", "50 million"]]}
+{"id": "fee-interest", "doc": "fee_schedule", "question": "What interest does the bank charge on an unpaid credit card balance?", "expect": [["28%"]]}
+{"id": "fee-dispute-rejected", "doc": "fee_schedule", "question": "Is there a fee if my dispute about a payment I actually made is rejected?", "expect": [["80,000", "80000", "80.000"]]}
+{"id": "dispute-deadline", "doc": "dispute_policy", "question": "How long do I have to report a payment I did not make?", "expect": [["60 days"]]}
+{"id": "dispute-provisional", "doc": "dispute_policy", "question": "How quickly do I get my money back as a provisional credit for an unauthorized payment?", "expect": [["5 working days", "five working days"]]}
+{"id": "dispute-replacement", "doc": "dispute_policy", "question": "Do I pay for the new card if my card was locked because of a fraud dispute?", "expect": [["free", "no charge", "no fee"]]}
+{"id": "auth-otp-validity", "doc": "authentication_rules", "question": "How long is an OTP valid?", "expect": [["3 minutes", "three minutes"]]}
+{"id": "auth-otp-wrong", "doc": "authentication_rules", "question": "What happens after I enter 5 wrong OTPs?", "expect": [["30 minutes", "thirty minutes"]]}
+{"id": "auth-biometric", "doc": "authentication_rules", "question": "From which amount does a single transfer in the app need a biometric check?", "expect": [["10,000,000", "10000000", "10.000.000", "10 million"]]}

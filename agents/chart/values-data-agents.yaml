@@ -24,3 +24,10 @@ agents:
         name: Card policy
         description: Fees, liability, disputes and authentication rules, with the document and section.
         examples: ["Am I liable if someone used my card abroad?"]
+
+# A/B test of the risk agent's model config: B samples near-greedily and caps its answers (the global config leaves
+# llama.cpp's defaults: temperature 0.8, no cap). Half of the coordinator's calls to risk-agent go to risk-agent-b.
+abTests:
+  risk-agent: {variant: risk-agent-b, modelConfig: qwen3-8b-precise, weight: 50}
+modelConfigs:
+  qwen3-8b-precise: {temperature: "0.2", maxTokens: 512}

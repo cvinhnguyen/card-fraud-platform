@@ -1,5 +1,5 @@
 {{- $as := .Values.autoscaling }}
-{{- range $name, $a := .Values.agents }}
+{{- range $name, $a := include "card-support.agents" . | fromYaml }}
 ---
 # KEDA owns the replicas of the Deployment kagent creates for the agent (the Agent leaves replicas unset)
 apiVersion: keda.sh/v1alpha1

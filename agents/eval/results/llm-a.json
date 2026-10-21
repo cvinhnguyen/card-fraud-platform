@@ -1,0 +1,97 @@
+{
+ "summary": {
+  "mode": "llm",
+  "variant": "a",
+  "questions": 12,
+  "accuracy": 1.0,
+  "errors": 0,
+  "latency_p50_s": 1.93,
+  "latency_max_s": 3.73
+ },
+ "results": [
+  {
+   "id": "fee-foreign-debit",
+   "correct": true,
+   "seconds": 2.39,
+   "error": null,
+   "answer": "The foreign transaction fee on a debit card is 2.5% of the amount."
+  },
+  {
+   "id": "fee-foreign-credit",
+   "correct": true,
+   "seconds": 1.91,
+   "error": null,
+   "answer": "The foreign transaction fee on a credit card is 3.0% of the amount."
+  },
+  {
+   "id": "fee-replace-credit",
+   "correct": true,
+   "seconds": 1.0,
+   "error": null,
+   "answer": "The cost to replace a lost credit card is 100,000 VND."
+  },
+  {
+   "id": "fee-annual-credit",
+   "correct": true,
+   "seconds": 3.73,
+   "error": null,
+   "answer": "The annual fee for a credit card is 300,000 VND, and it is waived when the spending is at least 50,000,000 VND per year."
+  },
+  {
+   "id": "fee-interest",
+   "correct": true,
+   "seconds": 1.53,
+   "error": null,
+   "answer": "The bank charges 28% per year on an unpaid credit card balance, which is applied when the statement balance is not fully paid by the due date."
+  },
+  {
+   "id": "fee-dispute-rejected",
+   "correct": true,
+   "seconds": 3.26,
+   "error": null,
+   "answer": "Yes, if your dispute about a payment you actually made is rejected after investigation, a handling fee of 80,000 VND applies."
+  },
+  {
+   "id": "dispute-deadline",
+   "correct": true,
+   "seconds": 3.25,
+   "error": null,
+   "answer": "You have 60 days from the payment date to report an unauthorized payment. If you report it after 60 days, the bank will review it on a case-by-case basis, and you may be liable for the amount."
+  },
+  {
+   "id": "dispute-provisional",
+   "correct": true,
+   "seconds": 1.61,
+   "error": null,
+   "answer": "As a provisional credit for an unauthorized payment, you will get your money back within 5 working days while the bank investigates the dispute."
+  },
+  {
+   "id": "dispute-replacement",
+   "correct": true,
+   "seconds": 1.04,
+   "error": null,
+   "answer": "No, if your card was locked because of a fraud dispute, the bank will replace it free of charge."
+  },
+  {
+   "id": "auth-otp-validity",
+   "correct": true,
+   "seconds": 1.95,
+   "error": null,
+   "answer": "An OTP is valid for 3 minutes and is used for one payment only."
+  },
+  {
+   "id": "auth-otp-wrong",
+   "correct": true,
+   "seconds": 2.28,
+   "error": null,
+   "answer": "After entering 5 wrong OTPs, the card's online payments are paused for 30 minutes."
+  },
+  {
+   "id": "auth-biometric",
+   "correct": true,
+   "seconds": 1.33,
+   "error": null,
+   "answer": "A single transfer in the app requires a biometric check from 10,000,000 VND or more."
+  }
+ ]
+}

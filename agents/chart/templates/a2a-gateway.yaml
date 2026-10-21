@@ -3,9 +3,11 @@
 #                   x-kagent-host: <agent>.<namespace>; route <release>-internal, key users a2aCallers only
 #   client -> agent: /a2a/<agent> for agents marked public; route a2a-<agent>, key user support-app only
 # The gateway rewrites each agent card's URL to its own address, so A2A clients keep going through it.
+# A/B test (abTests): the tested agent's calls are split by weight between it and its variant; header
+# x-agent-variant: a|b pins a call to one of them (evaluations, tests).
 {{- $gw := .Values.gateway }}
 {{- $internal := printf "%s-internal" .Release.Name }}
-{{- range $name, $a := .Values.agents }}
+{{- range $name, $a := include "card-support.agents" . | fromYaml }}
 ---
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -25,9 +27,24 @@ spec:
   parentRefs: [{name: {{ $gw.name }}}]
   rules:
     {{- range $name, $a := .Values.agents }}
-    - matches: [{path: {type: PathPrefix, value: /}, headers: [{name: x-kagent-host, value: {{ $name }}.{{ $.Release.Namespace }}}]}]
+    {{- $host := dict "name" "x-kagent-host" "value" (printf "%s.%s" $name $.Release.Namespace) }}
+    {{- with index (default dict $.Values.abTests) $name }}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}, {name: x-agent-variant, value: a}]}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
       timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}, {name: x-agent-variant, value: b}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ .variant }}}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}]}]
+      backendRefs:
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}, weight: {{ sub 100 .weight }}}
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ .variant }}, weight: {{ .weight }}}
+      timeouts: {request: 300s}
+    {{- else }}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
+      timeouts: {request: 300s}
+    {{- end }}
     {{- end }}
 ---
 apiVersion: agentgateway.dev/v1alpha1

@@ -45,3 +45,9 @@ agents: {}
 # gateway key users allowed to call this release's agents agent-to-agent (route <release>-internal)
 a2aCallers: []
 promptVersions: {}   # <agent>: <Langfuse prompt version>, set by the pipeline
+
+# A/B tests of an agent's model config: <agent>: {variant: <name>, modelConfig: <one of modelConfigs>, weight: <% of
+# its A2A calls to the variant>}. The variant is a copy of the agent with that model config; the gateway splits the
+# calls (templates/a2a-gateway.yaml) and the "A/B tests" Grafana dashboard compares the two.
+abTests: {}
+modelConfigs: {}     # <name>: openAI sampling settings (temperature, maxTokens, topP, ...) on top of the global config

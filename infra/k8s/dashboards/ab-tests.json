@@ -1,0 +1,879 @@
+{
+ "uid": "ab-tests",
+ "title": "Card Support - A/B tests",
+ "description": "Agent model config A/B (risk-agent vs risk-agent-b) and LLM version A/B (Qwen3-8B local vs Qwen3.8-27B on Groq), side by side.",
+ "tags": [
+  "card-support",
+  "layer3"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "refresh": "30s",
+ "panels": [
+  {
+   "id": 100,
+   "type": "text",
+   "title": "How these A/B tests work",
+   "gridPos": {
+    "w": 24,
+    "h": 4,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "mode": "markdown",
+    "content": "**Agent model config** (rubric C52): the gateway sends 50 % of the coordinator's calls to `risk-agent` to its copy `risk-agent-b`, which only differs by its ModelConfig (`agents/chart/values-data-agents.yaml`, `abTests`). **LLM version** (C53): route `llm` sends 80 % of all model calls to Qwen3-8B on llama.cpp (llm-d) and 20 % to Qwen3.8-27B on Groq (`infra/k8s/agentgateway.yaml`). Quality of each side: `agents/eval/run_eval.py` (pinned with headers `x-agent-variant` / `x-llm-variant`). See docs/ab_testing.md."
+   }
+  },
+  {
+   "id": 101,
+   "type": "row",
+   "title": "Agent model config: risk-agent A vs B",
+   "gridPos": {
+    "w": 24,
+    "h": 1,
+    "x": 0,
+    "y": 4
+   },
+   "collapsed": false,
+   "panels": []
+  },
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "A2A calls per minute",
+   "description": "Calls the gateway routed to each variant.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 0,
+    "y": 5
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent\"}[$__rate_interval])) * 60",
+     "legendFormat": "A: risk-agent (global config)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent-b\"}[$__rate_interval])) * 60",
+     "legendFormat": "B: risk-agent-b (temperature 0.2, max 512 tokens)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: risk-agent (global config)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: risk-agent-b (temperature 0.2, max 512 tokens)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "A2A latency p50",
+   "description": "Time from the call to the variant's answer.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 8,
+    "y": 5
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_request_duration_seconds_bucket{backend=\"agentgateway-system/agent-risk-agent\"}[$__rate_interval])))",
+     "legendFormat": "A: risk-agent (global config)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_request_duration_seconds_bucket{backend=\"agentgateway-system/agent-risk-agent-b\"}[$__rate_interval])))",
+     "legendFormat": "B: risk-agent-b (temperature 0.2, max 512 tokens)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: risk-agent (global config)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: risk-agent-b (temperature 0.2, max 512 tokens)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "A2A error share",
+   "description": "Calls that did not end with HTTP 200.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 16,
+    "y": 5
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent\",status!=\"200\"}[$__rate_interval])) or vector(0)) / sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent\"}[$__rate_interval]))",
+     "legendFormat": "A: risk-agent (global config)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent-b\",status!=\"200\"}[$__rate_interval])) or vector(0)) / sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent-b\"}[$__rate_interval]))",
+     "legendFormat": "B: risk-agent-b (temperature 0.2, max 512 tokens)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: risk-agent (global config)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: risk-agent-b (temperature 0.2, max 512 tokens)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Calls in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 4,
+    "x": 0,
+    "y": 13
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent\"}[$__range]))",
+     "legendFormat": "A: risk-agent (global config)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(agentgateway_requests_total{backend=\"agentgateway-system/agent-risk-agent-b\"}[$__range]))",
+     "legendFormat": "B: risk-agent-b (temperature 0.2, max 512 tokens)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none",
+    "graphMode": "none"
+   }
+  },
+  {
+   "id": 102,
+   "type": "row",
+   "title": "LLM version: route llm, A vs B",
+   "gridPos": {
+    "w": 24,
+    "h": 1,
+    "x": 0,
+    "y": 17
+   },
+   "collapsed": false,
+   "panels": []
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "LLM calls per minute",
+   "description": "Model calls the route sent to each version (agents and other callers).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 0,
+    "y": 18
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8b\"}[$__rate_interval])) * 60",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8-27b-groq\"}[$__rate_interval])) * 60",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: Qwen3-8B (llama.cpp, llm-d)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: Qwen3.8-27B (Groq)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Round trip of a generation p50",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 8,
+    "y": 18
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket{gen_ai_response_model=\"qwen3-8b\"}[$__rate_interval])))",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket{gen_ai_response_model=\"qwen/qwen3.8-27b\"}[$__rate_interval])))",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: Qwen3-8B (llama.cpp, llm-d)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: Qwen3.8-27B (Groq)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "LLM error share",
+   "description": "Calls that did not end with HTTP 200 (Groq's free tier answers 429 above 8,000 tokens a minute).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 16,
+    "y": 18
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8b\",status!=\"200\"}[$__rate_interval])) or vector(0)) / sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8b\"}[$__rate_interval]))",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "(sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8-27b-groq\",status!=\"200\"}[$__rate_interval])) or vector(0)) / sum(rate(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8-27b-groq\"}[$__rate_interval]))",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: Qwen3-8B (llama.cpp, llm-d)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: Qwen3.8-27B (Groq)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Output tokens per call",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 0,
+    "y": 26
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\",gen_ai_response_model=\"qwen3-8b\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"output\",gen_ai_response_model=\"qwen3-8b\"}[$__rate_interval]))",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\",gen_ai_response_model=\"qwen/qwen3.8-27b\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"output\",gen_ai_response_model=\"qwen/qwen3.8-27b\"}[$__rate_interval]))",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: Qwen3-8B (llama.cpp, llm-d)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: Qwen3.8-27B (Groq)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Input tokens per call",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 8,
+    "y": 26
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\",gen_ai_response_model=\"qwen3-8b\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"input\",gen_ai_response_model=\"qwen3-8b\"}[$__rate_interval]))",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(rate(agentgateway_gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\",gen_ai_response_model=\"qwen/qwen3.8-27b\"}[$__rate_interval])) / sum(rate(agentgateway_gen_ai_client_token_usage_count{gen_ai_token_type=\"input\",gen_ai_response_model=\"qwen/qwen3.8-27b\"}[$__rate_interval]))",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "pointSize": 8,
+      "showPoints": "auto"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "A: Qwen3-8B (llama.cpp, llm-d)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#2a78d6"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "B: Qwen3.8-27B (Groq)"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#eb6834"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   }
+  },
+  {
+   "id": 10,
+   "type": "stat",
+   "title": "LLM calls in range",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "w": 8,
+    "h": 8,
+    "x": 16,
+    "y": 26
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8b\"}[$__range]))",
+     "legendFormat": "A: Qwen3-8B (llama.cpp, llm-d)",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum(increase(agentgateway_requests_total{backend=\"agentgateway-system/qwen3-8-27b-groq\"}[$__range]))",
+     "legendFormat": "B: Qwen3.8-27B (Groq)",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name",
+    "colorMode": "none",
+    "graphMode": "none"
+   }
+  }
+ ]
+}

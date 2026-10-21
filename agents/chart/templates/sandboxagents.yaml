@@ -1,5 +1,5 @@
 {{- if .Values.sandbox.enabled }}
-{{- range $name, $a := .Values.agents }}
+{{- range $name, $a := include "card-support.agents" . | fromYaml }}
 ---
 # The same agent in a sandbox on Agent Substrate: each conversation runs in its own gVisor actor on the worker
 # pool, restored from a warm snapshot (no cold start), with network egress limited to allowedDomains.

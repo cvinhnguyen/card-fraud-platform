@@ -1,0 +1,97 @@
+{
+ "summary": {
+  "mode": "agent",
+  "variant": "split",
+  "questions": 12,
+  "accuracy": 0.667,
+  "errors": 0,
+  "latency_p50_s": 10.46,
+  "latency_max_s": 14.37
+ },
+ "results": [
+  {
+   "id": "fee-foreign-debit",
+   "correct": true,
+   "seconds": 14.37,
+   "error": null,
+   "answer": "The foreign transaction fee for a debit card is 2.5% of the amount, as stated in the fee schedule (fee_schedule#2). If you have any further questions, feel free to ask!"
+  },
+  {
+   "id": "fee-foreign-credit",
+   "correct": true,
+   "seconds": 9.24,
+   "error": null,
+   "answer": "The foreign transaction fee on a credit card is 3.0% of the payment amount, applied to any payment made in a foreign currency or to a merchant abroad (fee_schedule#2). The card's balance is converted to VND at the card network's exchange rate on the day the payment settles (card_terms#2.4). For comparison, debit cards carry a 2.5% foreign transaction fee (faq#5)."
+  },
+  {
+   "id": "fee-replace-credit",
+   "correct": false,
+   "seconds": 13.14,
+   "error": null,
+   "answer": "The policy does not provide specific information about the cost to replace a lost credit card. However, it mentions that if a payment is confirmed with the customer's own OTP or biometric check, it is treated as authorized unless the customer can prove the OTP or device was used without their consent. For detailed information about card replacement costs, please consult the card terms and conditio"
+  },
+  {
+   "id": "fee-annual-credit",
+   "correct": true,
+   "seconds": 10.42,
+   "error": null,
+   "answer": "The annual fee for a credit card is 300,000 VND, and it is waived when the spending is at least 50,000,000 VND per year (fee_schedule#1). For more details, you can refer to the fee schedule section."
+  },
+  {
+   "id": "fee-interest",
+   "correct": false,
+   "seconds": 3.91,
+   "error": null,
+   "answer": "The bank's interest rate on an unpaid credit card balance is outlined in the fee schedule section of the card terms. According to the policy, the interest rate is typically around 1.5% per month, but it may vary depending on the specific card and the customer's credit history. For more detailed information, please refer to the fee schedule section of the card terms."
+  },
+  {
+   "id": "fee-dispute-rejected",
+   "correct": true,
+   "seconds": 13.12,
+   "error": null,
+   "answer": "If your dispute about a payment you actually made is rejected, a handling fee of 80,000 VND applies, as stated in the fee schedule (fee_schedule#4.1). According to the dispute policy (dispute_policy#4.5), the bank will explain why the dispute was rejected and reverse the provisional credit within 5 working days."
+  },
+  {
+   "id": "dispute-deadline",
+   "correct": true,
+   "seconds": 12.01,
+   "error": null,
+   "answer": "According to the policy, you have 60 days from the payment date to report an unauthorized payment. If you report it within this period, you are not liable for the amount. If you report it after 60 days, the bank will review the case individually, and you may be liable for the amount. \n\nFor more details, you can refer to (dispute_policy#3.1) and (card_terms#4.2)."
+  },
+  {
+   "id": "dispute-provisional",
+   "correct": true,
+   "seconds": 10.51,
+   "error": null,
+   "answer": "As per the policy, you will receive a provisional credit within 5 working days for an unauthorized payment while the bank investigates. The provisional credit becomes final if the dispute is accepted, and it is reversed with 5 working days' notice if the dispute is rejected. For more details, refer to (dispute_policy#4.2) and (dispute_policy#4.5)."
+  },
+  {
+   "id": "dispute-replacement",
+   "correct": false,
+   "seconds": 1.72,
+   "error": null,
+   "answer": ""
+  },
+  {
+   "id": "auth-otp-validity",
+   "correct": false,
+   "seconds": 3.55,
+   "error": null,
+   "answer": "The policy regarding the validity period of an OTP is not available in the provided documents. Please check the bank's official guidelines or contact customer support for detailed information."
+  },
+  {
+   "id": "auth-otp-wrong",
+   "correct": true,
+   "seconds": 9.09,
+   "error": null,
+   "answer": "After 5 wrong OTPs, the card's online payments are paused for 30 minutes (authentication_rules#4.2). Once the pause ends, you can try again \u2014 each OTP is valid for 3 minutes and for one payment only (authentication_rules#4.2). If the OTP doesn't arrive, check that your phone number in the app is correct and that your phone can receive SMS, or use the in-app confirmation instead (authentication_rul"
+  },
+  {
+   "id": "auth-biometric",
+   "correct": true,
+   "seconds": 11.42,
+   "error": null,
+   "answer": "For a single transfer in the app, a biometric check is required for transfers of 10,000,000 VND or more (authentication_rules#2.1). Additionally, a biometric check is required if the total of the customer's transfers in one day exceeds 20,000,000 VND (authentication_rules#2.2). Smaller transfers are confirmed with the app PIN or the device's own biometric unlock (Smart OTP) (authentication_rules#2"
+  }
+ ]
+}

@@ -2,7 +2,7 @@
 # Install the observability stack into the kind cluster (after llm-platform.sh). Idempotent; versions pinned.
 #   metrics  kube-prometheus-stack 91.9.0: Prometheus (also the source of the agents' KEDA scaling), Grafana,
 #            node-exporter + kube-state-metrics (CPU, RAM, disk, network); monitors.yaml adds the gateway and the
-#            Scoring API; dashboards/*.json: Web API, LLM and agent telemetry
+#            Scoring API; dashboards/*.json: Web API, LLM and agent telemetry, A/B tests
 #   logs     VictoriaLogs v1.53 (victoria-logs-single 0.13.10) with its Vector agent shipping every pod's logs
 #   traces   Jaeger 2.21 + the gateway's tracing policy (tracing.yaml); kagent agents export spans too
 # UIs (P7 puts them behind NGINX):

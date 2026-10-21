@@ -1,0 +1,64 @@
+"""Eval gate of the agents' CD (novel idea): the eval dataset (dataset.jsonl) is a Langfuse dataset, and every deploy
+runs it as a Langfuse experiment against the agent just deployed, through the gateway like the coordinator. Each answer
+gets an accuracy score (run_eval.correct: every expected fact stated), the run an average; below --min-accuracy the
+script exits 1 and the pipeline rolls the release back. The experiments of successive prompt versions sit side by
+side in Langfuse (Datasets > card-support/risk-agent).
+
+  LANGFUSE_HOST=... LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=... GATEWAY=http://<gateway> A2A_KEY=...
+  python agents/eval/langfuse_gate.py --run-name "risk-agent prompt v2 (Jenkins #12)" --min-accuracy 0.6
+"""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from langfuse import Evaluation, get_client
+
+from run_eval import ask_agent, correct
+
+HERE = Path(__file__).parent
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--agent", default="risk-agent")
+    ap.add_argument("--variant", choices=["a", "b"], default="a", help="side of the agent's A/B test to evaluate")
+    ap.add_argument("--run-name", required=True)
+    ap.add_argument("--min-accuracy", type=float, default=0.6)
+    args = ap.parse_args()
+    gw = os.environ["GATEWAY"].rstrip("/")
+    name = f"card-support/{args.agent}"
+
+    lf = get_client()
+    lf.create_dataset(name=name, description="Card policy questions with the facts a correct answer states (agents/eval)")
+    for line in (HERE / "dataset.jsonl").read_text(encoding="utf-8").splitlines():
+        it = json.loads(line)   # the item id makes this an upsert: re-running does not duplicate the dataset
+        lf.create_dataset_item(dataset_name=name, id=f"{args.agent}-{it['id']}", input={"question": it["question"]},
+                               expected_output={"expect": it["expect"]}, metadata={"doc": it["doc"]})
+
+    def task(*, item, **kwargs):
+        return ask_agent(gw, args.agent, item.input["question"], args.variant)
+
+    def accuracy(*, output, expected_output, **kwargs):
+        ok = bool(output) and correct(output, expected_output["expect"])
+        return Evaluation(name="accuracy", value=1.0 if ok else 0.0, comment=None if ok else "expected fact missing")
+
+    def average(*, item_results, **kwargs):
+        values = [e.value for r in item_results for e in r.evaluations if e.name == "accuracy"]
+        return Evaluation(name="avg_accuracy", value=sum(values) / len(values) if values else 0.0)
+
+    result = lf.get_dataset(name).run_experiment(
+        name=f"{args.agent} gate", run_name=args.run_name, task=task, evaluators=[accuracy], run_evaluators=[average],
+        max_concurrency=1,   # one GPU: the agents answer one question at a time anyway
+        metadata={"agent": args.agent, "variant": args.variant})
+    lf.flush()
+    print(result.format())
+    values = [e.value for r in result.item_results for e in r.evaluations if e.name == "accuracy"]
+    acc = sum(values) / len(values) if len(values) == len(result.item_results) else 0.0   # missing score = fail
+    print(f"accuracy {acc:.2f} (gate {args.min_accuracy:.2f}): {'pass' if acc >= args.min_accuracy else 'FAIL'}")
+    return 0 if acc >= args.min_accuracy else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

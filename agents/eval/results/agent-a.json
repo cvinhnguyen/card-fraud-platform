@@ -1,0 +1,97 @@
+{
+ "summary": {
+  "mode": "agent",
+  "variant": "a",
+  "questions": 12,
+  "accuracy": 0.667,
+  "errors": 0,
+  "latency_p50_s": 7.61,
+  "latency_max_s": 71.72
+ },
+ "results": [
+  {
+   "id": "fee-foreign-debit",
+   "correct": true,
+   "seconds": 10.7,
+   "error": null,
+   "answer": "The foreign transaction fee for a debit card is 2.5% of the amount, as stated in the fee schedule (fee_schedule#2). If you have any further questions, feel free to ask!"
+  },
+  {
+   "id": "fee-foreign-credit",
+   "correct": true,
+   "seconds": 9.24,
+   "error": null,
+   "answer": "The foreign transaction fee for a credit card is 3.0% of the amount, as stated in the fee schedule (fee_schedule#2). If you have any other questions about fees or card policies, feel free to ask!"
+  },
+  {
+   "id": "fee-replace-credit",
+   "correct": false,
+   "seconds": 2.03,
+   "error": null,
+   "answer": "The policy could not be checked. Please consult the bank's card terms or fee schedule for information on replacement costs."
+  },
+  {
+   "id": "fee-annual-credit",
+   "correct": true,
+   "seconds": 6.5,
+   "error": null,
+   "answer": "The annual fee for a credit card is 300,000 VND, and it is waived when the spending is at least 50,000,000 VND per year (fee_schedule#1). For more details, you can refer to the fee schedule document."
+  },
+  {
+   "id": "fee-interest",
+   "correct": false,
+   "seconds": 38.86,
+   "error": null,
+   "answer": "I don't have the capability to check the interest rate directly, but you can find the details in the card terms and conditions. The interest rate for unpaid credit card balances is typically outlined in the \"Fee Schedule\" section of your card's documentation. Please refer to that section for the exact rate and any applicable terms."
+  },
+  {
+   "id": "fee-dispute-rejected",
+   "correct": true,
+   "seconds": 6.88,
+   "error": null,
+   "answer": "If your dispute about a payment you actually made is rejected, a handling fee of 80,000 VND applies, as stated in (fee_schedule#4.1). The bank will explain the reason for the rejection and reverse the provisional credit within 5 working days, as mentioned in (dispute_policy#4.5)."
+  },
+  {
+   "id": "dispute-deadline",
+   "correct": true,
+   "seconds": 7.43,
+   "error": null,
+   "answer": "According to the policy, you have 60 days from the payment date to report an unauthorized payment. If you report it within this period, you are not liable for the amount. If you report it after 60 days, the bank will review your case individually, and you may be liable for the amount. \n\nFor more details, refer to (dispute_policy#3.1) and (card_terms#4.2)."
+  },
+  {
+   "id": "dispute-provisional",
+   "correct": true,
+   "seconds": 71.72,
+   "error": null,
+   "answer": "As per the policy, the bank refunds the amount as a provisional credit within 5 working days for an unauthorized payment while it investigates. (dispute_policy#4.2) If the dispute is accepted, the provisional credit becomes final. If it is rejected, the bank explains why and the provisional credit is reversed with 5 working days' notice. (dispute_policy#4.5)"
+  },
+  {
+   "id": "dispute-replacement",
+   "correct": false,
+   "seconds": 1.88,
+   "error": null,
+   "answer": "The policy could not be checked. Please provide more details about the situation or the specific card terms you are referring to."
+  },
+  {
+   "id": "auth-otp-validity",
+   "correct": false,
+   "seconds": 0.54,
+   "error": null,
+   "answer": "The policy could not be checked."
+  },
+  {
+   "id": "auth-otp-wrong",
+   "correct": true,
+   "seconds": 8.14,
+   "error": null,
+   "answer": "After entering 5 wrong OTPs, the card's online payments will be paused for 30 minutes (authentication_rules#4.2). During this time, you cannot make any online payments. If you need to resume payments, wait for the 30-minute period to end."
+  },
+  {
+   "id": "auth-biometric",
+   "correct": true,
+   "seconds": 7.78,
+   "error": null,
+   "answer": "For a single transfer in the app, a biometric check is required for transfers of **10,000,000 VND or more**. This is specified in the authentication rules (authentication_rules#2.1). \n\nIf you have any further questions, feel free to ask!"
+  }
+ ]
+}

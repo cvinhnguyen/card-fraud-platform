@@ -9,7 +9,7 @@ data:
   {{ $name }}: |
 {{ $.Files.Get (printf "prompts/%s.md" $name) | indent 4 }}
   {{- end }}
-{{- range $name, $a := .Values.agents }}
+{{- range $name, $a := include "card-support.agents" . | fromYaml }}
 ---
 # replicas are left to KEDA (scaledobjects.yaml): the controller sets them only when spec.deployment.replicas is set
 apiVersion: kagent.dev/v1alpha2

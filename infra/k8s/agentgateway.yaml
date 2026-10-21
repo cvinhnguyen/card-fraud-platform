@@ -30,6 +30,32 @@ spec:
         formats:
           - {type: Completions, path: /v1/chat/completions}
 ---
+# LLM version B of the A/B test: Qwen3.8-27B on Groq (free tier: 1,000 requests a day, 8,000 tokens a minute). Same
+# route and policy as version A, so callers keep sending model qwen3-8b and the PII masking runs before any prompt
+# leaves the cluster. Key from Vault (secrets.sh, llm-groq).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: qwen3-8-27b-groq
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      openai:
+        model: qwen/qwen3.8-27b
+      host: api.groq.com
+      port: 443
+      path: /openai/v1/chat/completions
+  policies:
+    auth:
+      secretRef: {name: llm-groq}
+    tls:
+      sni: api.groq.com
+---
+# A/B test of two LLM versions: a new version gets a share of the traffic instead of replacing the current one; the
+# "A/B tests" Grafana dashboard compares them by model, and the weights move (or the B ref goes) once it is decided.
+# Header x-llm-variant: a|b pins a request to one version (evaluations, tests). Groq's edge (Cloudflare 1010) refuses
+# some client User-Agents such as Python's, so the gateway sets its own on that backend.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -38,8 +64,17 @@ metadata:
 spec:
   parentRefs: [{name: agentgateway-proxy}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /v1}}]
+    - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: a}]}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: b}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /v1}}]
+      backendRefs:
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b, weight: 80}
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, weight: 20,
+           filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}
       timeouts: {request: 300s}
 ---
 # Security and policy of the LLM route: who may call (API key), how much (tokens and requests), and no PII to or

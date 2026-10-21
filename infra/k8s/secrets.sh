@@ -4,7 +4,8 @@
 # argument) and one ExternalSecret per secret, which the External Secrets Operator turns into the Kubernetes Secret.
 # Needs infra/k8s/vault.sh once. Only namespaces that exist get their secrets; re-run after adding a namespace.
 #   kubeflow             s3-credentials (SeaweedFS keys), feast-credentials (registry + Redis passwords)
-#   agentgateway-system  llm-upstream (llama.cpp key: model server pods -> llama.cpp)
+#   agentgateway-system  llm-upstream (llama.cpp key: model server pods -> llama.cpp), llm-groq (Groq API key: LLM
+#                        version B of the A/B test, only when GROQ_API_KEY is set)
 #   kagent               agentgateway-key (agents' LLM key, ModelConfig), mcp-key-<agent> (RemoteMCPServer headers),
 #                        a2a-key-coordinator (headers of its agent tools)
 #   card-support         card-support-mcp (store passwords + embedder key)
@@ -54,6 +55,7 @@ EOF
 secret kubeflow s3-credentials Opaque access_key="$(val S3_ACCESS_KEY)" secret_key="$(val S3_SECRET_KEY)"
 secret kubeflow feast-credentials Opaque ml_db_password="$(val ML_DB_PASSWORD)" redis_password="$(val REDIS_PASSWORD)"
 secret agentgateway-system llm-upstream Opaque Authorization="$(val LLM_API_KEY)"
+[ -z "$(val GROQ_API_KEY)" ] || secret agentgateway-system llm-groq Opaque Authorization="$(val GROQ_API_KEY)"
 secret kagent agentgateway-key Opaque key="$(val AGW_API_KEY)"
 secret kagent mcp-key-card-data-agent Opaque Authorization="Bearer $(val MCP_KEY_CARD_DATA_AGENT)"
 secret kagent mcp-key-risk-agent Opaque Authorization="Bearer $(val MCP_KEY_RISK_AGENT)"
