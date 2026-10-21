@@ -78,6 +78,27 @@ Common flags: `-ngl 99 --reasoning off --load-mode none -fa on -c 16384 -ctk q8_
 - **Optimization kept: `-cram 1024` (e3).** Same throughput (44.6 / 44.2 tokens/s), same TTFT, same 94-95 % cache share
   as e1, and memory levels off at about 1.5 GB instead of climbing. Applied to the platform's llama.cpp start command.
 
+## Second optimization: speculative decoding with n-grams from the prompt
+
+Agent answers quote the bank documents that `search_policy` put in their context. llama.cpp's n-gram drafter looks
+the last tokens up in the prompt, proposes the tokens that followed them there, and the model checks the whole
+draft in one forward pass: every accepted token is a decode step saved, with no draft model and no extra VRAM.
+[`infra/benchmark/spec_decoding.py`](../infra/benchmark/spec_decoding.py) sends the 20 eval questions with their
+document as context straight to llama.cpp (temperature 0.8 as the agents, seeded, 2 passes) and reads llama.cpp's
+own `timings` (tokens drafted / accepted, decode tokens/s); answers are scored with the eval gate's check.
+
+| llama-server flags (on top of e3) | decode tok/s | drafted | accepted | correct |
+|---|---:|---:|---:|---:|
+| none (e3) | 28.8 | 0 | 0 | 40 / 40 |
+| `--spec-type ngram-mod` (defaults, tuned for code: 24-token lookup, 48-64-token drafts) | 29.7 | 448 | 19 % | 40 / 40 |
+| `--spec-type ngram-simple`, lookup 4, draft 16 | 39.9 | 1,894 | 33 % | 40 / 40 |
+| **`--spec-type ngram-simple --spec-ngram-simple-size-n 3 --spec-ngram-simple-size-m 8`** | **42.1 (+46 %)** | 1,526 | 44 % | 40 / 40 |
+
+End to end through the gateway, the risk agent on the same 20 questions (`run_eval.py --mode agent`): p50 5.25 s
+without, **4.88 s** with (accuracy 0.85 both). The gain is smaller there because an agent turn is mostly prefill
+(tool definitions, search hits) and tool-call JSON, which the drafter does not predict. Kept: the last row is now in
+the platform's llama.cpp start command. Results: `infra/benchmark/results/spec-*.json`.
+
 ## What it means for agent autoscaling
 
 KEDA adds agent replicas (2 to 4 per agent) when the gateway sees more A2A calls, so the platform accepts more

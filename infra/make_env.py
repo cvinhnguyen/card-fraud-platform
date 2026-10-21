@@ -42,6 +42,7 @@ NEW_VALUE = {   # key -> how to make its value; keys added later are appended to
     "EDGE_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),     # Layer 3: NGINX basic auth user `admin` (UIs, Web API)
     "VAULT_ROOT_TOKEN": lambda: secrets.token_urlsafe(24),        # Layer 3: Vault (dev mode) root token, infra/k8s/vault.sh
     "JENKINS_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),  # Layer 3: Jenkins user `admin`
+    "COSIGN_PASSWORD": lambda: secrets.token_urlsafe(24),         # Layer 3: encrypts .secrets/cosign.key (image signing)
 }
 DATAHUB_USERS = INFRA / "conf" / "datahub" / "user.props"   # frontend login file, replaces the default datahub:datahub
 

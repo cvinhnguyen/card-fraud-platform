@@ -1,8 +1,10 @@
 # Install (namespace card-support; secrets from infra/k8s/secrets.sh, image pushed to the compose registry):
 #   helm upgrade --install card-support-mcp services/card_support_mcp/chart -n card-support --atomic --timeout 3m
 # --atomic: if the new pods are not Ready in time, Helm rolls the release back to the last good revision.
+# The compose registry under the name the kind node and the pods both reach (pushed to as localhost:5001 from the
+# host); card-support admits only cosign-signed images from it (infra/k8s/supply-chain.sh).
 image:
-  repository: localhost:5001/card-support-mcp
+  repository: registry:5000/card-support-mcp
   tag: "0.1.3"
 replicas: 2
 resources:

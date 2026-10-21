@@ -11,7 +11,7 @@ pipeline {
   }
   environment {
     SVC = 'services/card_support_mcp'
-    IMAGE = 'localhost:5001/card-support-mcp'   // the compose registry the kind node pulls from
+    IMAGE = 'localhost:5001/card-support-mcp'   // pushed to the compose registry; the cluster pulls it as registry:5000/...
   }
   stages {
     stage('MCP server') {
@@ -47,6 +47,16 @@ pipeline {
         stage('Build + push image') {
           steps {
             sh 'docker build --target runtime -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'
+          }
+        }
+        stage('Sign image (cosign)') {
+          // card-support admits only images signed with this key (Kyverno, infra/k8s/supply-chain): the signature is
+          // pushed next to the image, by digest; the key only lives in the cosign container's environment
+          steps {
+            withCredentials([string(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
+                             string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
+              sh 'REGISTRY=registry:5000 sh infra/k8s/supply-chain.sh sign card-support-mcp $TAG'
+            }
           }
         }
         stage('Deploy (helm --atomic)') {

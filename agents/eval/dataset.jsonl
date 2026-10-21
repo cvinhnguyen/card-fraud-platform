@@ -10,3 +10,11 @@
 {"id": "auth-otp-validity", "doc": "authentication_rules", "question": "How long is an OTP valid?", "expect": [["3 minutes", "three minutes"]]}
 {"id": "auth-otp-wrong", "doc": "authentication_rules", "question": "What happens after I enter 5 wrong OTPs?", "expect": [["30 minutes", "thirty minutes"]]}
 {"id": "auth-biometric", "doc": "authentication_rules", "question": "From which amount does a single transfer in the app need a biometric check?", "expect": [["10,000,000", "10000000", "10.000.000", "10 million"]]}
+{"id": "terms-contactless", "doc": "card_terms", "question": "Up to which amount can I pay contactless without a PIN?", "expect": [["1,000,000", "1000000", "1.000.000", "1 million"]]}
+{"id": "terms-otp-authorized", "doc": "card_terms", "question": "Is a payment confirmed with my own OTP treated as authorized?", "expect": [["treated as authorized", "considered authorized", "deemed authorized", "is authorized", "treated as authorised", "considered as authorized"]]}
+{"id": "terms-stolen-unlock", "doc": "card_terms", "question": "Can a card I reported stolen be unlocked again?", "expect": [["cannot", "can't", "can not", "replaced"]]}
+{"id": "terms-negligence", "doc": "card_terms", "question": "When am I liable for unauthorized payments made before I reported the card?", "expect": [["60 days"], ["negligence"]]}
+{"id": "dispute-confirm", "doc": "dispute_policy", "question": "How quickly does the bank confirm a dispute I opened?", "expect": [["1 working day", "one working day"]]}
+{"id": "dispute-duration", "doc": "dispute_policy", "question": "How long can a cross-border dispute take?", "expect": [["90 days", "ninety days"]]}
+{"id": "auth-daily-transfers", "doc": "authentication_rules", "question": "Above which daily total of transfers does the app ask for a face scan?", "expect": [["20,000,000", "20000000", "20.000.000", "20 million"]]}
+{"id": "fee-cash-credit", "doc": "fee_schedule", "question": "What does a cash withdrawal with a credit card cost at the bank's own ATM?", "expect": [["4%"], ["60,000", "60000", "60.000"]]}

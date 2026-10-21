@@ -15,7 +15,8 @@ pipeline {
   environment {
     RELEASE = 'card-support-data-agents'
     AGENTS = 'card-data-agent risk-agent'
-    EVAL_MIN_ACCURACY = '0.6'   // share of the eval questions (agents/eval/dataset.jsonl) the risk agent must get right
+    // share of the eval questions (agents/eval/dataset.jsonl, 20) the risk agent must get right, averaged over 2 runs
+    EVAL_MIN_ACCURACY = '0.6'
   }
   stages {
     stage('Prompts from Langfuse') {
@@ -97,7 +98,7 @@ pipeline {
               prompt=$(printf '%s' "$PROMPT_FLAGS" | grep -o 'risk-agent=[0-9]*' | cut -d= -f2)
               docker run --rm --network kind -e LANGFUSE_HOST -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e A2A_KEY \
                 -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
-                --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY"
+                --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
             ''')
             if (gate != 0) {
               sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'

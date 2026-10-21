@@ -1,0 +1,15 @@
+# Kyverno (chart 3.9.1, v1.19.1) only as the admission check of image signatures: no background scans, cleanup or
+# policy reports, one replica.
+features:
+  registryClient:
+    allowInsecure: true      # the compose registry serves plain HTTP (registry:5000); signatures are still verified
+    credentialHelpers: []    # no cloud registry to log in to
+admissionController:
+  replicas: 1
+  container:
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 384Mi}
+backgroundController: {enabled: false}
+cleanupController: {enabled: false}
+reportsController: {enabled: false}

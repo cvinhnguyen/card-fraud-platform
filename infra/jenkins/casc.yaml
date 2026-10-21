@@ -25,6 +25,8 @@ credentials:
           - string: {scope: GLOBAL, id: redis-password, secret: "${redis_password}"}
           - string: {scope: GLOBAL, id: s3-access-key, secret: "${s3_access_key}"}
           - string: {scope: GLOBAL, id: s3-secret-key, secret: "${s3_secret_key}"}
+          - string: {scope: GLOBAL, id: cosign-key, secret: "${readFile:/run/secrets/cosign_key}", description: "cosign private key (encrypted), signs the MCP image"}
+          - string: {scope: GLOBAL, id: cosign-password, secret: "${cosign_password}"}
           - usernamePassword: {scope: GLOBAL, id: airflow-admin, username: admin, password: "${airflow_admin_password}"}
 unclassified:
   location:

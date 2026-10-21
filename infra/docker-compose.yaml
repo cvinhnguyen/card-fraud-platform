@@ -736,7 +736,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     secrets: [jenkins_admin_password, kubeconfig, langfuse_public_key, langfuse_secret_key, a2a_key_coordinator,
               a2a_key_support_app, edge_admin_password, ml_db_password, redis_password, s3_access_key, s3_secret_key,
-              airflow_admin_password]
+              airflow_admin_password, cosign_key, cosign_password]
     mem_limit: 1g
 
 volumes:
@@ -773,3 +773,5 @@ secrets:
   s3_access_key: {environment: S3_ACCESS_KEY}
   s3_secret_key: {environment: S3_SECRET_KEY}
   airflow_admin_password: {environment: AIRFLOW_ADMIN_PASSWORD}
+  cosign_key: {file: ./.secrets/cosign.key}         # image signing key (infra/k8s/supply-chain.sh), encrypted
+  cosign_password: {environment: COSIGN_PASSWORD}

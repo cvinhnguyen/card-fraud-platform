@@ -1,0 +1,68 @@
+{
+ "off": {
+  "summary": {
+   "mode": "agent",
+   "variant": "a",
+   "questions": 20,
+   "accuracy": 0.85,
+   "errors": 0,
+   "latency_p50_s": 5.25,
+   "latency_max_s": 66.38
+  },
+  "per_question": [
+   "ok      8.1s fee-foreign-debit      'The foreign transaction fee for a debit card is 2.5% of the amount, as stated in the fee s'",
+   "ok      4.7s fee-foreign-credit     'The foreign transaction fee for a credit card is 3.0% of the amount, as stated in the fee '",
+   "ok      5.8s fee-replace-credit     'Replacing a lost credit card costs 100,000 VND according to the fee schedule (fee_schedule'",
+   "ok     66.0s fee-annual-credit      'The annual fee for a credit card is 300,000 VND, and it is waived when the cardholder spen'",
+   "ok      5.2s fee-interest           'The bank charges an interest rate of 28% per year on an unpaid credit card balance, which '",
+   "ok     66.4s fee-dispute-rejected   'If your dispute about a payment you actually made is rejected, a handling fee of 80,000 VN'",
+   "ok      5.0s dispute-deadline       'You have 60 days from the payment date to report an unauthorized payment. If you report it'",
+   "ok      5.4s dispute-provisional    \"As per the bank's policy, you will receive a provisional credit within 5 working days for \"",
+   "FAIL    1.9s dispute-replacement    \"The bank's fraud dispute process typically does not charge the customer for the new card. \"",
+   "ok      5.3s auth-otp-validity      'An OTP is valid for 3 minutes and is used for one payment only. (authentication_rules#4.2)'",
+   "ok      5.1s auth-otp-wrong         \"After entering 5 wrong OTPs, the card's online payments will be paused for 30 minutes (aut\"",
+   "ok      6.7s auth-biometric         'For a single transfer in the app, a biometric check is required for amounts of 10,000,000 '",
+   "ok     42.2s terms-contactless      'Contactless payments without a PIN are accepted up to 1,000,000 VND per payment. Larger co'",
+   "FAIL    2.7s terms-otp-authorized   'The use of your own OTP (One-Time Password) for payment authorization is considered a vali'",
+   "ok      2.2s terms-stolen-unlock    'The card you reported stolen cannot be unlocked again until it is confirmed safe. Once rep'",
+   "FAIL    6.6s terms-negligence       'You are not liable for unauthorized payments made before you reported the card, provided y'",
+   "ok      5.0s dispute-confirm        'The bank confirms the dispute within 1 working day. Most disputes are closed within 45 day'",
+   "ok      5.0s dispute-duration       \"A cross-border dispute can take up to 90 days. According to the bank's dispute policy (dis\"",
+   "ok      6.3s auth-daily-transfers   'The app asks for a face scan for transfers above 20,000,000 VND in a single day, as stated'",
+   "ok      5.2s fee-cash-credit        \"A cash withdrawal at the bank's own ATM with a credit card costs 4% of the amount, with a \""
+  ]
+ },
+ "on": {
+  "summary": {
+   "mode": "agent",
+   "variant": "a",
+   "questions": 20,
+   "accuracy": 0.85,
+   "errors": 0,
+   "latency_p50_s": 4.88,
+   "latency_max_s": 25.69
+  },
+  "per_question": [
+   "ok      8.6s fee-foreign-debit      'The foreign transaction fee for a debit card is 2.5% of the transaction amount, as stated '",
+   "ok      5.1s fee-foreign-credit     'The foreign transaction fee for a credit card is 3.0% of the amount, as stated in the fee '",
+   "ok      5.1s fee-replace-credit     'Replacing a lost credit card costs 100,000 VND according to the fee schedule (fee_schedule'",
+   "ok      9.0s fee-annual-credit      'The annual fee for a credit card is 300,000 VND, and it is waived when the cardholder spen'",
+   "ok      4.4s fee-interest           'The bank charges 28% per year on an unpaid credit card balance, which is applied when the '",
+   "ok      4.8s fee-dispute-rejected   'If your dispute about a payment you actually made is rejected, a handling fee of 80,000 VN'",
+   "ok     25.7s dispute-deadline       'You have 60 days from the payment date to report an unauthorized payment. If you report it'",
+   "ok      5.8s dispute-provisional    \"As per the bank's policy, if you report an unauthorized payment, the bank will refund the \"",
+   "FAIL    1.9s dispute-replacement    \"The bank's fraud dispute process typically does not charge the customer for the new card. \"",
+   "ok      5.3s auth-otp-validity      'An OTP is valid for 3 minutes and is used for one payment only. (authentication_rules#4.2)'",
+   "ok      4.7s auth-otp-wrong         \"After entering 5 wrong OTPs, the card's online payments will be paused for 30 minutes (aut\"",
+   "ok      4.7s auth-biometric         'For a single transfer in the app, a biometric check is required for transfers of **10,000,'",
+   "ok      4.2s terms-contactless      'Contactless payments without a PIN are accepted up to 1,000,000 VND per payment. Larger co'",
+   "FAIL    2.6s terms-otp-authorized   'The use of your own OTP (One-Time Password) for authorizing a payment is considered a vali'",
+   "ok      2.0s terms-stolen-unlock    'The card you reported stolen cannot be unlocked again if it has been blocked due to fraud.'",
+   "FAIL    5.8s terms-negligence       'You are not liable for unauthorized payments made before you reported the card, provided y'",
+   "ok      4.6s dispute-confirm        'The bank confirms the dispute within 1 working day. Most disputes are closed within 45 day'",
+   "ok      4.4s dispute-duration       'A cross-border dispute can take up to 90 days. According to the dispute policy (dispute_po'",
+   "ok      4.9s auth-daily-transfers   'The app asks for a face scan for transfers exceeding 10,000,000 VND or when the total tran'",
+   "ok      5.0s fee-cash-credit        \"A cash withdrawal at the bank's own ATM with a credit card costs 4% of the amount, with a \""
+  ]
+ }
+}

@@ -19,16 +19,21 @@ flowchart LR
     g -->|"accuracy < 0.6"| rb["helm rollback + build fails"]
 ```
 
-- **Dataset** ([`agents/eval/dataset.jsonl`](../agents/eval/dataset.jsonl)): 12 card-policy questions, each with the
-  facts a correct answer must state (several accepted spellings: "100,000" / "100000" / "100.000"). The gate upserts
-  them into the Langfuse dataset `card-support/risk-agent` (item ids make it idempotent).
+- **Dataset** ([`agents/eval/dataset.jsonl`](../agents/eval/dataset.jsonl)): 20 card-policy questions over the five
+  bank documents, each with the facts a correct answer must state (several accepted spellings: "100,000" / "100000"
+  / "100.000"). The gate upserts them into the Langfuse dataset `card-support/risk-agent` (item ids make it
+  idempotent). The first runs below used the first 12.
 - **Experiment** ([`agents/eval/langfuse_gate.py`](../agents/eval/langfuse_gate.py), Langfuse Python SDK 5.0.3,
   `dataset.run_experiment`): the task asks the deployed risk agent each question over A2A through the gateway, as the
   coordinator does; an item evaluator scores `accuracy` 1/0, a run evaluator the average. Run name =
   `risk-agent prompt v<Langfuse version> (Jenkins #<build>)`.
-- **Gate** ([`agents/Jenkinsfile.data-agents`](../agents/Jenkinsfile.data-agents), stage "Eval gate"): below
-  `EVAL_MIN_ACCURACY = 0.6` the stage runs `helm rollback` to the previous revision and fails the build, so the
-  coordinator pipeline is not triggered. The runner is a small image (`agents/eval/Dockerfile`); Jenkins only holds
+- **Gate** ([`agents/Jenkinsfile.data-agents`](../agents/Jenkinsfile.data-agents), stage "Eval gate"): the average of
+  2 runs (`--repeats 2`) below `EVAL_MIN_ACCURACY = 0.6` makes the stage run `helm rollback` to the previous revision
+  and fail the build, so the coordinator pipeline is not triggered. Why 20 questions and 2 runs: the agent samples at
+  temperature 0.8, so one run of 12 questions moved by one or two answers from run to run (v1: 0.58 to 0.83). With
+  0.6 one question below a true 0.67, an unchanged deploy could have been rolled back by chance (binomial: 28 % of
+  the runs for an agent that is right 70 % of the time); 40 answers instead of 12 bring that to 6 %, and to almost
+  nothing for v2 (about 0.9), without lowering the bar that caught build #20. The runner is a small image (`agents/eval/Dockerfile`); Jenkins only holds
   the Langfuse keys and the A2A key as credentials.
 - The same dataset drives the A/B evaluations (`agents/eval/run_eval.py`, [A/B testing](ab_testing.md)).
 

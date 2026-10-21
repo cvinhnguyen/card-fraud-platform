@@ -1,0 +1,43 @@
+# Supply-chain policy (novel idea, docs/novel_supply_chain.md): a Pod in card-support runs only images of the
+# platform's registry, and only when they carry a cosign signature made with the CI's key (the MCP server pipeline
+# signs every image it pushes). Checked at admission: an unsigned or re-tagged image is refused before it runs, and
+# the admitted image is pinned to the digest that was verified.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: card-support-signed-images
+spec:
+  background: false
+  webhookTimeoutSeconds: 20
+  rules:
+    # every container list, and ephemeral containers added later (kubectl debug), not only spec.containers
+    - name: platform-registry-only
+      match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
+      validate:
+        failureAction: Enforce
+        message: "card-support runs images from the platform registry (registry:5000) only"
+        pattern:
+          spec:
+            =(containers): [{image: "registry:5000/*"}]
+            =(initContainers): [{image: "registry:5000/*"}]
+            =(ephemeralContainers): [{image: "registry:5000/*"}]
+    - name: signed-by-ci   # verifyImages checks containers, initContainers and ephemeralContainers
+      match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
+      verifyImages:
+        - imageReferences: ["registry:5000/*"]
+          failureAction: Enforce
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keys:
+                    # infra/k8s/supply-chain/cosign.pub (the private half: infra/.secrets/cosign.key, Jenkins)
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0ac2qu9MwOo7CBG775RlsJspQeyl
+                      +pqZbS6fX832bAQzoX4WMkDMEHopOIdyIYcwJ3eqnq7guJOOAb6s+bseBQ==
+                      -----END PUBLIC KEY-----
+                    # private registry: signatures are not uploaded to the public transparency log
+                    rekor: {ignoreTlog: true}
+                    ctlog: {ignoreSCT: true}

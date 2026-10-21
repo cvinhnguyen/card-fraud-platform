@@ -1,0 +1,375 @@
+{
+ "summary": {
+  "config": "ngram-simple-3-8",
+  "requests": 40,
+  "output_tokens": 1476,
+  "decode_tok_s": 42.1,
+  "median_tok_s": 41.2,
+  "drafted": 1526,
+  "accepted": 664,
+  "acceptance": 0.435,
+  "correct": 40
+ },
+ "rows": [
+  {
+   "id": "fee-foreign-debit",
+   "pass": 0,
+   "tokens": 19,
+   "tok_s": 43.361373688318444,
+   "drafted": 16,
+   "accepted": 9,
+   "correct": true
+  },
+  {
+   "id": "fee-foreign-credit",
+   "pass": 0,
+   "tokens": 33,
+   "tok_s": 34.81352461914548,
+   "drafted": 40,
+   "accepted": 11,
+   "correct": true
+  },
+  {
+   "id": "fee-replace-credit",
+   "pass": 0,
+   "tokens": 37,
+   "tok_s": 38.12028857058448,
+   "drafted": 24,
+   "accepted": 12,
+   "correct": true
+  },
+  {
+   "id": "fee-annual-credit",
+   "pass": 0,
+   "tokens": 45,
+   "tok_s": 37.99917092717977,
+   "drafted": 64,
+   "accepted": 19,
+   "correct": true
+  },
+  {
+   "id": "fee-interest",
+   "pass": 0,
+   "tokens": 34,
+   "tok_s": 42.6286642889345,
+   "drafted": 32,
+   "accepted": 15,
+   "correct": true
+  },
+  {
+   "id": "fee-dispute-rejected",
+   "pass": 0,
+   "tokens": 38,
+   "tok_s": 47.662968707328766,
+   "drafted": 40,
+   "accepted": 20,
+   "correct": true
+  },
+  {
+   "id": "dispute-deadline",
+   "pass": 0,
+   "tokens": 44,
+   "tok_s": 29.234756454082394,
+   "drafted": 40,
+   "accepted": 6,
+   "correct": true
+  },
+  {
+   "id": "dispute-provisional",
+   "pass": 0,
+   "tokens": 40,
+   "tok_s": 54.93019639657912,
+   "drafted": 48,
+   "accepted": 25,
+   "correct": true
+  },
+  {
+   "id": "dispute-replacement",
+   "pass": 0,
+   "tokens": 56,
+   "tok_s": 36.426205144439834,
+   "drafted": 56,
+   "accepted": 19,
+   "correct": true
+  },
+  {
+   "id": "auth-otp-validity",
+   "pass": 0,
+   "tokens": 15,
+   "tok_s": 56.402715387869385,
+   "drafted": 16,
+   "accepted": 9,
+   "correct": true
+  },
+  {
+   "id": "auth-otp-wrong",
+   "pass": 0,
+   "tokens": 37,
+   "tok_s": 36.78059455831104,
+   "drafted": 24,
+   "accepted": 11,
+   "correct": true
+  },
+  {
+   "id": "auth-biometric",
+   "pass": 0,
+   "tokens": 32,
+   "tok_s": 37.08005344312219,
+   "drafted": 43,
+   "accepted": 13,
+   "correct": true
+  },
+  {
+   "id": "terms-contactless",
+   "pass": 0,
+   "tokens": 40,
+   "tok_s": 56.742128848280274,
+   "drafted": 48,
+   "accepted": 26,
+   "correct": true
+  },
+  {
+   "id": "terms-otp-authorized",
+   "pass": 0,
+   "tokens": 36,
+   "tok_s": 63.551551202576924,
+   "drafted": 40,
+   "accepted": 25,
+   "correct": true
+  },
+  {
+   "id": "terms-stolen-unlock",
+   "pass": 0,
+   "tokens": 28,
+   "tok_s": 36.26088498047284,
+   "drafted": 32,
+   "accepted": 10,
+   "correct": true
+  },
+  {
+   "id": "terms-negligence",
+   "pass": 0,
+   "tokens": 56,
+   "tok_s": 38.60987598507833,
+   "drafted": 48,
+   "accepted": 21,
+   "correct": true
+  },
+  {
+   "id": "dispute-confirm",
+   "pass": 0,
+   "tokens": 48,
+   "tok_s": 49.283295060136105,
+   "drafted": 56,
+   "accepted": 27,
+   "correct": true
+  },
+  {
+   "id": "dispute-duration",
+   "pass": 0,
+   "tokens": 36,
+   "tok_s": 36.62122147468427,
+   "drafted": 32,
+   "accepted": 12,
+   "correct": true
+  },
+  {
+   "id": "auth-daily-transfers",
+   "pass": 0,
+   "tokens": 35,
+   "tok_s": 59.85873338920148,
+   "drafted": 32,
+   "accepted": 22,
+   "correct": true
+  },
+  {
+   "id": "fee-cash-credit",
+   "pass": 0,
+   "tokens": 36,
+   "tok_s": 39.66688880124396,
+   "drafted": 40,
+   "accepted": 15,
+   "correct": true
+  },
+  {
+   "id": "fee-foreign-debit",
+   "pass": 1,
+   "tokens": 19,
+   "tok_s": 46.18973202257138,
+   "drafted": 16,
+   "accepted": 9,
+   "correct": true
+  },
+  {
+   "id": "fee-foreign-credit",
+   "pass": 1,
+   "tokens": 19,
+   "tok_s": 39.18853604692175,
+   "drafted": 24,
+   "accepted": 8,
+   "correct": true
+  },
+  {
+   "id": "fee-replace-credit",
+   "pass": 1,
+   "tokens": 42,
+   "tok_s": 37.612850017384474,
+   "drafted": 32,
+   "accepted": 14,
+   "correct": true
+  },
+  {
+   "id": "fee-annual-credit",
+   "pass": 1,
+   "tokens": 45,
+   "tok_s": 37.560705355900495,
+   "drafted": 64,
+   "accepted": 19,
+   "correct": true
+  },
+  {
+   "id": "fee-interest",
+   "pass": 1,
+   "tokens": 34,
+   "tok_s": 42.49631054758428,
+   "drafted": 32,
+   "accepted": 15,
+   "correct": true
+  },
+  {
+   "id": "fee-dispute-rejected",
+   "pass": 1,
+   "tokens": 38,
+   "tok_s": 47.45092356169197,
+   "drafted": 40,
+   "accepted": 20,
+   "correct": true
+  },
+  {
+   "id": "dispute-deadline",
+   "pass": 1,
+   "tokens": 44,
+   "tok_s": 29.121880487865994,
+   "drafted": 40,
+   "accepted": 6,
+   "correct": true
+  },
+  {
+   "id": "dispute-provisional",
+   "pass": 1,
+   "tokens": 40,
+   "tok_s": 55.143549972074744,
+   "drafted": 48,
+   "accepted": 25,
+   "correct": true
+  },
+  {
+   "id": "dispute-replacement",
+   "pass": 1,
+   "tokens": 54,
+   "tok_s": 41.69636549303198,
+   "drafted": 56,
+   "accepted": 24,
+   "correct": true
+  },
+  {
+   "id": "auth-otp-validity",
+   "pass": 1,
+   "tokens": 15,
+   "tok_s": 56.2531391260673,
+   "drafted": 16,
+   "accepted": 9,
+   "correct": true
+  },
+  {
+   "id": "auth-otp-wrong",
+   "pass": 1,
+   "tokens": 37,
+   "tok_s": 36.72933439304264,
+   "drafted": 24,
+   "accepted": 11,
+   "correct": true
+  },
+  {
+   "id": "auth-biometric",
+   "pass": 1,
+   "tokens": 32,
+   "tok_s": 36.990324047171015,
+   "drafted": 43,
+   "accepted": 13,
+   "correct": true
+  },
+  {
+   "id": "terms-contactless",
+   "pass": 1,
+   "tokens": 39,
+   "tok_s": 53.02656072518008,
+   "drafted": 40,
+   "accepted": 23,
+   "correct": true
+  },
+  {
+   "id": "terms-otp-authorized",
+   "pass": 1,
+   "tokens": 36,
+   "tok_s": 64.60031783356374,
+   "drafted": 40,
+   "accepted": 25,
+   "correct": true
+  },
+  {
+   "id": "terms-stolen-unlock",
+   "pass": 1,
+   "tokens": 33,
+   "tok_s": 40.6536600363088,
+   "drafted": 16,
+   "accepted": 12,
+   "correct": true
+  },
+  {
+   "id": "terms-negligence",
+   "pass": 1,
+   "tokens": 53,
+   "tok_s": 40.28899606794894,
+   "drafted": 64,
+   "accepted": 24,
+   "correct": true
+  },
+  {
+   "id": "dispute-confirm",
+   "pass": 1,
+   "tokens": 47,
+   "tok_s": 48.071396474067576,
+   "drafted": 56,
+   "accepted": 26,
+   "correct": true
+  },
+  {
+   "id": "dispute-duration",
+   "pass": 1,
+   "tokens": 36,
+   "tok_s": 39.87390731253283,
+   "drafted": 32,
+   "accepted": 14,
+   "correct": true
+  },
+  {
+   "id": "auth-daily-transfers",
+   "pass": 1,
+   "tokens": 35,
+   "tok_s": 59.171185720948685,
+   "drafted": 32,
+   "accepted": 22,
+   "correct": true
+  },
+  {
+   "id": "fee-cash-credit",
+   "pass": 1,
+   "tokens": 33,
+   "tok_s": 47.774670765335294,
+   "drafted": 40,
+   "accepted": 18,
+   "correct": true
+  }
+ ]
+}
