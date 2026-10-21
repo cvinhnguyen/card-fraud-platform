@@ -49,6 +49,7 @@ class KnowledgeBase:
         self.store = FeatureStore(repo_path=repo)
 
     def _chunks(self, ids: list[str]) -> dict[str, dict | None]:
+        """Blocking Feast read of chunks by id (run in a thread by chunks)."""
         resp = self.store.get_online_features(features=[f"policy_chunks:{f}" for f in CHUNK_FIELDS],
                                               entity_rows=[{"chunk_id": i} for i in ids]).to_dict()
         return {i: None if resp["text"][n] is None else {f: resp[f][n] for f in CHUNK_FIELDS}
@@ -59,6 +60,7 @@ class KnowledgeBase:
         return await asyncio.to_thread(self._chunks, ids) if ids else {}
 
     def _candidates(self, vector: list[float], n: int) -> list[str]:
+        """Blocking Feast vector search for about n candidate chunk ids (run in a thread by candidates)."""
         # a stored feature must be asked for (the entity key chunk_id alone matches no row); section is the smallest
         df = self.store.retrieve_online_documents_v2(features=["policy_chunks:section"], query=vector, top_k=n,
                                                      distance_metric="cosine").to_df()

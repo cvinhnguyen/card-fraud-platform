@@ -1,3 +1,4 @@
+{{/* The MCP server: replicas, rolling update without downtime, probes on /healthz and /readyz, settings from values. */}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

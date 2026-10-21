@@ -1,3 +1,4 @@
+{{/* ClusterIP Service of the MCP server pods (port 8000): reached by agentgateway, Prometheus and NGINX only. */}}
 apiVersion: v1
 kind: Service
 metadata:

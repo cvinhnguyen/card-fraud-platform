@@ -15,14 +15,21 @@ infra/ansible/inventory/hosts.ini
 data/
 *.parquet
 
-# python
+# python, tests (pytest --cov, mutmut, hypothesis, locust --html)
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+mutants/
+mutmut.txt
+.hypothesis/
+.ipynb_checkpoints/
+report.html
 
 # dbt
 pipelines/dbt/target/
-pipelines/dbt/logs/
 pipelines/dbt/dbt_packages/
 pipelines/dbt/.user.yml
 logs/

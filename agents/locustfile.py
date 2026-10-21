@@ -28,6 +28,7 @@ class Customer(HttpUser):
 
     @task
     def ask(self):
+        """Send one support question to the coordinator over A2A; a reply not 'completed' counts as a failure."""
         text = random.choice(QUESTIONS).format(card=random.choice(CARDS),
                                                amount=f"{random.choice([450_000, 4_500_000, 45_000_000]):,}")
         body = {"jsonrpc": "2.0", "id": 1, "method": "message/send",

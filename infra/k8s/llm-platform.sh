@@ -59,7 +59,5 @@ kubectl -n kagent get modelconfig
 helm upgrade -i keda keda --repo https://kedacore.github.io/charts -n keda --create-namespace --version "$KEDA" --wait
 # agentregistry: catalog only (entries in agents/registry/); RBAC limited to the agents' namespace
 helm upgrade -i agentregistry oci://ghcr.io/agentregistry-dev/agentregistry/charts/agentregistry -n agentregistry \
-  --version "$AREG" --set database.postgres.type=external \
-  --set database.postgres.external.secretRef.name=agentregistry-db --set 'rbac.watchedNamespaces={kagent}' \
-  --set resources.requests.cpu=50m --set resources.requests.memory=128Mi --set resources.limits.memory=512Mi --wait
+  --version "$AREG" -f ../../agents/registry/values.yaml --wait
 echo "llm platform ready"

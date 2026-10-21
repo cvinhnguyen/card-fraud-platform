@@ -18,6 +18,7 @@ MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": 
 
 
 def card():
+    """A card id from the sample list, or a random one when none is given."""
     return random.choice(CARDS) if CARDS else f"card_{random.randrange(130_000):06d}"
 
 
@@ -28,26 +29,31 @@ class SupportAgent(HttpUser):
 
     @task(4)
     def card_data(self):
+        """GET a card's data; an unknown random card (404) counts as a valid answer."""
         with self.client.get(f"/v1/cards/{card()}", name="/v1/cards/{id}", catch_response=True) as r:
             if r.status_code == 404:   # random ids: an unknown card is a valid answer
                 r.success()
 
     @task(3)
     def search(self):
+        """Policy search for one of the sample questions."""
         self.client.post("/v1/search", json={"question": random.choice(QUESTIONS), "k": 4})
 
     @task(1)
     def chunk(self):
+        """GET one known policy chunk by id."""
         self.client.get(f"/v1/chunks/{random.choice(CHUNKS)}", name="/v1/chunks/{id}")
 
     @task(2)
     def score(self):
+        """Score a random payment on a card."""
         self.client.post("/v1/score", json={"card_id": card(), "customer_id": "cus_load",
                                             "amount_vnd": random.choice([250_000, 1_200_000, 6_000_000]),
                                             "channel": random.choice(["ecom", "pos", "atm"])})
 
     @task(2)
     def mcp_card_data(self):
+        """Call the MCP tool get_card_data over JSON-RPC; a tool error counts as a failure."""
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "get_card_data", "arguments": {"card_id": card()}}}
         with self.client.post("/mcp", json=body, headers=MCP_HEADERS, name="mcp get_card_data",

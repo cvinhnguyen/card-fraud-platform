@@ -24,15 +24,18 @@ KNOWLEDGE = HERE.parent.parent / "generator" / "knowledge"
 
 
 def norm(text: str) -> str:
+    """Lower-case the text and collapse whitespace, so a fact matches however it is spaced."""
     return re.sub(r"\s+", " ", text.lower())
 
 
 def correct(answer: str, expect: list[list[str]]) -> bool:
+    """True when the answer states every expected fact (each fact: a group of accepted spellings)."""
     a = norm(answer)
     return all(any(norm(alt) in a for alt in group) for group in expect)
 
 
 def post(url: str, body: dict, headers: dict, timeout: float) -> dict:
+    """POST a JSON body and return the JSON answer."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": "card-support-eval", **headers})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -40,6 +43,7 @@ def post(url: str, body: dict, headers: dict, timeout: float) -> dict:
 
 
 def ask_agent(gw: str, agent: str, question: str, variant: str | None) -> str:
+    """Ask an agent one question over A2A through the gateway (optionally pinned to an A/B side); return its text."""
     headers = {"Authorization": f"Bearer {os.environ['A2A_KEY']}", "x-kagent-host": f"{agent}.kagent"}
     if variant:
         headers["x-agent-variant"] = variant
@@ -53,6 +57,7 @@ def ask_agent(gw: str, agent: str, question: str, variant: str | None) -> str:
 
 
 def ask_llm(gw: str, doc: str, question: str, variant: str | None) -> str:
+    """Ask the LLM route one question with the question's bank document as context; return the answer text."""
     headers = {"Authorization": f"Bearer {os.environ['AGW_KEY']}"}
     if variant:
         headers["x-llm-variant"] = variant
@@ -66,6 +71,7 @@ def ask_llm(gw: str, doc: str, question: str, variant: str | None) -> str:
 
 
 def main() -> int:
+    """Answer every dataset question (agent or LLM mode), print results and a summary, return 1 below --min-accuracy."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["agent", "llm"], default="agent")
     ap.add_argument("--agent", default="risk-agent")

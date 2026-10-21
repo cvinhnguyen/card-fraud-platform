@@ -13,12 +13,14 @@ INK, MUTED, GRID, SURFACE = "#0b0b0b", "#898781", "#e1e0d9", "#fcfcfb"
 
 
 def stages(run):
+    """Yield (requests in flight, successes summary) for each load stage of a run."""
     for f in sorted((ROOT / "results" / run).glob("stage_*_lifecycle_metrics.json")):
         s = json.loads(f.read_text())
         yield s["load_summary"]["concurrency"], s["successes"]
 
 
 def memory(run):
+    """Minutes since the first sample and llama-server's working set in GiB, from the run's memory.csv."""
     rows = [r for r in csv.DictReader((ROOT / "results" / run / "memory.csv").open()) if int(r["llama_ws_mb"] or 0)]
     t0 = sum(int(x) * 60 ** (2 - i) for i, x in enumerate(rows[0]["time"].split(":")))
     return ([(sum(int(x) * 60 ** (2 - i) for i, x in enumerate(r["time"].split(":"))) - t0) / 60 for r in rows],
@@ -26,6 +28,7 @@ def memory(run):
 
 
 def style(ax, title, ylabel):
+    """Apply the chart style (surface, title, y label, light grid, no top/right spines) to one axes."""
     ax.set_facecolor(SURFACE)
     ax.set_title(title, loc="left", color=INK, fontsize=11)
     ax.set_ylabel(ylabel, color=MUTED)

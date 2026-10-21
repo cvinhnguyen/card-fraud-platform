@@ -1,3 +1,4 @@
+{{/* One NGINX Ingress per route in values.yaml: host <host>.<domain>, basic auth, per-IP rate limit, HTTPS. */}}
 {{- range $r := .Values.routes }}
 ---
 apiVersion: networking.k8s.io/v1

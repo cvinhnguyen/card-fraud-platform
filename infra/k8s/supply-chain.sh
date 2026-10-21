@@ -16,7 +16,9 @@ if [ "$1" = sign ]; then
   digest=$(curl -fsSI -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
     "http://${REGISTRY:-localhost:5001}/v2/$repo/manifests/$tag" | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: //p')
   [ -n "$digest" ] || { echo "no digest for $repo:$tag" >&2; exit 1; }
-  COSIGN_KEY="${COSIGN_KEY:-$(cat ../.secrets/cosign.key)}" COSIGN_PASSWORD="${COSIGN_PASSWORD:-$(grep '^COSIGN_PASSWORD=' ../.env | cut -d= -f2-)}" \
+  key=${COSIGN_KEY:-$(cat ../.secrets/cosign.key 2>/dev/null)}   # CI: the Jenkins credential; by hand: the local file
+  [ -n "$key" ] || { echo "no signing key: set COSIGN_KEY or create infra/.secrets/cosign.key" >&2; exit 1; }
+  COSIGN_KEY="$key" COSIGN_PASSWORD="${COSIGN_PASSWORD:-$(grep '^COSIGN_PASSWORD=' ../.env | cut -d= -f2-)}" \
     docker run --rm --network fraud_default -e COSIGN_KEY -e COSIGN_PASSWORD "$COSIGN" sign --key env://COSIGN_KEY \
     --allow-http-registry --tlog-upload=false -y "registry:5000/$repo@$digest"
   echo "signed registry:5000/$repo@$digest"

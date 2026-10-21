@@ -8,6 +8,7 @@ RESULTS = Path(__file__).parent / "results"
 
 
 def row(run: str, stage: dict) -> str:
+    """One markdown table row for a load stage: throughput, TTFT, TPOT, latency, prompt cache share, failures."""
     s, lat = stage["successes"], stage["successes"]["latency"]
     prompt = s["prompt_tokens"]
     cached = prompt["cached"] / prompt["total"] if prompt["total"] else 0
@@ -19,6 +20,7 @@ def row(run: str, stage: dict) -> str:
 
 
 def main(runs: list[str]) -> None:
+    """Print the results table for the given runs (all runs under results/ when none are named)."""
     print("| run | in flight | req/s | output tok/s | TTFT p50 (s) | TTFT p90 (s) | TPOT p50 (ms) | latency p50 (s) "
           "| latency p90 (s) | prompt cached | failures |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")

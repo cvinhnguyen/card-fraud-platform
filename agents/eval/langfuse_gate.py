@@ -21,6 +21,7 @@ HERE = Path(__file__).parent
 
 
 def main() -> int:
+    """Upsert the dataset in Langfuse, run it --repeats times on the deployed agent, return 1 below the bar."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--agent", default="risk-agent")
     ap.add_argument("--variant", choices=["a", "b"], default="a", help="side of the agent's A/B test to evaluate")

@@ -23,4 +23,5 @@ rm -rf "results/$name" && mkdir -p results
 docker cp "bench-$name:/bench/reports" "results/$name" >/dev/null
 docker rm "bench-$name" >/dev/null
 find "results/$name" -name 'config.yaml' -delete   # holds the API key
+find "results/$name" \( -name 'inference-perf.partial.*' -o -name 'validation.json' \) -delete   # nothing reads them
 echo "reports: infra/benchmark/results/$name"

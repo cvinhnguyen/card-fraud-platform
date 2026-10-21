@@ -21,6 +21,7 @@ REPEATS = 2   # two passes: the second one also sees llama.cpp's prompt cache wa
 
 
 def ask(url: str, key: str, doc: str, question: str, seed: int) -> dict:
+    """One chat completion straight to llama.cpp, the question's document as context; llama.cpp's JSON with timings."""
     body = {"model": "qwen3-8b", "max_tokens": 200, "temperature": 0.8, "seed": seed,
             "messages": [{"role": "system", "content": "Answer the customer's question from this bank document only, "
                                                        "quoting its wording, in two or three sentences.\n\n" + doc},
@@ -32,6 +33,7 @@ def ask(url: str, key: str, doc: str, question: str, seed: int) -> dict:
 
 
 def main(name: str) -> None:
+    """Ask every question REPEATS times, print decode speed and draft acceptance per request, then a summary."""
     url, key = os.environ.get("LLM_URL", "http://127.0.0.1:8085"), os.environ["LLM_API_KEY"]
     items = [json.loads(l) for l in (ROOT / "agents/eval/dataset.jsonl").read_text(encoding="utf-8").splitlines() if l]
     docs = {d: (ROOT / f"generator/knowledge/{d}.md").read_text(encoding="utf-8") for d in {i["doc"] for i in items}}

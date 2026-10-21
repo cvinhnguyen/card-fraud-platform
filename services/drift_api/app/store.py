@@ -18,6 +18,7 @@ class HistogramStore:
         self.redis, self.edges, self.ttl_s, self.clock = redis, edges, ttl_s, clock
 
     def _minute(self, offset: int = 0) -> int:
+        """The current minute bucket (epoch minutes), minus offset minutes."""
         return int(self.clock()) // 60 - offset
 
     async def add(self, events) -> int:

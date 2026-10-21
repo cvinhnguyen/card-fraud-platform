@@ -19,6 +19,7 @@ class Switch(HttpUser):
 
     @task
     def score(self):
+        """Score one random payment (60% online), as the authorization switch does."""
         ecom = random.random() < 0.6
         self.client.post("/v1/score", name="/v1/score", json={
             "auth_id": f"auth_{random.getrandbits(48):012x}",
