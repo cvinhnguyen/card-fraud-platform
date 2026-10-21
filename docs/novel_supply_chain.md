@@ -58,6 +58,12 @@ flowchart LR
 
 ## Limits
 
+- **On this machine Kyverno is installed for the demo, not kept running.** With it, kube-apiserver grew from about
+  1.2 to 2.0 GB (Kyverno watches many resource kinds) and the 8 GB Docker VM ran out of memory with the rest of the
+  platform up. `sh infra/k8s/supply-chain.sh` installs it and the policy in about two minutes; `helm uninstall
+  kyverno -n kyverno` plus deleting the `*kyverno*` webhook configurations removes it (they fail closed, so a
+  leftover one would block every Pod). The CI keeps signing every image either way, and the cluster keeps pulling
+  `registry:5000/...`, so turning enforcement on needs no other change. On a real cluster it stays on.
 - `kyverno.io/v1 ClusterPolicy` is deprecated in Kyverno 1.19 in favour of `ImageValidatingPolicy` (CEL); it still
   enforces, and the migration is a rewrite of this one file.
 - The policy covers `card-support` (the MCP server, our own image). The agents run kagent's published images, which
