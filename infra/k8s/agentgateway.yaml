@@ -51,6 +51,10 @@ spec:
       secretRef: {name: llm-groq}
     tls:
       sni: api.groq.com
+    ai:
+      # a request without max_tokens is charged against the free tier's 1,000 output tokens a minute at the model's
+      # full output size, so Groq refuses it (429); agents send none
+      defaults: [{field: max_tokens, value: 512}]
 ---
 # A/B test of two LLM versions: a new version gets a share of the traffic instead of replacing the current one; the
 # "A/B tests" Grafana dashboard compares them by model, and the weights move (or the B ref goes) once it is decided.
@@ -70,10 +74,12 @@ spec:
     - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: b}]}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}]
       timeouts: {request: 300s}
+    # Canary stopped on 2026-10-21 (docs/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
+    # free tier's output tokens a minute). B stays reachable with the header; raise its weight again on a paid tier.
     - matches: [{path: {type: PathPrefix, value: /v1}}]
       backendRefs:
-        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b, weight: 80}
-        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, weight: 20,
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b, weight: 100}
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, weight: 0,
            filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}
       timeouts: {request: 300s}
 ---

@@ -189,3 +189,6 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - Layer 2: [Feature store](docs/feature_store.md), [ML training](docs/ml_training.md), [Serving](docs/serving.md), [Drift](docs/drift.md), [Testing](docs/testing.md).
 - Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS on Azure) and Ansible roles that deploy the model server to the VM.
 - Layer 3: [LLM benchmark](docs/llm_benchmark.md): inference-perf against the llama.cpp model server, three configurations, the prompt-cache cap kept.
+- Layer 3: [A/B testing](docs/ab_testing.md): an agent's model config and two LLM versions split at the gateway, a Grafana dashboard per side, evaluations, the decisions.
+- Layer 3 novel idea 1: [Eval gate in the agents' CD](docs/novel_eval_gate.md): every deploy answers an eval dataset as a Langfuse experiment; below 0.6 accuracy the release rolls back.
+- Layer 3 novel idea 2: [System-1 triage with Laya](docs/novel_laya_triage.md): a non-generative decision model routes requests on CPU, compared with the LLM's routing.

@@ -26,7 +26,7 @@
    },
    "options": {
     "mode": "markdown",
-    "content": "**Agent model config** (rubric C52): the gateway sends 50 % of the coordinator's calls to `risk-agent` to its copy `risk-agent-b`, which only differs by its ModelConfig (`agents/chart/values-data-agents.yaml`, `abTests`). **LLM version** (C53): route `llm` sends 80 % of all model calls to Qwen3-8B on llama.cpp (llm-d) and 20 % to Qwen3.8-27B on Groq (`infra/k8s/agentgateway.yaml`). Quality of each side: `agents/eval/run_eval.py` (pinned with headers `x-agent-variant` / `x-llm-variant`). See docs/ab_testing.md."
+    "content": "**Agent model config** (rubric C52): the gateway sends 50 % of the coordinator's calls to `risk-agent` to its copy `risk-agent-b`, which only differs by its ModelConfig (`agents/chart/values-data-agents.yaml`, `abTests`). **LLM version** (C53): route `llm` sent 80 % of all model calls to Qwen3-8B on llama.cpp (llm-d) and 20 % to Qwen3.8-27B on Groq (`infra/k8s/agentgateway.yaml`); the canary was stopped (100 / 0) after B's 429s on agent calls. Quality of each side: `agents/eval/run_eval.py` (pinned with headers `x-agent-variant` / `x-llm-variant`). See docs/ab_testing.md."
    }
   },
   {

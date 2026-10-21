@@ -1,0 +1,214 @@
+{
+ "requests": 22,
+ "laya_load_s": 7.1,
+ "laya": {
+  "accuracy": 0.773,
+  "latency_p50_ms": 623.0,
+  "latency_max_ms": 793.3
+ },
+ "llm": {
+  "accuracy": 0.909,
+  "latency_p50_ms": 209.8,
+  "latency_max_ms": 7510.1
+ },
+ "rows": [
+  {
+   "q": "How many payments did card card_00006087 make in the last 30 days?",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.803,
+   "laya_ms": 681.3,
+   "llm": "card-data-agent",
+   "llm_ms": 292.4
+  },
+  {
+   "q": "How much did card card_00004521 spend in the last 90 days?",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.808,
+   "laya_ms": 632.1,
+   "llm": "card-data-agent",
+   "llm_ms": 232.3
+  },
+  {
+   "q": "Show me the recent activity of card card_00001234.",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.82,
+   "laya_ms": 566.5,
+   "llm": "card-data-agent",
+   "llm_ms": 227.0
+  },
+  {
+   "q": "When was card card_00006087 issued?",
+   "expected": "card-data-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.88,
+   "laya_ms": 538.8,
+   "llm": "card-data-agent",
+   "llm_ms": 201.0
+  },
+  {
+   "q": "Is card card_00002222 a credit card or a debit card?",
+   "expected": "card-data-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.879,
+   "laya_ms": 576.7,
+   "llm": "card-data-agent",
+   "llm_ms": 212.8
+  },
+  {
+   "q": "How much has card card_00006087 spent abroad over the last 180 days?",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.749,
+   "laya_ms": 595.5,
+   "llm": "card-data-agent",
+   "llm_ms": 225.0
+  },
+  {
+   "q": "What was the most recent payment on card card_00003333?",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.76,
+   "laya_ms": 608.2,
+   "llm": "card-data-agent",
+   "llm_ms": 211.7
+  },
+  {
+   "q": "What is the average payment amount of card card_00006087 this quarter?",
+   "expected": "card-data-agent",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.672,
+   "laya_ms": 608.5,
+   "llm": "card-data-agent",
+   "llm_ms": 230.1
+  },
+  {
+   "q": "What is the foreign transaction fee on a debit card?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.875,
+   "laya_ms": 605.5,
+   "llm": "risk-agent",
+   "llm_ms": 164.5
+  },
+  {
+   "q": "How much does it cost to replace a lost credit card?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.879,
+   "laya_ms": 720.2,
+   "llm": "risk-agent",
+   "llm_ms": 176.5
+  },
+  {
+   "q": "How long do I have to report a payment I did not make?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.807,
+   "laya_ms": 671.0,
+   "llm": "risk-agent",
+   "llm_ms": 170.3
+  },
+  {
+   "q": "How long is an OTP valid?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.935,
+   "laya_ms": 575.6,
+   "llm": "risk-agent",
+   "llm_ms": 159.6
+  },
+  {
+   "q": "Am I liable if someone used my card abroad?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.805,
+   "laya_ms": 555.6,
+   "llm": "risk-agent",
+   "llm_ms": 170.4
+  },
+  {
+   "q": "What interest does the bank charge on an unpaid credit card balance?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.884,
+   "laya_ms": 638.0,
+   "llm": "risk-agent",
+   "llm_ms": 172.5
+  },
+  {
+   "q": "From which amount does a transfer in the app need a face scan?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.796,
+   "laya_ms": 672.6,
+   "llm": "risk-agent",
+   "llm_ms": 179.9
+  },
+  {
+   "q": "Will a 45,000,000 VND online payment on card card_00006087 go through?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.904,
+   "laya_ms": 604.4,
+   "llm": "risk-agent",
+   "llm_ms": 206.3
+  },
+  {
+   "q": "Would the bank decline a 120,000,000 VND cash withdrawal at an ATM with card card_00001111?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.895,
+   "laya_ms": 630.4,
+   "llm": "risk-agent",
+   "llm_ms": 220.2
+  },
+  {
+   "q": "Can card card_00002222 pay 3,000,000 VND at a shop terminal right now?",
+   "expected": "risk-agent",
+   "laya": "risk-agent",
+   "laya_confidence": 0.929,
+   "laya_ms": 615.5,
+   "llm": "risk-agent",
+   "llm_ms": 7510.1
+  },
+  {
+   "q": "How many payments did card card_00006087 make last month, and what is the foreign transaction fee?",
+   "expected": "coordinator",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.793,
+   "laya_ms": 652.5,
+   "llm": "coordinator",
+   "llm_ms": 207.8
+  },
+  {
+   "q": "My online payment of 45 million was declined on card card_00006087. Why, and what were my last payments?",
+   "expected": "coordinator",
+   "laya": "coordinator",
+   "laya_confidence": 0.704,
+   "laya_ms": 678.7,
+   "llm": "coordinator",
+   "llm_ms": 204.6
+  },
+  {
+   "q": "Card card_00004521 shows a payment I don't recognise in its recent activity; how do I dispute it and will I get the money back?",
+   "expected": "coordinator",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.66,
+   "laya_ms": 793.3,
+   "llm": "risk-agent",
+   "llm_ms": 218.7
+  },
+  {
+   "q": "Compare what card card_00001234 spent abroad this year with the fees the bank charges for it.",
+   "expected": "coordinator",
+   "laya": "card-data-agent",
+   "laya_confidence": 0.56,
+   "laya_ms": 728.5,
+   "llm": "risk-agent",
+   "llm_ms": 211.8
+  }
+ ]
+}

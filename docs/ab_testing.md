@@ -10,8 +10,8 @@ flowchart LR
     gw -->|50 %| ra["risk-agent<br/>global model config"]
     gw -->|50 %| rb["risk-agent-b<br/>temperature 0.2, max 512 tokens"]
     ra & rb -->|"/v1 (every agent)"| llm["route llm"]
-    llm -->|80 %| a["Qwen3-8B<br/>llama.cpp via llm-d"]
-    llm -->|20 %| b["Qwen3.8-27B<br/>Groq"]
+    llm -->|"80 % (100 % since the canary stopped)"| a["Qwen3-8B<br/>llama.cpp via llm-d"]
+    llm -->|"20 % (0 %, header x-llm-variant: b)"| b["Qwen3.8-27B<br/>Groq"]
 ```
 
 ## Agent model config (risk-agent A vs B)
@@ -29,8 +29,9 @@ flowchart LR
 
 - **Config**: [`infra/k8s/agentgateway.yaml`](../infra/k8s/agentgateway.yaml). Version A is the platform's model
   (Qwen3-8B Q4_K_M on llama.cpp behind the llm-d InferencePool); version B is Qwen3.8-27B on Groq (an OpenAI-compatible
-  `AgentgatewayBackend`, key `llm-groq` from Vault). The route sends 80 % of all model calls to A and 20 % to B; callers
-  keep sending model `qwen3-8b`, the backend rewrites it. Header `x-llm-variant: a|b` pins a call.
+  `AgentgatewayBackend`, key `llm-groq` from Vault). The route sent 80 % of all model calls to A and 20 % to B
+  (stopped since, see Decisions); callers keep sending model `qwen3-8b`, the backend rewrites it. Header
+  `x-llm-variant: a|b` pins a call.
 - The route's policy (API key, rate limits, PII masking) applies to both: a phone number in a prompt reaches Groq as
   `<masked>` (checked: "Repeat exactly: my phone is 0912345678" came back as "my phone is <masked>").
 - Groq's edge (Cloudflare, error 1010) refused Python's default User-Agent, so the gateway sets its own on that backend.
@@ -76,7 +77,12 @@ and the LLM pass 12 / 12, and the dashboard shows the route's share (about 78 / 
   could not be checked" in 2 s without calling `search_policy`, or after hits that did not include the fee table row.
   That is a prompt problem, not a sampling one; it is what the eval gate of the CD pipeline now measures
   ([novel idea: eval gate](novel_eval_gate.md)).
-- **LLM version: keep the 80 / 20 canary, do not switch.** B is as accurate on the document questions and about 4x
-  faster, but every B call sends (masked) customer text outside the bank's infrastructure, and the free tier caps it
-  at 1,000 calls a day and 8,000 tokens a minute (one agent conversation uses about 2,000). The weights stay where
-  they are until those two are settled; switching is a weight change in `agentgateway.yaml`.
+- **LLM version: canary stopped, A keeps 100 %.** On the evaluation B was as accurate on the document questions and
+  about 4x faster. On live agent traffic it failed: the coordinator pipeline's smoke test (Jenkins
+  `card-support-coordinator` #18) ended `failed` because its last model call landed on B and Groq answered
+  `429 ... output tokens per minute (OTPM): Limit 1000, Requested 1619`. Agents send no `max_tokens`, and the free
+  tier's 1,000 output tokens a minute (for the whole account) is less than two agent answers; the dashboard's "LLM
+  error share" shows B's failures next to A's none. The default rule is now 100 / 0; B stays reachable with
+  `x-llm-variant: b`, with a gateway default of `max_tokens: 512`, for evaluations. Resuming the canary needs a paid
+  Groq tier, and a decision on sending (masked) customer text outside the bank. This is the case the procedure is
+  for: B never replaced A, and stopping it was a weight change.

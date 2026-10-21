@@ -38,11 +38,11 @@ QUESTION = {
 
 
 def laya_route(answers: dict) -> tuple[str, float]:
-    """Both statements true: the coordinator; one: its specialist (confidence = P of the deciding statement)."""
+    """Both statements true: the coordinator; card data true: the card data agent; otherwise the risk agent."""
     data, rules = answers["data"]["noul"], answers["rules"]["noul"]
     if data > 0.5 and rules > 0.5:
         return "coordinator", min(data, rules)
-    return ("card-data-agent", data) if data >= rules else ("risk-agent", rules)
+    return ("card-data-agent", data) if data > 0.5 else ("risk-agent", 1 - data)
 
 
 def post(url: str, body: dict, headers: dict, timeout: float = 300) -> dict:
