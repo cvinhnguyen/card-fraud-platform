@@ -36,9 +36,9 @@ pipeline {
       }
     }
     stage('Changed?') {
-      // deploy on a new production prompt (above), a change under agents/, or a manual / upstream trigger; a poll
-      // or timer run with nothing new does nothing
-      when { anyOf { changeset 'agents/**'; triggeredBy 'UserIdCause'; triggeredBy 'UpstreamCause' } }
+      // deploy on a new production prompt (above), a change under agents/, or a manual / upstream trigger (the build
+      // step records BuildUpstreamCause, not UpstreamCause); a poll or timer run with nothing new does nothing
+      when { anyOf { changeset 'agents/**'; triggeredBy 'UserIdCause'; triggeredBy 'UpstreamCause'; triggeredBy 'BuildUpstreamCause' } }
       steps { script { env.DEPLOY = 'true' } }
     }
     stage('Validate') {
