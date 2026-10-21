@@ -88,12 +88,12 @@ docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spa
 
 Two choices are measured:
 
-- **Scope.** Global: all dates in one job, as a one-shot backfill would run it. Batched: a few export dates per job,
-  appended to the same Delta table. Batching is correct because a duplicate comes from re-running one nightly
+- Scope: global runs all dates in one job, as a one-shot backfill would run it; batched runs a few export dates per
+  job, appended to the same Delta table. Batching is correct because a duplicate comes from re-running one nightly
   export, so both copies always share an `export_date`; DP2 relies on the same fact every night, when it dedups only
   the new export dates.
-- **Method.** Window: `row_number()` over `transaction_id`, the `build_silver.py` code, which shuffles and sorts every
-  row with every column. Broadcast: only 2% of the ids are duplicated, so the job finds them from the
+- Method: window is `row_number()` over `transaction_id`, the `build_silver.py` code, which shuffles and sorts every
+  row with every column. Broadcast uses the fact that only 2% of the ids are duplicated: the job finds them from the
   `transaction_id` column alone, passes every other row through a broadcast anti join (no shuffle, no sort) and runs
   the window on the duplicated rows only.
 

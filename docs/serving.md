@@ -10,7 +10,7 @@ flowchart LR
 
 ## Model server (KServe)
 
-`infra/k8s/kserve-card-fraud.yaml`: one InferenceService in namespace `serving`, KServe 0.21 in Standard mode (formerly
+[`infra/k8s/kserve-card-fraud.yaml`](../infra/k8s/kserve-card-fraud.yaml): one InferenceService in namespace `serving`, KServe 0.21 in Standard mode (formerly
 called RawDeployment): a plain Deployment + Service, no Knative, so it fits the 8 GB machine. In 0.21 the Helm chart is
 `oci://ghcr.io/kserve/charts/kserve-resources`; the old `kserve` chart name no longer resolves. The predictor is a
 custom KServe `Model` (`services/predictor/predictor.py`) with the booster inside the image:
@@ -35,20 +35,20 @@ training. The response carries `model_version`.
 | `GET /readyz` | readiness: Feast online read and the model endpoint both answer |
 | `GET /metrics` | Prometheus format: request rate / latency / status, decisions, fallbacks by cause, score histogram, latency per stage |
 
-**Async end to end.** Feast `get_online_features_async`, `httpx.AsyncClient` (one pooled client) to KServe,
+Async end to end: Feast `get_online_features_async`, `httpx.AsyncClient` (one pooled client) to KServe,
 `aiokafka` for the prediction log: one worker serves many requests while each waits on Redis or the model.
 
-**Decision.** `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step-up (OTP), else approve. The thresholds
+The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step-up (OTP), else approve. The thresholds
 come from configuration (`T_LOW`, `T_HIGH`), not from the model, so risk can tune them without a release; the model
 version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR).
 
-**Fallback, never an error.** Each stage has a time budget (`asyncio.wait_for`, 50 ms by default, 200 ms in compose
+Fallback, never an error: each stage has a time budget (`asyncio.wait_for`, 50 ms by default, 200 ms in compose
 where KServe is reached through the kind NodePort). A timeout or failure of
 the feature store or the model gives `FallbackPolicy`: approve below 2,000,000 VND, step-up from it, never decline
 without evidence. The response says `fallback: true` and the counter `fraud_fallbacks_total{cause}` records why
 (`features_timeout`, `model_error`, ...). A payment is never blocked by an outage of the fraud system.
 
-**Prediction log.** Every request + response + the feature vector goes to Kafka `fraud_predictions`, keyed by card,
+Prediction log: every request + response + the feature vector goes to Kafka `fraud_predictions`, keyed by card,
 without waiting for the broker ack. If Kafka is down the API keeps scoring and only stops logging.
 
 ## Design
@@ -69,6 +69,12 @@ kubectl wait --for=condition=Ready isvc/card-fraud -n serving        # Ready aft
 
 `GET /v1/models/card-fraud` -> `{"name":"card-fraud","ready":true}`. The image is 968 MB (the `kserve` package and
 its dependencies); the model inside is 243 KB.
+
+![KServe: the InferenceService and its predictor pod, a direct V1 predict call, and two Scoring API decisions served by it](images/kserve_serving.png)
+
+Checked again on 2026-10-21: the InferenceService is Ready with one predictor pod, a direct V1 `predict` call through
+the NodePort answers with `model_version` 1, and the Scoring API scores two payments on the same card through it
+(`fallback=False`): 450,000 VND at a shop is approved (score 0.0009), 45,000,000 VND online is declined (0.2221).
 
 Thresholds in compose are model v1's validated ones (`T_LOW=0.0018`, `T_HIGH=0.058`, MLflow tags of the version):
 the scores are calibrated to the real 0.3% fraud rate, so a 0.5 cut-off would decline almost nothing.
@@ -97,11 +103,11 @@ The first replay at 100 requests/s fell back on 96% of the payments. Two separat
 | 8 | 47 req/s | 165 / 206 ms | 0% |
 | 32 | 41 req/s | 757 / 950 ms | 94% |
 
-1. **One worker scores ~45 requests/s.** About 22 ms of CPU per request, most of it Feast computing the on-demand
+1. One worker scores ~45 requests/s, at about 22 ms of CPU per request, most of it Feast computing the on-demand
    features in pandas inside the event loop. Above that rate requests queue past their 200 ms budget and the
    fallback answers (as designed: the payment still gets a decision). More throughput means more replicas, not a
    bigger budget; the replay scores at 30/s.
-2. **After a burst the API never recovered.** Once the load was gone, every request still fell back
+2. After a burst the API never recovered. Once the load was gone, every request still fell back
    (`model_timeout` / `PoolTimeout`) until a restart, while a fresh client in the same container reached KServe in
    4 ms. `asyncio.wait_for` cancelled the httpx calls mid-request and the shared connection pool stayed exhausted.
    `ModelClient.predict` now runs the call under `asyncio.shield`: the budget still answers the switch on time, and

@@ -44,13 +44,13 @@ task reads 17 MB, the slowest join task runs 0.5 s, nothing spills.
 
 ### Which fix, in which order
 
-1. **Broadcast** when one side is small. `merchants` is 5.2k rows, far below Spark's 10 MB auto-broadcast threshold, so
+1. Broadcast when one side is small. `merchants` is 5.2k rows, far below Spark's 10 MB auto-broadcast threshold, so
    with default settings this join is broadcast and never skews. The benchmark turns automatic broadcast off on purpose
    to show the problem.
-2. **AQE** for large-to-large joins: configuration only, no code change. Its defaults (a partition is skewed above
+2. AQE for large-to-large joins: configuration only, no code change. Its defaults (a partition is skewed above
    256 MB and 5 times the median) target big data; at 1 GB the threshold had to be lowered to 8 MB. At the 100 GB target
    the hot partition is several GB and the defaults apply.
-3. **Salting** only when AQE cannot help: skew inside an aggregation or a window (AQE splits join partitions only),
+3. Salting only when AQE cannot help: skew inside an aggregation or a window (AQE splits join partitions only),
    join types AQE does not split (full outer), or a key so hot that the split pieces are still too big. It costs code,
    an extra column in the shuffle (2.5 GB instead of 2.0 GB here) and a copy of the other side per salt bucket.
 

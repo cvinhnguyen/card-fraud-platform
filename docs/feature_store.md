@@ -33,8 +33,8 @@ list and the API asks for exactly this list, so the two cannot drift apart: a mo
 
 ## TTL
 
-TTL is how old a stored value may be and still describe the card. One Feast behaviour drives every choice: **the
-Redis lookup returns the stored value however old it is**. TTL bounds the point-in-time join (training) and the
+TTL is how old a stored value may be and still describe the card. One Feast behaviour drives every choice: the
+Redis lookup returns the stored value however old it is. TTL bounds the point-in-time join (training) and the
 materialization window, not online reads. Anything the model must see "aged" is therefore computed in the on-demand
 view from the value's own timestamp, so training and serving age it the same way.
 
@@ -49,15 +49,15 @@ view from the value's own timestamp, so training and serving age it the same way
 
 Three decisions keep the training rows identical to what the API sees:
 
-1. **Entity timestamp = payment time - 1 ms.** When the API scores a payment, Flink has not processed it yet: the
+1. Entity timestamp = payment time - 1 ms. When the API scores a payment, Flink has not processed it yet: the
    online store holds features of the *previous* authorizations. Training joins at `txn_ts - 1 ms`, so the
    point-in-time join also excludes the payment itself.
-2. **DP3 rows land the night after the activity.** A row for day L has `event_timestamp = L + 1` and windows that
+2. DP3 rows land the night after the activity. A row for day L has `event_timestamp = L + 1` and windows that
    end at L. A payment on day L+1 sees the stats up to L, which is what Redis holds that day (materialized after DP3
    of L). Layer 1 wrote one row on each day D the card *paid*, windows ending at D-1: that row existed only
    because of the payment being scored. For a card that last paid 20 days ago, training saw windows ending
    yesterday; serving has the row of 20 days ago, whose 30-day window covers other days.
-3. **Streaming features for history come from replaying history (Kappa).** The full authorization history is
+3. Streaming features for history come from replaying history (Kappa). The full authorization history is
    replayed through the same Flink jobs and push job B, so the offline rows were produced by the code that produces
    the online ones, and there is no second implementation in Spark to keep equal.
 
@@ -75,6 +75,14 @@ Three decisions keep the training rows identical to what the API sees:
 200 cards active that day: 0 missing online, 0 stale.
 
 ![Airflow feast_materialize 2026-11-03: materialize_incremental -> check_online, both success](images/airflow_feast_materialize.png)
+
+The two push jobs ([`ml/jobs/push_job.py`](../ml/jobs/push_job.py)) are deployed by their own CI pipeline
+([`ml/jobs/Jenkinsfile.stream`](../ml/jobs/Jenkinsfile.stream), [cicd.md](cicd.md#stream-feature-jobs)): unit tests,
+the ml image, `push-online` and `push-offline` recreated on it, then a smoke test that sends one marked message to
+Kafka and waits for it in both stores. Build #2: `ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s
+(s3://lakehouse/gold/feat_card_auth_rt)`.
+
+![Jenkins stage view of stream-feature-jobs: build #2 ran tests, image, deploy and the online + offline smoke test](images/cicd_stream-feature-jobs.png)
 
 ## Kappa backfill (history of the streaming features)
 
@@ -121,6 +129,6 @@ history again.
 - `feast apply` infers schemas by reading the sources: the push-source Delta tables must exist first (push job B
   creates them empty on its first run).
 - `${VAR:-default}` is not expanded in `feature_store.yaml`, only `${VAR}`.
-- Feast 0.66's local materialization engine pulls **every** row of the window and keeps the latest per key in
+- Feast 0.66's local materialization engine pulls every row of the window and keeps the latest per key in
   pandas unless `materialization: pull_latest_features: true`: the 7.6M daily-stats rows took the Python process to
   5.7 GB and the kernel killed it. With the flag Spark returns one row per card; the bootstrap took 52 s.

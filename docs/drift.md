@@ -66,11 +66,11 @@ The sale days move every input.
 The Scoring API logs every decision to Kafka; `ml/jobs/drift_forwarder.py` posts them to the Drift API in batches of up
 to 1,000 (offsets committed after the API accepted the batch). Scoring never waits on drift detection.
 
-- **Reference** = `reference_profile.json` of the production model: decile edges of each input and of the score on
+- Reference = `reference_profile.json` of the production model: decile edges of each input and of the score on
   the validation period, the share of rows per bin, plus a `missing` bin (a feature that suddenly goes NULL, a
   broken join or a dead stream, drifts too). `services/predictor/fetch_model.py` downloads it next to the model;
   run it before starting `drift-api` (compose bind-mounts the file, and a missing file becomes an empty directory).
-- **Live histograms** in Redis, one hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h).
+- Live histograms in Redis, one hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h).
   The replicas keep no state: any number of them can count into the same buckets.
 - `GET /v1/drift` sums the last 15 minutes and computes the **PSI** per input,
   `sum (live% - ref%) * ln(live% / ref%)`: < 0.1 stable, 0.1-0.25 moderate, > 0.25 major. Below `MIN_EVENTS` (100,
@@ -123,7 +123,7 @@ Three things went wrong on the way, all now handled:
 | Scoring a day while Flink is behind | 10-27 was scored with features ~3 days stale (`is_new_device` = 1 for every device of the last 3 days): PR-AUC 0.34 mixes concept drift and staleness, so 11-03 is the clean shift day | `--max-lag`: a day starts only when the Flink groups are within 300 events of the topic end |
 | A first attempt at 100/s kept producing after scoring fell behind, and a benchmark re-scored 10-16 later | the first 10 hours of 10-18 were scored with their own authorization already online (`auth_count_10m_now` = 1 for 22% of 10-18, against 0.05% in reality) | 10-18 is left out; the Drift API's wall-clock window also counted the benchmark, so test traffic must be tagged and excluded from drift statistics |
 
-**Running the live days through Airflow.** The live period is dated after the machine clock (the runs here were on
+Running the live days through Airflow: the live period is dated after the machine clock (the runs here were on
 2026-10-19), and Airflow does not run a task whose logical date is in the future (`RunnableExecDateDep`), so a
 backfill of DP1 for 2026-11-03 deadlocked with every task waiting. Two settings make it work without changing any
 DAG's schedule: `AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE` (compose) lets the scheduler run the *triggered* DAGs
@@ -141,7 +141,7 @@ The first try of DP1 failed its own validation: a manual run's data interval end
 `data_interval_end` loaded the folders up to ds while the validation (correctly) looked for `ds + 1`. DP1 now uses
 `macros.ds_add(ds, 1)` for the sensor and the load, the same day as the validation in every kind of run.
 
-**Why the replay stopped at 11-03.** The rubric asks for a drift-detection API and an Airflow drift pipeline on
+Why the replay stopped at 11-03: the rubric asks for a drift-detection API and an Airflow drift pipeline on
 the offline store that triggers retraining; a real-time replay of the whole live period is not required. The
 replay covers the normal and `fraud_shift` phases, which the daily check below uses.
 
@@ -190,7 +190,7 @@ Two bugs found on the way: `trigger_retraining(host, ds)` failed with `The key '
 therefore reserved` (Airflow passes its context by name; the parameter is now `label_as_of`), and the job's Spark
 session needs the Hive metastore up (the Feast offline store reads through the session catalog).
 
-**The retrain.** The run the DAG submitted (`a7cfc35f`, `label_as_of` 2026-11-02) failed in step 2 with
+The retrain: the run the DAG submitted (`a7cfc35f`, `label_as_of` 2026-11-02) failed in step 2 with
 `OutOfMemoryError: Java heap space` (a heap tuned to the previous run's peak, see
 [ml_training.md](ml_training.md)); resubmitted with the same argument (`ce0b680c`), its evaluate step failed once on
 MLflow's presigned URLs (same page) and passed after a KFP retry of the failed step:

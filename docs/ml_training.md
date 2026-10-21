@@ -29,7 +29,7 @@ saw. Rows from the last 60 days before D are immature and left out.
 The split is by time, never random: a random split puts next month's fraud pattern into training. Each gap is 60
 days because a model trained up to day T is only usable from T + 60 d, when T's labels are known (`TimeSplitter`).
 
-Fraud is ~0.3% of payments. Negatives of the **train** period are downsampled to 2% by a hash of `transaction_id`
+Fraud is ~0.3% of payments. Negatives of the train period are downsampled to 2% by a hash of `transaction_id`
 (the same rows in every run, so the versioned training set only changes where the data did), with sample weight
 50. Validation and test keep every row: their metrics must reflect the real fraud rate.
 
@@ -40,7 +40,7 @@ joins each row with the feature values valid at that instant (point-in-time join
 included. See [feature_store.md](feature_store.md) for why the timestamp is shifted by 1 ms.
 
 The result is MERGEd into one Delta table per feature service, `s3://lakehouse/ml/training_set_fraud_model_v1`,
-with **deletion vectors**. Rows match on `transaction_id` *and* `row_hash` (a hash of every other column), and the
+with deletion vectors. Rows match on `transaction_id` *and* `row_hash` (a hash of every other column), and the
 MERGE has only two clauses: insert the source rows with no match (new or changed rows), delete the target rows with
 no match (rows gone, or the old copy of a changed row). An unchanged row matches and is left alone; a deleted row is
 only marked in a small deletion-vector file. So a run on almost the same data stores just its new rows, and
@@ -72,7 +72,7 @@ id points to its exact data.
 | Logistic regression (median impute, scaler, `class_weight=balanced`) | simple, explainable baseline: the bar XGBoost must clear |
 | XGBoost (`xgboost.spark.SparkXGBClassifier`, `num_workers=2`) | non-linear, handles NaN natively; the model that gets served |
 
-**Distributed training.** In the KFP component `train`, the pod is the Spark driver
+Distributed training: in the KFP component `train`, the pod is the Spark driver
 (`k8s://https://kubernetes.default.svc`) and starts 2 executor pods. `SparkXGBClassifier(num_workers=2)` runs two
 Spark tasks that train one model together: each holds a shard of the rows, and the gradient histograms are
 all-reduced every boosting round. The executors get their S3 keys from the Kubernetes secret `s3-credentials`
@@ -126,7 +126,7 @@ versions with the same rows for the training period: `label_transaction` v14, `f
 | test | 2026-06-17 .. 2026-08-15 | 470,772 | 1,426 | 0.30% |
 
 The Feast point-in-time join of the 1,070,662 entity rows took 294 s (`local[2]`); every data check passed.
-XGBoost (2 workers) trained in 56 s and stopped early at its best iteration 248. Step 5 then **saves both models**
+XGBoost (2 workers) trained in 56 s and stopped early at its best iteration 248. Step 5 then saves both models
 (`ml/notebooks/models/`, gitignored), as the pipeline's `train` step does on S3:
 
 ```
@@ -154,7 +154,7 @@ the baseline 64%. Decision table of XGBoost on the test period:
 | step_up (OTP) | 4,459 | 26 |
 | decline | 507 | 1,277 |
 
-**Reproducible booster.** Earlier runs on the same rows and parameters disagreed: PR-AUC 0.807, 0.827 and 0.853,
+Reproducible booster: earlier runs on the same rows and parameters disagreed: PR-AUC 0.807, 0.827 and 0.853,
 best iteration 14 in one run and 96 in another. Cause: the point-in-time join returns its rows in no fixed order,
 `fit_xgboost` cut them into the 2 workers' shards in that order, and `subsample = 0.8` draws rows by position inside
 a worker, so another order meant other trees, and the noisy validation curve then stopped early somewhere else. On

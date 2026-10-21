@@ -7,15 +7,15 @@ tries three configurations, and keeps the one that holds the speed without the m
 
 ## Setup (`infra/benchmark`)
 
-- **Load generator**: [`inference-perf`](https://github.com/kubernetes-sigs/inference-perf) 0.7.0, the harness llm-d's
-  own benchmark CLI drives. `Dockerfile` installs the PyPI release (the published image is only tagged by commit, and
-  its `uvloop` dependency does not install on Windows).
-- **Workload** (`agentic.yaml`): shared prefix, 3 groups = the 3 agents. Each group has its own 1,500-token system
-  prompt shared by all its calls, then a 100-token question and exactly 150 output tokens (`ignore_eos`). The sizes
-  come from llama.cpp's counters on real agent traffic: 79 % of prompt tokens were prefix-cache hits, the longest
-  prompt was 1.8k tokens. Closed loop with 1, 2 and 4 requests in flight (12, 16 and 24 requests): each agent replica
-  waits for its answer before the next call.
-- **Measured**: output tokens/s, time to first token (TTFT), time per output token (TPOT), end-to-end latency, the
+- The load generator is [`inference-perf`](https://github.com/kubernetes-sigs/inference-perf) 0.7.0, the harness
+  llm-d's own benchmark CLI drives. `Dockerfile` installs the PyPI release (the published image is only tagged by
+  commit, and its `uvloop` dependency does not install on Windows).
+- The workload (`agentic.yaml`) uses a shared prefix with 3 groups = the 3 agents. Each group has its own 1,500-token
+  system prompt shared by all its calls, then a 100-token question and exactly 150 output tokens (`ignore_eos`). The
+  sizes come from llama.cpp's counters on real agent traffic: 79 % of prompt tokens were prefix-cache hits, the
+  longest prompt was 1.8k tokens. Closed loop with 1, 2 and 4 requests in flight (12, 16 and 24 requests): each agent
+  replica waits for its answer before the next call.
+- Each run records output tokens/s, time to first token (TTFT), time per output token (TPOT), end-to-end latency, the
   share of prompt tokens served from the prefix cache (llama.cpp reports it per request), and llama-server's memory
   (sampled every 5 s, `results/<run>/memory.csv`).
 - Each run starts on a freshly started llama-server (empty caches). The calls go straight to llama.cpp, so the numbers
@@ -59,23 +59,23 @@ Common flags: `-ngl 99 --reasoning off --load-mode none -fa on -c 16384 -ctk q8_
 
 ## What the numbers say
 
-- **Capacity.** One request at a time gets 23 tokens/s (TPOT 36 ms). Two in flight double that to 45 tokens/s at
+- Capacity: one request at a time gets 23 tokens/s (TPOT 36 ms). Two in flight double that to 45 tokens/s at
   almost no cost (TTFT 0.7 s, latency 5.7 -> 6.7 s): the GPU decodes both in one batch. At four in flight the two slots
   are full, two requests wait for a slot, and only TTFT grows (7.3 s). The server peaks at about 0.3 requests/s (18
   agent LLM calls a minute) for this shape of call.
-- **Prefix caching is what makes it work.** The first call of each agent pays for its 1,600-token prompt (TTFT p90
+- Prefix caching keeps TTFT low. The first call of each agent pays for its 1,600-token prompt (TTFT p90
   3.4 s, prefill about 480 tokens/s); after that 94-95 % of prompt tokens come from the cache and TTFT is 0.4-0.7 s.
-- **4 slots is slower (e2).** More slots should batch more requests. Instead, throughput at four in flight fell from
+- 4 slots is slower (e2). More slots should batch more requests, yet throughput at four in flight fell from
   45 to 36 tokens/s and the cache share from 95 % to 78 %. Two causes, both in the server log: llama.cpp picked a slot
   that already held the request's prefix 12 times out of 52 (24 with two slots), so the other requests re-read their
   1,500-token prompt; and a batch of 4 on this Pascal GPU raises TPOT from 41 to 68 ms, so the extra slots buy no
   decode speed. Kept at 2 slots.
-- **The host prompt cache grows until it hits 8 GiB (e1).** When a slot is reused, llama.cpp saves the old prompt's KV
+- The host prompt cache grows until it hits 8 GiB (e1). When a slot is reused, llama.cpp saves the old prompt's KV
   state to RAM (`--cache-ram`, default 8,192 MiB) to restore it later. That is why two slots still serve three agents
   from cache, but llama-server's resident memory grew by about 0.5 GB a minute during e1 (0.75 -> 2.5 GB in four
   minutes) and keeps growing toward 8 GiB, on a 16 GB machine that also runs the 8 GB Docker VM. The three agents'
   prefixes need about 3 x 1,600 tokens x 78 KB (q8_0 KV of Qwen3-8B) = 0.4 GB.
-- **Optimization kept: `-cram 1024` (e3).** Same throughput (44.6 / 44.2 tokens/s), same TTFT, same 94-95 % cache share
+- Kept: `-cram 1024` (e3). Same throughput (44.6 / 44.2 tokens/s), same TTFT, same 94-95 % cache share
   as e1, and memory levels off at about 1.5 GB instead of climbing. Applied to the platform's llama.cpp start command.
 
 ## Second optimization: speculative decoding with n-grams from the prompt
@@ -95,7 +95,7 @@ own `timings` (tokens drafted / accepted, decode tokens/s); answers are scored w
 | **`--spec-type ngram-simple --spec-ngram-simple-size-n 3 --spec-ngram-simple-size-m 8`** | **42.1 (+46 %)** | 1,526 | 44 % | 40 / 40 |
 
 End to end through the gateway, the risk agent on the same 20 questions (`run_eval.py --mode agent`): p50 5.25 s
-without, **4.88 s** with (accuracy 0.85 both). The gain is smaller there because an agent turn is mostly prefill
+without, 4.88 s with (accuracy 0.85 both). The gain is smaller there because an agent turn is mostly prefill
 (tool definitions, search hits) and tool-call JSON, which the drafter does not predict. Kept: the last row is now in
 the platform's llama.cpp start command. Results: `infra/benchmark/results/spec-*.json`.
 
@@ -104,7 +104,7 @@ the platform's llama.cpp start command. Results: `infra/benchmark/results/spec-*
 KEDA adds agent replicas (2 to 4 per agent) when the gateway sees more A2A calls, so the platform accepts more
 conversations at once. All replicas of the three agents share this one model server, though: past two LLM calls in
 flight the extra calls wait for a slot (TTFT 0.7 -> 7.3 s at four), and the ceiling stays about 18 calls a minute.
-Scaling agents therefore adds concurrency, not answer speed; faster answers need a second model server in the
+Scaling agents therefore adds concurrency and leaves answer speed as it is; faster answers need a second model server in the
 InferencePool, which is also where the llm-d router starts to choose between endpoints.
 
 ## Gotchas
@@ -114,5 +114,5 @@ InferencePool, which is also where the llm-d router starts to choose between end
   compose services stopped (Docker VM 8 -> 2 GB), so only llama.cpp and the load generator used memory.
 - An inference-perf `vllm` server type is its OpenAI-compatible client; `api_key` is sent as a bearer token, and
   `ignore_eos` works on llama.cpp, so every answer is exactly 150 tokens.
-- llama.cpp's per-request `cached_tokens` is what inference-perf reports as "cached": the share above is measured, not
-  estimated.
+- llama.cpp's per-request `cached_tokens` is what inference-perf reports as "cached", so the share above is the
+  server's own measurement.

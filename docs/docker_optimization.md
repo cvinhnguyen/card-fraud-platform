@@ -31,7 +31,7 @@ layers (4.50 minus the jars), hence the -29%.
 
 ## What made the images big
 
-**Flink (`fraud/flink`, before 2.95 GB).** One `RUN` installed `python3 python3-pip python3-venv` with apt and
+Flink (`fraud/flink`, before 2.95 GB): one `RUN` installed `python3 python3-pip python3-venv` with apt and
 `apache-flink==2.2.1` with pip into the system Python: an 893 MB layer. Inside it:
 
 | Part | Size | Needed at run time? |
@@ -49,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
     && pip3 install --no-cache-dir --break-system-packages apache-flink==2.2.1
 ```
 
-**Airflow (`fraud/airflow`, before 7.66 GB).** On top of the 2.14 GB Airflow image:
+Airflow (`fraud/airflow`, before 7.66 GB): on top of the 2.14 GB Airflow image:
 
 | Layer | Size | Problem |
 |---|---:|---|
@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 | GE venv | 622 MB | pip, caches and test suites included |
 | DataHub plugin | 57 MB | separate `pip install` layer |
 
-**Spark (stock `apache/spark`).** Every Spark container ran the stock image and `spark-defaults.conf` listed
+Spark (stock `apache/spark`): every Spark container ran the stock image and `spark-defaults.conf` listed
 `spark.jars.packages`, so each `spark-submit` resolved Delta, hadoop-aws (with the 600 MB AWS SDK bundle), the
 Postgres driver and OpenLineage through Ivy, and the standalone worker copied them into every application's work
 directory. After a day of Airflow runs the worker's container layer held 94 GB of these copies and filled the disk

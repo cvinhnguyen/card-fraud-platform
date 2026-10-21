@@ -1,15 +1,16 @@
 # Card Fraud Platform
 
-Real-time card fraud detection for a Vietnamese digital bank, built as the EDAI K11 coursework in two layers: a
-data platform (Layer 1) and an ML platform (Layer 2).
+Real-time card fraud detection and card support agents for a Vietnamese digital bank, built as the EDAI K11
+coursework in three layers: a data platform (Layer 1), an ML platform (Layer 2) and an LLM and agent platform
+(Layer 3).
 
 ## Table of contents
 - [Business domain](#business-domain)
 - [Architecture](#architecture)
-  - [Layer 1: data platform](#layer-1-data-platform) · [Layer 2: ML platform](#layer-2-ml-platform)
-  - [System diagram](#system-diagram) · [Deployment](#deployment)
+  - [Layer 1: data platform](#layer-1-data-platform) · [Layer 2: ML platform](#layer-2-ml-platform) · [Layer 3: LLM and agent platform](#layer-3-llm-and-agent-platform)
+  - [System diagram](#system-diagram) · [Layer 3 system diagram](#layer-3-system-diagram) · [Deployment](#deployment)
 - [Repo structure](#repo-structure)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start) · [Layer 3](#layer-3)
 - [Docs](#docs)
 
 ## Business domain
@@ -26,19 +27,27 @@ and monitor the model on history, which means a data platform that brings togeth
 | Card authorizations | card network | Kafka `card_authorizations` | late events from offline POS terminals, network-retry duplicates |
 | App events | mobile app | Kafka `app_events` | events out of order within a session |
 | Fraud labels | disputes, reported days to weeks later | DP2 (`gold.label_transaction`) | label delay |
+| Card documents (terms, fees, disputes, authentication rules, FAQ) | product and legal teams | markdown files in `s3://bank-documents` | must be searchable by meaning, kept in sync with what the agents cite |
+
+The same customers then call card support: why was my payment declined, what does a withdrawal abroad cost, am I
+liable for a payment I did not make. Layer 3 answers with agents that use the platform's own data: the card's
+features from the feature store, the fraud model's verdict through the Scoring API, and the bank's card documents
+through a RAG pipeline.
 
 All data is synthetic (`generator/`), with every problem injected at a measured rate and checked
 ([docs/data_characteristics.md](docs/data_characteristics.md)). Layer 1 is the data platform; Layer 2 (feature
-store, training, serving, drift) consumes its `feat_*` tables and the realtime features.
+store, training, serving, drift) consumes its `feat_*` tables and the realtime features; Layer 3 (agents) consumes
+Layer 2's online features and model.
 
 ## Architecture
 
-![Platform overview: Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the model](docs/images/platform-overview.png)
+![Platform overview: Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents](docs/images/platform-overview.png)
 
 Layer 1 turns the source systems into feature tables (batch) and realtime features (stream). Feast is the hand-over:
 the same 20 features for training (offline store, point-in-time joins) and for serving (online store). Layer 2 trains
-on them, serves the model behind the Scoring API and retrains when the drift check fails. The numbers are the steps
-of the tables below.
+on them, serves the model behind the Scoring API and retrains when the drift check fails. Layer 3 reads the same
+online features and the Scoring API through its MCP server, adds the bank's documents as a second Feast project
+(chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below.
 
 ### Layer 1: data platform
 
@@ -75,6 +84,22 @@ Five classes carry the ML logic:
 | `ModelRegistry` | `ml/fraud_ml/registry.py` | MLflow logging, model versions and aliases |
 | `FraudScorer` | `services/scoring_api/app/scorer.py` | Request -> features -> score -> decision, fallback when KServe is down |
 
+### Layer 3: LLM and agent platform
+
+| Step | Component | What it does |
+|---|---|---|
+| 16 | RAG pipeline | Airflow `rag_ingest`: bank documents -> 57 chunks -> 1024-dim vectors -> Feast `card_support_kb` (pgvector online, Parquet offline); 7 checks and lineage to DataHub |
+| 17 | llama.cpp | Qwen3-8B Q4_K_M chat model on the host GPU (GTX 1070) and the Qwen3-Embedding-0.6B embedding server |
+| 18 | llm-d | InferencePool `qwen3-8b` and its endpoint picker in front of the model server |
+| 19 | agentgateway | One entry point for LLM (`/v1`), MCP (`/mcp`) and A2A calls: API keys, rate limits, PII masking, tool access per agent |
+| 20 | card-support-mcp | FastAPI Web API + MCP server with four tools: card data, policy chunk, policy search (RAG), fraud score |
+| 21 | NGINX Ingress | Every UI and the Web API on `*.cvinhnguyen.duckdns.org`: Let's Encrypt HTTPS, basic auth, rate limits |
+| 22 | Coordinator agent | Talks to the customer, asks the two specialist agents over A2A |
+| 23 | Card-data + risk agents | kagent agents with MCP tools through the gateway; 2-4 replicas each (KEDA) |
+| 24 | Agent Substrate | Sandboxed copies of the agents in gVisor, restored from warm snapshots on a shared worker pool |
+| 25 | agentregistry | Catalog of the agents and the MCP server they use |
+| 26 | Operations | Jenkins CI/CD (prompts from Langfuse, eval gate, signed images), Prometheus + Grafana, VictoriaLogs, Jaeger, Vault |
+
 ### System diagram
 
 ![System architecture: deployable units and the numbered data flows between them](docs/images/platform-architecture.png)
@@ -93,40 +118,73 @@ caller to callee. Each flow has its own colour, letter and numbering:
 
 Every numbered arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows).
 
+### Layer 3 system diagram
+
+![Layer 3 system architecture: agents, gateway, model servers, RAG ingest, CI/CD and observability, numbered per flow](docs/images/platform-layer3.png)
+
+Support staff reach the agents through NGINX over HTTPS. Every agent call (A2A, MCP, LLM) then passes agentgateway,
+which checks keys, limits requests and masks personal data before the llm-d router hands LLM calls to llama.cpp on
+the host GPU. The MCP server takes a card's features from the same Feast online store as Layer 2 and a fraud score
+from the Scoring API; the RAG pipeline writes policy chunks and their vectors into a second Feast project (pgvector).
+
+| Flow | Who / when | Path |
+|---|---|---|
+| **A** Agent conversation | support staff, every question | NGINX -> kagent -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP server (Redis, pgvector, embeddings, Scoring API); LLM calls -> gateway -> llm-d -> llama.cpp |
+| **K** Knowledge ingest | Airflow `rag_ingest`, per release | bank documents (S3) -> chunks -> embeddings -> pgvector online + Parquet offline -> DataHub checks and lineage |
+| **C** CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse) -> signed image in the registry -> helm --atomic -> eval gate through the gateway -> Langfuse experiment |
+| **O** Observability and scaling | continuous | gateway + MCP metrics -> Prometheus -> Grafana and KEDA (agent replicas 2-4); agent spans -> Jaeger |
+
+Every Layer 3 arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows-layer-3).
+
 ### Deployment
 
-![Deployment: host tools, the Docker Desktop VM with seven compose profiles, and the kind cluster for Kubeflow Pipelines and KServe](docs/images/platform-deployment.png)
+![Deployment: host tools and model servers, compose profiles in the Docker Desktop VM, the kind cluster's namespaces, and the internet services](docs/images/platform-deployment.png)
 
-Everything runs on one machine: the compose profiles start what a phase needs, and the kind cluster (joined to the
-compose network) holds only the two pieces that need Kubernetes, Kubeflow Pipelines and KServe. Diagram sources:
+Everything runs on one machine. The compose profiles start what a phase needs; the kind cluster (joined to the compose
+network) holds Kubeflow Pipelines and KServe for Layer 2 and the whole Layer 3 platform, one namespace per part. The
+two model servers run on the Windows host next to the GPU, which the cluster reaches through `host.docker.internal`.
+The internet services are GitHub (Jenkins polls it), Langfuse Cloud (agent prompts, eval experiments), Groq (side B
+of the LLM A/B test), Let's Encrypt with DuckDNS (the HTTPS certificate) and Azure, where Terraform and Ansible
+created a VM and an AKS cluster for the IaC run and destroyed them afterwards. Diagram sources:
 `python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG next to each PNG).
 
 ## Repo structure
 
-Grouped by role: data pipelines (Layer 1), ML code (Layer 2), online services, infrastructure. Repo paths differ from
-the paths inside the containers (`pipelines/spark/` is `/opt/jobs`, `ml/` is `/opt/ml` in the ML image).
+Grouped by role: data pipelines (Layer 1), ML code (Layer 2), online services, agents (Layer 3), infrastructure. Repo
+paths differ from the paths inside the containers (`pipelines/spark/` is `/opt/jobs`, `ml/` is `/opt/ml` in the ML
+image).
 
 ```
-pipelines/            Layer 1 data pipelines
-  airflow/            DAGs (DP1-DP3, DataHub ingestion, Feast materialization, drift monitoring), connections/variables bootstrap
+pipelines/            Layer 1 data pipelines, and the Layer 3 RAG pipeline's CI
+  airflow/            DAGs (DP1-DP3, DataHub ingestion, Feast materialization, drift monitoring, rag_ingest), connections/variables bootstrap
   spark/              Spark jobs (mounted at /opt/jobs), benchmarks (skew, storage layout, 100 GB)
   dbt/                dbt-spark project: gold models and tests
   flink/              PyFlink jobs (mounted at /opt/flink/jobs) and their check scripts
-ml/                   Layer 2 ML code (Dockerfile = the fraud/ml-train code image)
-  feature_repo/       Feast repo: entities, sources, feature views, on-demand features, feature services
+  rag/                Jenkinsfile of the RAG data pipeline
+ml/                   Layer 2 ML code (Dockerfile = the fraud/ml-train code image, also the image the RAG steps run in)
+  feature_repo/       Feast repo card_fraud: entities, sources, feature views, on-demand features, feature services
+  feature_repo_kb/    Feast repo card_support_kb (Layer 3): policy chunks and their vectors (pgvector)
   fraud_ml/           library: the 5 classes above and the 7 pipeline steps
   pipelines/          Kubeflow pipeline train_fraud_model (.py) and its compiled .yaml
-  jobs/               long-running / scheduled: push jobs, drift job, drift forwarder
-  tools/              run by hand: replay_scoring, check_online, drift_by_day
+  jobs/               push jobs, drift job, drift forwarder, rag_ingest.py (RAG steps), Jenkinsfile.stream
+  tools/              run by hand: replay_scoring, check_online, drift_by_day, stream_smoke
   notebooks/          fraud_model.ipynb, executed with outputs (models/ = the saved models, gitignored)
 services/             scoring_api (FastAPI), drift_api (FastAPI), predictor (KServe custom model)
-generator/            synthetic source systems: data with injected problems, Kafka producer, the checks that prove them
+  card_support_mcp/   Layer 3 Web API + MCP server: app, tests, Helm chart (gateway route, tool access), Jenkinsfile
+agents/               Layer 3 agents: Helm chart (agents, A2A routes, KEDA, sandbox, network policy), prompts, two Jenkinsfiles,
+                      eval/ (dataset + Langfuse eval gate), registry/ (agentregistry catalog), locustfile
+generator/            synthetic source systems: data with injected problems, Kafka producer, checks; knowledge/ = the card documents
 infra/                docker-compose (profiles), secrets bootstrap (make_env.py, .env.example), bucket/topic init
   spark/ flink/ airflow/ hive/ ml/ mlflow/   the images built here (multi-stage, see docs/docker_optimization.md)
-  k8s/                kind cluster, KFP + KServe install, namespaces, RBAC, secrets, the KServe InferenceService
+  k8s/                kind cluster, KFP + KServe, the Layer 3 platform (llm-platform.sh, agentgateway.yaml, llm-d-router.yaml),
+                      observability, edge/ (NGINX routes), vault.sh + secrets.sh, tls.sh, supply-chain/ (cosign + Kyverno), dashboards/
+  jenkins/            Jenkins image, configuration as code (credentials, the 5 jobs), deploy ServiceAccount
+  terraform/          Azure: modules network / vm / aks, envs/dev
+  ansible/            roles that configure the VM and deploy the model server on it
+  benchmark/          inference-perf load test of the model server, results
   conf/               service configs (Spark, Hive, Trino, SeaweedFS, DataHub, notebook)
   sql/                Postgres serving SQL (indexes + EXPLAIN)
-docs/                 one file per major part; diagrams/ = the scripts that draw the pictures (platform.py: the 3 above)
+docs/                 one file per major part; diagrams/ = the scripts that draw the pictures (platform.py: the 4 above)
 ```
 
 ## Quick start
@@ -162,19 +220,40 @@ docker compose -f infra/docker-compose.yaml --profile core --profile batch --pro
 docker exec airflow-scheduler airflow dags backfill dp1_source_to_bronze -s 2026-10-12 -e 2026-10-15   # DP2/DP3 follow
 
 # Layer 2: Feast, MLflow, notebook, APIs (profile ml); KFP + KServe on kind
-docker build -f ml/Dockerfile -t fraud/ml-train:latest .           # code image: notebook, push jobs, KFP steps
+docker build -t fraud/ml:0.1 infra/ml                              # dependencies image, on top of fraud/spark:4.1.3 (batch profile build)
+docker build -f ml/Dockerfile -t fraud/ml-train:latest .           # code image: notebook, push jobs, KFP steps, RAG steps
 docker compose -f infra/docker-compose.yaml --profile core --profile ml up -d
 docker compose -f infra/docker-compose.yaml exec notebook feast -c /opt/ml/feature_repo apply   # order + bootstrap: docs/feature_store.md
 bash infra/k8s/up.sh && bash infra/k8s/platform.sh                 # kind cluster, KFP 2.17, KServe 0.21
 python ml/pipelines/train_fraud_model.py --run --label-as-of 2026-10-15                # see docs/ml_training.md
 ```
 
-UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP http://127.0.0.1:31888, Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8001/docs; passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, and keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
+### Layer 3
+
+The model servers run on the host first (llama.cpp start commands in [docs/llm_platform.md](docs/llm_platform.md#start-the-model-servers)),
+then the cluster scripts in this order; each is idempotent and reads its secrets from `infra/.env`.
+
+```bash
+sh infra/k8s/vault.sh                  # Vault + External Secrets; secrets.sh writes every secret into Vault
+sh infra/k8s/llm-platform.sh           # Gateway API, agentgateway, llm-d router, kagent, Agent Substrate, KEDA, agentregistry
+sh infra/k8s/observability.sh          # Prometheus + Grafana (dashboards), VictoriaLogs, Jaeger
+sh infra/k8s/tls.sh && sh infra/k8s/edge.sh   # HTTPS certificate (DuckDNS, Let's Encrypt), NGINX Ingress + routes
+.venv/Scripts/python generator/load_source.py --part documents && docker exec airflow-scheduler airflow dags trigger rag_ingest
+sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines build, test and deploy the MCP server and the agents
+arctl apply -f agents/registry/catalog.yaml   # the registry catalog (kubectl -n agentregistry port-forward svc/agentregistry 12121:12121)
+```
+
+By hand instead of Jenkins: `docker build --target runtime -t localhost:5001/card-support-mcp:<tag> services/card_support_mcp`,
+push it, `helm upgrade --install card-support-mcp services/card_support_mcp/chart -n card-support --atomic --set image.tag=<tag>`,
+then `helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml` and
+the same with `card-support-coordinator` / `values-coordinator.yaml`.
+
+UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP http://127.0.0.1:31888, Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8001/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
 
 Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data_characteristics.md](docs/data_characteristics.md).
 
 ## Docs
-- [Architecture](docs/architecture.md): overview, system diagram with every numbered arrow, deployment.
+- [Architecture](docs/architecture.md): overview, system diagrams with every numbered arrow (Layers 1-2 and Layer 3), deployment.
 - [Data characteristics](docs/data_characteristics.md): datasets, injected problems, measured numbers.
 - [Schema design](docs/schema_design.md): zones, naming, grain of every table, gold ER diagram.
 - [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest (schema evolution demos), DP2 silver (dedup, unit normalization, HCMC chart), dbt gold star schema, labels with label delay, DP3 features.
@@ -187,8 +266,15 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - [Novel idea 2: OpenLineage](docs/novel_openlineage.md): lineage from every Spark job without a line of lineage code.
 - [Docker optimization](docs/docker_optimization.md) and the [100 GB run](docs/scale_100g.md).
 - Layer 2: [Feature store](docs/feature_store.md), [ML training](docs/ml_training.md), [Serving](docs/serving.md), [Drift](docs/drift.md), [Testing](docs/testing.md).
+- Layer 3: [LLM platform](docs/llm_platform.md): llama.cpp behind the llm-d InferencePool, agentgateway's LLM route (API keys, rate limits, PII masking), the agents' global model config.
+- Layer 3: [LLM benchmark](docs/llm_benchmark.md): inference-perf against the model server, three configurations, the prompt-cache cap kept, speculative decoding.
+- Layer 3: [Agents](docs/agents.md): the MCP server (FastAPI, pydantic, async, Helm rolling update with automatic rollback), the three agents (KEDA, network policies, Substrate sandbox), MCP and A2A gateway policies, chat in the kagent UI, the agent registry.
+- Layer 3: [RAG pipeline](docs/rag_pipeline.md): documents to chunks to vectors in Feast, run on Airflow, checks and lineage in DataHub.
+- Layer 3: [CI/CD](docs/cicd.md): five Jenkins pipelines (RAG data pipeline, MCP server, data agents, coordinator, stream feature jobs), configured as code, secrets as Jenkins credentials, the stage views and runs of each.
+- Layer 3: [Testing](docs/testing.md#layer-3-the-card-support-mcp-server): MCP server 97 tests at 97.84% coverage, EP/BVA, hypothesis with crosshair, mutmut 243/245, locust load tests of the Web API and the agents.
+- Layer 3: [Edge and secrets](docs/edge_security.md): NGINX Ingress for every UI and the Web API, HTTPS with a Let's Encrypt wildcard, basic auth and rate limits, HashiCorp Vault + External Secrets.
+- Layer 3: [Observability](docs/observability.md): Web API, compute, LLM and agent dashboards in Grafana, logs in VictoriaLogs, traces in Jaeger.
 - Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS on Azure) and Ansible roles that deploy the model server to the VM.
-- Layer 3: [LLM benchmark](docs/llm_benchmark.md): inference-perf against the llama.cpp model server, three configurations, the prompt-cache cap kept.
 - Layer 3: [A/B testing](docs/ab_testing.md): an agent's model config and two LLM versions split at the gateway, a Grafana dashboard per side, evaluations, the decisions.
 - Layer 3 novel idea 1: [Eval gate in the agents' CD](docs/novel_eval_gate.md): every deploy answers an eval dataset as a Langfuse experiment; below 0.6 accuracy the release rolls back.
 - Layer 3 novel idea 2: [Only signed images run](docs/novel_supply_chain.md): CI signs the MCP image with cosign; Kyverno admits only signed images of the platform registry in card-support.
