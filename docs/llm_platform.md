@@ -126,7 +126,8 @@ spec:
         response: *pii
 ```
 
-The same policy called from Git Bash through a port-forward to the gateway. `chat` is a shell function defined
+Below, the same policy is called from Git Bash through a port-forward to the gateway. `chat` is a shell function
+defined
 earlier in the session: one curl `POST /v1/chat/completions` with model `qwen3-8b`, `max_tokens` 40 and the given
 prompt. The keys come from the environment; only their variable names appear:
 

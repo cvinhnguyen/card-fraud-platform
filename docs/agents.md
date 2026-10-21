@@ -71,7 +71,7 @@ last good revision by itself. MCP sessions are stateless (the gateway backend se
 any replica can answer any call and a rolling update does not break a conversation.
 
 The rolling update settings are in the chart
-([`deployment.yaml` L8-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/deployment.yaml#L8-L15)),
+([`deployment.yaml` L8-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/deployment.yaml#L8-L15));
 the fallback is the deploy stage of the pipeline
 ([`Jenkinsfile` L62-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/Jenkinsfile#L62-L70)):
 
@@ -240,7 +240,8 @@ spec:
             - {{ join " || " $rules | quote }}
 ```
 
-The policies called from Git Bash through a port-forward to the gateway. `mcp` is a shell function defined earlier
+In the screenshots below, the policies are called from Git Bash through a port-forward to the gateway. `mcp` is a
+shell function defined earlier
 in the session: one curl `POST /mcp` with the given key as a Bearer token and the given JSON-RPC body (the server is
 stateless, so `tools/list` needs no `initialize` first). The keys come from the environment; only their variable
 names appear:

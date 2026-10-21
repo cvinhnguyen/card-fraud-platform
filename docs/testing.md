@@ -127,6 +127,10 @@ docker run --rm card-support-mcp:test                      # pytest + coverage g
 |---|---:|---:|
 | Card support MCP server | 97 | 97.84% |
 
+The two commands run from Git Bash on 2026-10-21, on the current code:
+
+![Git Bash: docker build of the test stage, then 97 passed and total coverage 97.84% against the 90% gate](images/test_mcp_coverage.png)
+
 From the console log of Jenkins build #10 of `card-support-mcp` (commit `a1d4e12`), stage "Unit tests + coverage gate":
 
 ```text
@@ -209,7 +213,11 @@ declarations, listed under `do_not_mutate`.
 docker run --rm card-support-mcp:test sh -c "mutmut run >/dev/null 2>&1; mutmut results --all true"
 ```
 
-The same build, stage "Mutation test":
+Run from Git Bash on 2026-10-21 (results saved to a temp file, then counted per status):
+
+![Git Bash: mutmut on the test image, 243 killed and 2 survived, and the two survivors](images/test_mcp_mutmut.png)
+
+The same mutation test in Jenkins build #10, stage "Mutation test":
 
 ```text
 [2026-10-21T09:13:34.825Z] + docker run --rm card-support-mcp:test-a1d4e12 sh -c mutmut run >/dev/null 2>&1; mutmut results --all true

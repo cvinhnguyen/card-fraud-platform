@@ -98,7 +98,7 @@ spec:
 ![KServe: the InferenceService and its predictor pod, a direct V1 predict call, and two Scoring API calls](images/kserve_serving.png)
 
 Checked again on 2026-10-21 from Git Bash: the InferenceService is Ready with one predictor pod, and a direct V1
-`predict` call through the NodePort answers with `model_version` 1. Then two payments on the same card through the
+`predict` call through the NodePort answers with `model_version` 1. Then two payments on the same card go through the
 Scoring API. The first one fell back: the machine was loaded, the feature lookup ran past its time budget, and
 `FallbackPolicy` approved the 450,000 VND payment by rule (`model_version: fallback`). The second one was scored by
 KServe: 45,000,000 VND online is declined (0.2221, `fallback: false`).

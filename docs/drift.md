@@ -19,7 +19,7 @@ fields per payment, the core-banking export, and the **ground truth** `labels/` 
 `(transaction_id, is_fraud)`. `--upload` puts the export and the labels on S3
 (`s3://lakehouse/ml/ground_truth/labels.parquet`); DP1-DP3 then process the new days as any other.
 
-The whole drift is configuration, not code,
+The drift is defined entirely in the generator's configuration,
 [`generator/config.yaml` L97-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/config.yaml#L97-L112):
 
 ```yaml

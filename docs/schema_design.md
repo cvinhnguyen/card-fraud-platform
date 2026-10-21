@@ -147,6 +147,16 @@ erDiagram
     }
 ```
 
+The platform's tools record the same relations. dbt's docs site draws `fact_transaction` from its
+sources and the dimensions it joins ([novel_dbt.md](novel_dbt.md)):
+
+![dbt docs: fact_transaction built from silver.stg_transactions, dim_card and dim_customer (SCD2); sources in green](images/dbt_docs_lineage.png)
+
+DataHub shows the feature table built from `gold.fact_transaction` and `bronze.raw_disputes`
+([datahub.md](datahub.md)):
+
+![DataHub: feat_card_txn_stats_daily built from gold.fact_transaction and bronze.raw_disputes](images/datahub_lineage_feat.png)
+
 ## Design notes
 
 - In the SCD2 `dim_customer`, `valid_from_ts` is inclusive, `valid_to_ts` exclusive, and the open version ends at

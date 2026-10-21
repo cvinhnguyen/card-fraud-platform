@@ -84,24 +84,7 @@ spec:
 The controller and the Ingresses in the cluster (the last line is KServe's own Istio ingress from
 [serving.md](serving.md), not part of the edge):
 
-```text
-$ kubectl -n nginx-ingress get pods,svc
-NAME                                            READY   STATUS    RESTARTS       AGE
-pod/nginx-ingress-controller-779d6dc759-wbr6g   1/1     Running   10 (39m ago)   20h
-
-NAME                               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
-service/nginx-ingress-controller   ClusterIP   10.96.153.207   <none>        80/TCP,443/TCP   21h
-
-$ kubectl get ingress -A
-NAMESPACE       NAME             CLASS   HOSTS                                                                     ADDRESS   PORTS     AGE
-agentregistry   agent-registry   nginx   registry.cvinhnguyen.duckdns.org                                                    80, 443   21h
-card-support    web-api          nginx   api.cvinhnguyen.duckdns.org                                                         80, 443   21h
-kagent          agent-ui         nginx   agents.cvinhnguyen.duckdns.org                                                      80, 443   21h
-monitoring      grafana          nginx   grafana.cvinhnguyen.duckdns.org                                                     80, 443   21h
-monitoring      logs             nginx   logs.cvinhnguyen.duckdns.org                                                        80, 443   21h
-monitoring      traces           nginx   traces.cvinhnguyen.duckdns.org                                                      80, 443   21h
-serving         card-fraud       istio   card-fraud-serving.example.com,card-fraud-predictor-serving.example.com             80        45h
-```
+![Git Bash: the NGINX Ingress Controller pod and service, and the six Ingresses of class nginx with their hosts on ports 80 and 443](images/edge_ingress.png)
 
 Every host opened in Chrome, logged in as `admin`:
 
@@ -132,28 +115,10 @@ sh infra/k8s/secrets.sh   # cert + key -> Vault -> nginx-ingress/wildcard-tls
 sh infra/k8s/edge.sh      # wildcard TLS on, HTTPS hosts
 ```
 
-What a client sees. The certificate verifies against the trust store, and plain HTTP is redirected to HTTPS:
+What a client sees, from Git Bash: openssl reads the certificate the Web API presents and verifies it against the
+CA bundle, and plain HTTP is redirected to HTTPS:
 
-```text
-$ curl -sv -o /dev/null https://api.cvinhnguyen.duckdns.org/healthz 2>&1 | grep -E 'SSL connection|subject|date:|issuer|verify ok|< HTTP'
-* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 / x25519 / id-ecPublicKey
-*  subject: CN=*.cvinhnguyen.duckdns.org
-*  start date: Oct 20 16:08:50 2026 GMT
-*  expire date: Jan 18 16:08:49 2027 GMT
-*  subjectAltName: host "api.cvinhnguyen.duckdns.org" matched cert's "*.cvinhnguyen.duckdns.org"
-*  issuer: C=US; O=Let's Encrypt; CN=YE1
-*  SSL certificate verify ok.
-< HTTP/1.1 401 Unauthorized
-
-$ curl -sI http://api.cvinhnguyen.duckdns.org/healthz
-HTTP/1.1 301 Moved Permanently
-Server: nginx/1.31.6
-Date: Wed, 21 Oct 2026 13:58:52 GMT
-Content-Type: text/html
-Content-Length: 169
-Connection: keep-alive
-Location: https://api.cvinhnguyen.duckdns.org:443/healthz
-```
+![Git Bash: certificate *.cvinhnguyen.duckdns.org issued by Let's Encrypt YE1, valid until 2027-01-18, Verify return code 0 (ok), and HTTP 301 to https](images/edge_tls.png)
 
 ### Login and rate limit
 
@@ -162,33 +127,11 @@ Without a login, Chrome shows its own sign-in dialog for the realm NGINX sends:
 ![Chrome's basic-auth dialog on agents.cvinhnguyen.duckdns.org](images/edge_basic_auth_prompt.png)
 
 Status codes per host without a login, with a wrong password and with the `admin` login (Grafana is not behind basic
-auth and redirects to its own login page), then the Web API paths:
+auth and redirects to its own login page), then the Web API paths, then the rate limit: the Web API allows 5 requests
+per second per client IP with a burst of 10, and 40 requests sent at once get 13 answers and 27 `429`. The password
+comes from the environment; only its variable name appears:
 
-```text
-$ for h in agents registry logs traces grafana; do
-    echo $h $(code https://$h.$D/) $(code -u admin:wrong https://$h.$D/) $(code -u "admin:$EDGE_ADMIN_PASSWORD" https://$h.$D/)
-  done      # code() = curl -s -o /dev/null -w "%{http_code}"; columns: no login, wrong password, admin
-agents    401 401 200
-registry  401 401 200
-logs      401 401 200
-traces    401 401 200
-grafana   302 302 302
-
-$ for p in /v1/cards/card_00006087 /healthz /mcp /metrics /docs; do echo $p $(code -u "admin:$EDGE_ADMIN_PASSWORD" https://api.$D$p); done
-/v1/cards/card_00006087  200
-/healthz                 200
-/mcp                     404
-/metrics                 404
-/docs                    404
-```
-
-The Web API allows 5 requests per second per client IP with a burst of 10. 40 requests sent at once:
-
-```text
-$ seq 40 | xargs -P 40 -I{} curl -s -o /dev/null -w "%{http_code}\n" -u "admin:$EDGE_ADMIN_PASSWORD" https://api.$D/healthz | sort | uniq -c
-     12 200
-     28 429
-```
+![Git Bash: 401 / 401 / 200 on the four protected hosts and 302 on Grafana; /v1 and /healthz answer, /mcp /metrics /docs are 404; 40 requests at once give 13 x 200 and 27 x 429](images/edge_auth.png)
 
 The same limit in the browser, right after such a burst:
 
@@ -247,44 +190,10 @@ htpasswd="admin:$(printf '%s' "$(val EDGE_ADMIN_PASSWORD)" | openssl passwd -apr
 for ns in kagent agentregistry monitoring card-support; do secret "$ns" edge-basic-auth nginx.org/htpasswd htpasswd="$htpasswd"; done
 ```
 
-Vault in the cluster (key names only, values are never listed) and the role External Secrets logs in with:
+Below are Vault's status and the role External Secrets logs in with. The root token of dev mode stays inside the Vault
+pod (`$VAULT_DEV_ROOT_TOKEN_ID` is expanded there, never typed or shown):
 
-```text
-$ kubectl -n vault exec vault-0 -- vault status
-Key             Value
----             -----
-Seal Type       shamir
-Initialized     true
-Sealed          false
-Total Shares    1
-Threshold       1
-Version         2.0.4
-Build Date      2026-08-03T16:14:36Z
-Storage Type    inmem
-Cluster Name    vault-cluster-fdad89ac
-Cluster ID      aa388810-675a-93b4-0f0e-9bb76dd8b727
-HA Enabled      false
-
-$ kubectl -n vault exec vault-0 -- vault read auth/kubernetes/role/external-secrets
-Key                                         Value
----                                         -----
-alias_metadata                              map[]
-alias_name_source                           serviceaccount_uid
-bound_service_account_names                 [external-secrets]
-bound_service_account_namespace_selector    n/a
-bound_service_account_namespaces            [external-secrets]
-policies                                    [card-fraud-read]
-token_bound_cidrs                           []
-token_explicit_max_ttl                      0s
-token_max_ttl                               0s
-token_no_default_policy                     false
-token_num_uses                              0
-token_period                                0s
-token_policies                              [card-fraud-read]
-token_ttl                                   1h
-token_type                                  default
-ttl                                         1h
-```
+![Git Bash: vault status (2.0.4, unsealed, in-memory dev mode) and the Kubernetes auth role external-secrets bound to the operator's ServiceAccount with the read-only policy card-fraud-read](images/vault_config.png)
 
 The secrets in Vault (names only, `vault kv list` never prints values) and every ExternalSecret synced from them:
 

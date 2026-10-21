@@ -36,7 +36,7 @@ SPARK_CONF = {
 }
 ```
 
-No job and no DAG contains a lineage statement.
+Apart from these settings, no Spark job or DAG declares lineage.
 
 ## Proof 1: lineage of the whole pipeline, with no lineage code
 
@@ -56,6 +56,10 @@ Each Spark action becomes one DataHub job (`<dag>.<action>.<table>`, e.g.
 wrote (`Produces`). The tables carry hive URNs (`bronze.raw_transactions`), the same names the GE assertions use, so
 lineage and validation land on the same entity. Postgres inputs keep their source identity
 (`core_banking.public.customers`).
+
+![DataHub: bronze.raw_transactions, produced by the Spark action create_table.bronze_raw_transactions in the pipeline dp1_source_to_bronze (named after the DAG)](images/datahub_lineage_bronze.png)
+
+![DataHub: silver.stg_transactions between DP2's MERGE job and the jobs that read it](images/datahub_lineage_silver.png)
 
 ## Proof 2: column-level lineage
 
@@ -83,6 +87,8 @@ point is plain Spark,
 [`build_gold_pyspark.py` L123-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_gold_pyspark.py#L123-L136)) appeared in DataHub
 with its 5 output tables and 17 job-dataset edges on its first run, column lineage included. With the course's
 approach the same job would need its inputs and outputs written into a DAG first.
+
+![DataHub: lineage of gold_pyspark.fact_transaction, created by the listener alone](images/datahub_new_job_lineage.png)
 
 | | Course (L12): `inlets` / `outlets` / emitter | OpenLineage |
 |---|---|---|

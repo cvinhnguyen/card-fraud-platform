@@ -29,6 +29,15 @@ The Airflow image after the change also carries the lakehouse jars (it copies Sp
 0.65 GB that the old image downloaded at run time instead. Without them the same Dockerfile is about 3.85 GB of
 layers (4.50 minus the jars), hence the -29%.
 
+On 2026-10-21 Docker reports the sizes below, and Flink and Spark match the table. The Airflow image is bigger today
+(7.58 GB) because later layers added to it after this measurement: Layer 2 put a Feast venv in it (Feast, MLflow,
+XGBoost, scikit-learn, kfp, deltalake) and Layer 3 the Docker provider for the RAG DAG
+([`infra/airflow/Dockerfile`](../infra/airflow/Dockerfile)). `docker history` of the Flink image shows what the
+multi-stage build adds on top of the base image: the venv copied from the build stage (434 MB), the apt layer and
+the Kafka connector jar.
+
+![Git Bash: docker images of the four platform images, and docker history of fraud/flink:2.2.1](images/docker_images_sizes.png)
+
 ## What made the images big
 
 Flink (`fraud/flink`, before 2.95 GB): one `RUN` installed `python3 python3-pip python3-venv` with apt and
