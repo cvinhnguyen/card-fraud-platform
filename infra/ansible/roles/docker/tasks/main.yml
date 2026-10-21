@@ -1,0 +1,10 @@
+# Docker engine + compose plugin from the Ubuntu archive (no third-party apt repo to trust).
+- name: Docker engine and compose plugin
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2]
+
+- name: Docker running and started at boot
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true

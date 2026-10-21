@@ -1,0 +1,36 @@
+{
+  "global": {
+    "warnings": [],
+    "errors": []
+  },
+  "reports": {
+    "summary_lifecycle_metrics.json": {
+      "warnings": [],
+      "errors": []
+    },
+    "stage_0_lifecycle_metrics.json": {
+      "warnings": [],
+      "errors": []
+    },
+    "stage_1_lifecycle_metrics.json": {
+      "warnings": [],
+      "errors": []
+    },
+    "stage_2_lifecycle_metrics.json": {
+      "warnings": [],
+      "errors": []
+    },
+    "inference-perf.partial.stage_0.yaml": {
+      "warnings": [],
+      "errors": []
+    },
+    "inference-perf.partial.stage_1.yaml": {
+      "warnings": [],
+      "errors": []
+    },
+    "inference-perf.partial.stage_2.yaml": {
+      "warnings": [],
+      "errors": []
+    }
+  }
+}

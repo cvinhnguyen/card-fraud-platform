@@ -1,0 +1,27 @@
+# Base OS: packages and a host firewall (deny inbound except SSH and the service ports) behind the Azure NSG.
+- name: Base packages
+  ansible.builtin.apt:
+    name: [ufw, curl, unattended-upgrades]
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Allow SSH before the firewall goes up
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow the service ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ predictor_port }}"
+    - "{{ node_exporter_port }}"
+
+- name: Firewall on, deny other inbound
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming

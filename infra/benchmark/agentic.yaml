@@ -1,0 +1,35 @@
+# inference-perf 0.7.0 config: agent-shaped load on the model server. 3 prompt groups = the 3 agents, each with its
+# own 1,500-token system prompt (instructions + tool definitions) shared by all its calls, then a 100-token question
+# and a 150-token answer. Sizes come from llama.cpp's counters on real agent traffic (79 % of prompt tokens were
+# prefix-cache hits, longest prompt 1.8k tokens). Closed loop at 1, 2 and 4 requests in flight: the agents' replicas
+# (KEDA 2-4 per agent) each wait for their answer before the next call. run.sh fills in @BASE_URL@ and @API_KEY@.
+api:
+  type: chat
+  streaming: true
+server:
+  type: vllm              # inference-perf's OpenAI-compatible client
+  model_name: qwen3-8b
+  base_url: "@BASE_URL@"
+  api_key: "@API_KEY@"
+  ignore_eos: true        # every answer is exactly 150 tokens, so runs compare like for like
+tokenizer:
+  pretrained_model_name_or_path: Qwen/Qwen3-8B
+data:
+  type: shared_prefix
+  shared_prefix:
+    num_groups: 3
+    num_prompts_per_group: 16
+    system_prompt_len: 1500
+    question_len: 100
+    output_len: 150
+load:
+  type: concurrent
+  stages:
+    - {concurrency_level: 1, num_requests: 12}
+    - {concurrency_level: 2, num_requests: 16}
+    - {concurrency_level: 4, num_requests: 24}
+  request_timeout: 300
+report:
+  request_lifecycle: {summary: true, per_stage: true, per_request: false}
+storage:
+  local_storage: {path: reports}

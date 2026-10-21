@@ -4,6 +4,13 @@
 infra/conf/seaweedfs/s3.json
 infra/conf/datahub/user.props
 
+# terraform state, ansible inventory (VM IP)
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+infra/ansible/inventory/hosts.ini
+
 # generated data
 data/
 *.parquet

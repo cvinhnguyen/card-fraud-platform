@@ -1,0 +1,15 @@
+# Host metrics (CPU, memory, disk, network) for Prometheus, from the Ubuntu package.
+- name: node_exporter
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+
+- name: node_exporter running and started at boot
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
+
+- name: Metrics answer
+  ansible.builtin.uri:
+    url: "http://localhost:{{ node_exporter_port }}/metrics"
+    return_content: false

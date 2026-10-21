@@ -1,0 +1,8 @@
+services:
+  predictor:
+    build: .
+    image: fraud/predictor:local
+    command: ["--model_name", "{{ predictor_model_name }}"]
+    ports:
+      - "{{ predictor_port }}:8080"
+    restart: unless-stopped

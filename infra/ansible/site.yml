@@ -1,0 +1,17 @@
+# Configure the model-serving VM Terraform created (infra/terraform/envs/dev writes inventory/hosts.ini) and deploy
+# its services: base OS + firewall, Docker, the fraud model server (services/predictor, KServe V1 protocol, the
+# production model inside the image) and node_exporter. Every role is idempotent: a second run changes nothing.
+#
+#   macOS / Linux:  pip install ansible==14.5.0 && cd infra/ansible && ansible-playbook site.yml
+#   Windows (no Ansible): docker build -t fraud/ansible:14.5.0 infra/ansible, then
+#     docker run --rm -v "$PWD:/work:ro" -v "$HOME/.ssh/id_ed25519:/key:ro" fraud/ansible:14.5.0 ansible-playbook site.yml
+#
+# services/predictor/model/ must exist (python services/predictor/fetch_model.py pulls the production model).
+- name: Model-serving VM
+  hosts: serving
+  become: true
+  roles:
+    - common
+    - docker
+    - predictor
+    - node_exporter

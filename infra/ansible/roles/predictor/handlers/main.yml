@@ -1,0 +1,4 @@
+- name: Rebuild model server
+  community.docker.docker_compose_v2:
+    project_src: "{{ predictor_dir }}"
+    build: always

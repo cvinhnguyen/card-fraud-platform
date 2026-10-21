@@ -187,3 +187,5 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - [Novel idea 2: OpenLineage](docs/novel_openlineage.md): lineage from every Spark job without a line of lineage code.
 - [Docker optimization](docs/docker_optimization.md) and the [100 GB run](docs/scale_100g.md).
 - Layer 2: [Feature store](docs/feature_store.md), [ML training](docs/ml_training.md), [Serving](docs/serving.md), [Drift](docs/drift.md), [Testing](docs/testing.md).
+- Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS on Azure) and Ansible roles that deploy the model server to the VM.
+- Layer 3: [LLM benchmark](docs/llm_benchmark.md): inference-perf against the llama.cpp model server, three configurations, the prompt-cache cap kept.

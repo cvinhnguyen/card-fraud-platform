@@ -1,0 +1,4 @@
+predictor_dir: /opt/predictor
+predictor_port: 8080
+predictor_model_name: card-fraud
+node_exporter_port: 9100

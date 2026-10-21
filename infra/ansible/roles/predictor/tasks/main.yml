@@ -1,0 +1,44 @@
+# The fraud model server: the image is built on the VM from services/predictor (code + production model), so no
+# registry credential is needed. A code or model change rebuilds it (handler); otherwise it only has to be running.
+- name: Model server source and model
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../services/predictor/"
+    dest: "{{ predictor_dir }}/"
+    mode: u=rwX,go=rX
+  notify: Rebuild model server
+
+- name: Compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ predictor_dir }}/compose.yaml"
+    mode: "0644"
+  notify: Rebuild model server
+
+- name: Model server running
+  community.docker.docker_compose_v2:
+    project_src: "{{ predictor_dir }}"
+    build: policy
+
+- name: Flush the rebuild before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Model is loaded and ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ predictor_port }}/v1/models/{{ predictor_model_name }}"
+  register: ready
+  until: ready.status == 200 and ready.json.ready | default(false)
+  retries: 30
+  delay: 5
+
+- name: Smoke prediction (an empty instance, every feature missing)
+  ansible.builtin.uri:
+    url: "http://localhost:{{ predictor_port }}/v1/models/{{ predictor_model_name }}:predict"
+    method: POST
+    body_format: json
+    body: {instances: [{}]}
+  register: prediction
+  failed_when: prediction.json.predictions | length != 1
+
+- name: Served model version
+  ansible.builtin.debug:
+    msg: "model {{ prediction.json.model_version }}, score {{ prediction.json.predictions[0] }}"
