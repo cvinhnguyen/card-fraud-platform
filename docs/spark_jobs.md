@@ -17,7 +17,8 @@ docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spa
 Bronze is a faithful copy: duplicates, old province names and missing columns stay as they are. Each row gets
 `_ingested_at` and `_source` (the JDBC table or the source file path). Timestamps are read without a time zone
 (`preferTimestampNTZ`), as they are in the source. Each table is registered once in the Hive Metastore
-(`CREATE TABLE ... USING DELTA LOCATION`); the schema lives in the Delta log, so Trino reads it as `delta.bronze.*`.
+(`CREATE TABLE ... USING DELTA LOCATION`); the schema lives in the Delta log, so Trino reads it as `delta.bronze.*`
+([`pipelines/spark/ingest_bronze.py` L34-L58](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/ingest_bronze.py#L34-L58)).
 
 Result (2026-10-17, 1 GB data):
 
@@ -37,13 +38,36 @@ Result (2026-10-17, 1 GB data):
 
 The job reads the newest `export_date` in bronze and lists the export bucket, then reads only the newer folders.
 A second run with no new files prints `nothing new after 2026-10-16` and appends nothing.
-`--until YYYY-MM-DD` stops at a given export date.
+`--until YYYY-MM-DD` stops at a given export date. The append, with `mergeSchema` on the read and on the write
+([`pipelines/spark/ingest_bronze.py` L68-L83](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/ingest_bronze.py#L68-L83)):
+
+```python
+def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool) -> None:
+    """Append the export dates after the newest one already in bronze (and up to `until`)."""
+    table = "bronze.raw_transactions"
+    done = str(spark.table(table).agg(F.max("export_date")).first()[0]) if spark.catalog.tableExists(table) else ""
+    new = [d for d in export_dates(spark) if d > done and (until is None or d <= until)]
+    if not new:
+        print(f"{table}: nothing new after {done}")
+        return
+    # Read only the new folders: files up to 2024-07-01 have no auth_method / three_ds_version columns.
+    df = (spark.read.options(basePath=EXPORTS, mergeSchema=str(merge_schema).lower())
+          .parquet(*[f"{EXPORTS}/export_date={d}" for d in new])
+          .withColumn("_ingested_at", F.current_timestamp())
+          .withColumn("_source", F.col("_metadata.file_path")))
+    save(df.repartition("export_date"), "raw_transactions", "append",
+         partition_by="export_date", mergeSchema=str(merge_schema).lower())
+    print(f"{table}: +{len(new)} export dates ({new[0]} .. {new[-1]}), {spark.table(table).count():,} rows total")
+```
 
 ### Schema evolution demo
 
 Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns; later files have both.
 
-The first demo reads: `pipelines/spark/schema_evolution_read.py` reads every export file at once (33 s):
+The first demo reads: `pipelines/spark/schema_evolution_read.py` reads every export file at once, without and with
+`mergeSchema`
+([`pipelines/spark/schema_evolution_read.py` L18-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/schema_evolution_read.py#L18-L23)),
+in 33 s:
 
 | Read | Columns | Rows | Rows with `auth_method` |
 |---|---:|---:|---:|
@@ -93,7 +117,8 @@ The job stops if a city name is missing from `ref_province_mapping` (no silent N
 ### Incremental load
 
 Only bronze export dates newer than the newest `export_date` in silver are read. The batch is deduplicated, then
-`MERGE`d on `transaction_id`: an id already in silver is replaced only by a row with a later `created_ts`, so a re-run,
+`MERGE`d on `transaction_id`
+([`pipelines/spark/build_silver.py` L83-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_silver.py#L83-L91)): an id already in silver is replaced only by a row with a later `created_ts`, so a re-run,
 or a duplicate that lands in a later export, cannot double count. Test: deleting the last 6 export dates from silver
 (47,226 rows) and re-running the job merged exactly 47,226 rows back (7,999,526 total, 64 s).
 
@@ -141,7 +166,8 @@ The source already holds one row per customer version (`customer_id` + `updated_
 snapshot only records the state it sees at each run, so it would lose that history. `dim_customer` is therefore a
 model over `silver.stg_customers`: `lag()` compares a hash of the tracked attributes (unit, income band, risk tier, KYC
 level, name, date of birth) with the previous row, keeps only rows where something changed, and `lead()` gives
-`valid_to_ts` (exclusive; open-ended = 9999-12-31) and `is_current`.
+`valid_to_ts` (exclusive; open-ended = 9999-12-31) and `is_current`
+([`pipelines/dbt/models/gold/dim_customer.sql` L4-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/models/gold/dim_customer.sql#L4-L38)).
 
 The city is compared after normalization (`customer_unit`), so the relabel of old province names on 2025-07-01 is not a
 new version:
@@ -181,7 +207,9 @@ Joining on the current version puts every payment made before a move in the wron
 
 Reversed transactions (119,753) are left out: no money moved. Fraud labels are not in the fact because they change
 after it is written; they live in `gold.label_transaction` (below). `fact_transaction.customer_sk` is resolved with the
-point-in-time join when the row is built, so a query joins `dim_customer` on `customer_sk` without a date range.
+point-in-time join when the row is built
+([`pipelines/dbt/models/gold/fact_transaction.sql` L36-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/models/gold/fact_transaction.sql#L36-L39)),
+so a query joins `dim_customer` on `customer_sk` without a date range.
 The two small reference tables need no cleaning, so `dim_card` and `dim_merchant` read bronze directly.
 
 Tests (`dbt build`, 27/27 pass): unique / not-null keys, every fact key found in its dimension (`relationships`), and
@@ -212,6 +240,28 @@ new transactions are inserted with the disputes known so far, and older transact
 last run are flipped to `is_fraud = true`. Because disputes are at most 60 days late, the `MERGE` only scans the last
 3 months of partitions. Each run is one Delta version and its commit carries `label_as_of=D`
 (`DESCRIBE HISTORY` → `userMetadata`), so `VERSION AS OF` returns the labels exactly as they were known on D.
+The tag and the `MERGE`
+([`pipelines/spark/build_labels.py` L51-L67](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_labels.py#L51-L67)):
+
+```python
+    spark.conf.set("spark.databricks.delta.commitInfo.userMetadata", f"label_as_of={as_of}")
+    if not exists:
+        src.repartition("event_month").write.format("delta").partitionBy("event_month").save(PATH)
+        spark.sql(f"CREATE TABLE IF NOT EXISTS {TABLE} USING DELTA LOCATION '{PATH}'")
+    else:
+        # Older rows only need the label columns; disputes are at most 60 days late, so only the last 3 months change.
+        flips = (fraud.where(F.col("fraud_reported_ts") >= F.lit(start))
+                 .join(new_txn.select("transaction_id"), "transaction_id", "left_anti")
+                 .withColumn("is_fraud", F.lit(True)).withColumn("label_as_of", F.lit(as_of)))
+        oldest = (start - dt.timedelta(days=MATURITY_DAYS + 31)).strftime("%Y-%m")
+        (DeltaTable.forName(spark, TABLE).alias("t")
+         .merge(src.unionByName(flips, allowMissingColumns=True).alias("s"),
+                f"t.event_month >= '{oldest}' AND t.transaction_id = s.transaction_id")
+         .whenMatchedUpdate(condition="t.is_fraud <> s.is_fraud",
+                            set={c: f"s.{c}" for c in ("is_fraud", "fraud_reported_ts", "label_as_of")})
+         .whenNotMatchedInsertAll(condition="s.event_timestamp IS NOT NULL")
+         .execute())
+```
 
 Replay, one run per month end (about 60 s each):
 
@@ -272,5 +322,8 @@ were the same, but the row a training example joined to existed only because of 
 online store never holds such a row. Training and serving would have read different rows.
 
 Windows are `rangeBetween(-(N-1), 0)` over the day number, on one row per card and day, so one sort per card serves
-all windows. The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
-`raw_disputes` with plain date filters, and all 500 match.
+all windows
+([`pipelines/spark/build_features.py` L48-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_features.py#L48-L54)).
+The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
+`raw_disputes` with plain date filters, and all 500 match
+([`pipelines/spark/build_features.py` L78-L94](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_features.py#L78-L94)).

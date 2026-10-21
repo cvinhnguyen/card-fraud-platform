@@ -3,7 +3,9 @@
 ## The live period (`generator/generate_drift.py`)
 
 The 2-year history ends on 2026-10-15. The drift generator continues the same world (same customers, cards,
-merchants, devices: `world()` replays the setup with the same seeds) for 2026-10-16 .. 2026-11-15, driven by the
+merchants, devices: `world()` replays the setup with the same seeds,
+[`generator/generate_drift.py` L33-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/generate_drift.py#L33-L44))
+for 2026-10-16 .. 2026-11-15, driven by the
 `drift:` block of `generator/config.yaml`:
 
 | Phase | Days | Kind | What changes |
@@ -17,7 +19,8 @@ fields per payment, the core-banking export, and the **ground truth** `labels/` 
 `(transaction_id, is_fraud)`. `--upload` puts the export and the labels on S3
 (`s3://lakehouse/ml/ground_truth/labels.parquet`); DP1-DP3 then process the new days as any other.
 
-The whole drift is configuration (`generator/config.yaml`), not code:
+The whole drift is configuration, not code,
+[`generator/config.yaml` L97-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/config.yaml#L97-L112):
 
 ```yaml
 drift:                           # Layer 2: live period after the training data (generator/generate_drift.py)
@@ -64,19 +67,41 @@ The sale days move every input.
 ## Real-time detection (Drift API, `services/drift_api`)
 
 The Scoring API logs every decision to Kafka; `ml/jobs/drift_forwarder.py` posts them to the Drift API in batches of up
-to 1,000 (offsets committed after the API accepted the batch). Scoring never waits on drift detection.
+to 1,000 (offsets committed after the API accepted the batch,
+[`ml/jobs/drift_forwarder.py` L24-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/jobs/drift_forwarder.py#L24-L41)).
+Scoring never waits on drift detection.
 
 - Reference = `reference_profile.json` of the production model: decile edges of each input and of the score on
   the validation period, the share of rows per bin, plus a `missing` bin (a feature that suddenly goes NULL, a
   broken join or a dead stream, drifts too). `services/predictor/fetch_model.py` downloads it next to the model;
   run it before starting `drift-api` (compose bind-mounts the file, and a missing file becomes an empty directory).
-- Live histograms in Redis, one hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h).
+- Live histograms in Redis, one hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h,
+  [`services/drift_api/app/store.py` L24-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/drift_api/app/store.py#L24-L38)).
   The replicas keep no state: any number of them can count into the same buckets.
 - `GET /v1/drift` sums the last 15 minutes and computes the **PSI** per input,
   `sum (live% - ref%) * ln(live% / ref%)`: < 0.1 stable, 0.1-0.25 moderate, > 0.25 major. Below `MIN_EVENTS` (100,
   ~10 per decile bin) an input is `too_few_events` and cannot raise `drift`: the first live run reported PSI 12 and
-  `drift: true` from 9 events. Fallback decisions are
+  `drift: true` from 9 events
+  ([`services/drift_api/app/main.py` L75-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/drift_api/app/main.py#L75-L86)).
+  Fallback decisions are
   not counted (no model output). The gauges `drift_psi{input}` follow every report.
+
+The PSI of one input, with a floor `EPS = 1e-4` for empty bins,
+[`services/drift_api/app/psi.py` L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/drift_api/app/psi.py#L24-L34):
+
+```python
+def psi(reference: dict[str, float], live: dict[str, int]) -> float | None:
+    """PSI of live counts against reference shares (same bin labels); None without live data."""
+    total = sum(live.values())
+    if total == 0:
+        return None
+    out = 0.0
+    for b in set(reference) | set(live):
+        e = max(reference.get(b, 0.0), EPS)
+        a = max(live.get(b, 0) / total, EPS)
+        out += (a - e) * math.log(a / e)
+    return out
+```
 
 Replay caveat: `ml/tools/replay_scoring.py` plays a day of events in ~80 s (~1,000x). Kafka -> Flink -> Redis takes a
 few seconds, i.e. hours of replayed time, so a card's last authorizations are often not online yet when its next
@@ -147,7 +172,9 @@ replay covers the normal and `fraud_shift` phases, which the daily check below u
 
 ## Daily check with labels (DAG `drift_monitoring`)
 
-Concept drift needs labels. Every day the DAG runs `ml/jobs/drift_job.py` on the last 7 days:
+Concept drift needs labels. Every day the DAG
+([`drift_monitoring.py` L23-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L23-L51))
+runs `ml/jobs/drift_job.py` on the last 7 days:
 
 1. entity rows of the window = ground truth + request fields + device, `event_timestamp = txn_ts - 1 ms` (as
    training), point-in-time features from the Feast offline store with the production model's feature service;
@@ -155,7 +182,9 @@ Concept drift needs labels. Every day the DAG runs `ml/jobs/drift_job.py` on the
 3. PR-AUC, recall at 1% FPR and fraud rate on the window; PSI of every input and the score vs the model's reference;
 4. one MLflow run per check in experiment `card_fraud_monitoring` (the history of drift and live performance);
 5. branch: **retrain** when any PSI > 0.25 (`drift_psi_threshold`) or the PR-AUC fell more than 0.05
-   (`drift_pr_auc_drop`) below the model's own test PR-AUC; `trigger_retraining` starts the KFP pipeline
+   (`drift_pr_auc_drop`) below the model's own test PR-AUC
+   ([`ml/jobs/drift_job.py` L72-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/jobs/drift_job.py#L72-L76));
+   `trigger_retraining` starts the KFP pipeline
    `train_fraud_model` through the KFP API with `label_as_of` = the run's day.
 
 The new model still has to pass evaluation (better than production on the same test period) and a reviewer before

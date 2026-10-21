@@ -7,7 +7,7 @@ Layer 1 builds four images from `infra/*/Dockerfile`; every other Layer 1 contai
 | `fraud/spark:4.1.3` | `apache/spark:4.1.3-scala2.13-java17-python3-ubuntu` | Spark with the lakehouse jars baked in (Delta, S3A, Postgres JDBC, OpenLineage); new in P9 |
 | `fraud/flink:2.2.1` | `flink:2.2.1-scala_2.12-java17` | PyFlink 2.2.1 + Kafka connector for the `stream` profile |
 | `fraud/airflow:2.10.5` | `apache/airflow:2.10.5-python3.10` | Spark client (JRE + Spark 4.1.3), GE, dbt, DataHub plugin and CLI |
-| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | newer Postgres driver (SCRAM) + S3A jars; 3 small layers, nothing to trim |
+| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | newer Postgres driver (SCRAM) + S3A jars ([`infra/hive/Dockerfile` L5-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/hive/Dockerfile#L5-L9)); 3 small layers, nothing to trim |
 
 The Layer 2 images (`infra/ml`, `infra/mlflow`, `ml/Dockerfile`, `services/*/Dockerfile`) came later and are not part
 of this comparison.
@@ -72,26 +72,70 @@ directory. After a day of Airflow runs the worker's container layer held 94 GB o
 `infra/flink/Dockerfile` has a `build` stage with `python3-venv` that installs PyFlink into `/opt/venv`, replaces
 `pyflink/lib` (the same Flink 2.2.1 jars as `/opt/flink/lib`) with a symlink, and deletes `__pycache__` / `tests` and
 pip. The final stage only installs the `python3` runtime (37.6 MB layer) and copies the venv (434 MB layer, was
-893 MB). `PATH` points `python` (the default `python.executable` of the Python workers) at the venv.
+893 MB). `PATH` points `python` (the default `python.executable` of the Python workers) at the venv
+([`infra/flink/Dockerfile` L4-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/flink/Dockerfile#L4-L20)):
+
+```dockerfile
+FROM flink:2.2.1-scala_2.12-java17 AS build
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir apache-flink==2.2.1
+# pyflink/lib is a copy of the Flink 2.2.1 jars already in /opt/flink/lib (267 MB): link instead of copy.
+# Bytecode caches and test suites are not needed at run time.
+RUN cd /opt/venv/lib/python3.12/site-packages \
+    && rm -rf pyflink/lib && ln -s /opt/flink/lib pyflink/lib \
+    && find /opt/venv -depth \( -name __pycache__ -o -name tests \) -type d -exec rm -rf {} + \
+    && /opt/venv/bin/pip uninstall -y -q pip
+
+FROM flink:2.2.1-scala_2.12-java17
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+COPY --from=build --chown=flink:flink /opt/venv /opt/venv
+# `python` (the default python.executable of the Python workers) resolves to the venv
+ENV PATH=/opt/venv/bin:$PATH
+```
 
 ### Airflow: venvs built in a stage, only what a Spark client needs
 
 | Layer | Before | After | How |
 |---|---:|---:|---|
 | JRE + Spark | 282 + 518 MB | 282 + 484 MB | copy `bin/`, `jars/`, `python/lib` only (no `examples/`, `R/`, `data/`, `tests/`) |
-| Spark provider | 367 MB | (in 34 MB) | `--no-deps`: its `pyspark` dependency (342 MB) is never imported by `SparkSubmitOperator` |
-| DataHub CLI venv | 1.71 GB | | no `delta-lake` extra (it brought `deltalake` 135 MB and a second `pyspark` 343 MB) |
+| Spark provider | 367 MB | (in 34 MB) | `--no-deps`: its `pyspark` dependency (342 MB) is never imported by `SparkSubmitOperator` ([`infra/airflow/Dockerfile` L53-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/airflow/Dockerfile#L53-L60)) |
+| DataHub CLI venv | 1.71 GB | | no `delta-lake` extra (it brought `deltalake` 135 MB and a second `pyspark` 343 MB) ([`infra/airflow/Dockerfile` L19-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/airflow/Dockerfile#L19-L22)) |
 | GE + dbt + DataHub venvs | 2.46 GB together | 1.29 GB | built in the `venvs` stage, copied without `__pycache__`, `tests` and pip |
+
+The final stage copies the JRE, the parts of Spark a client needs and the venvs
+([`infra/airflow/Dockerfile` L36-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/airflow/Dockerfile#L36-L50)):
+
+```dockerfile
+FROM apache/airflow:2.10.5-python3.10
+USER root
+COPY --from=spark /opt/java/openjdk /opt/java/openjdk
+# A Spark client needs bin/, jars/ and the Python libs; examples, R, data, tests and sbin stay in the Spark image.
+COPY --from=spark /opt/spark/bin /opt/spark/bin
+COPY --from=spark /opt/spark/jars /opt/spark/jars
+COPY --from=spark /opt/spark/python/lib /opt/spark/python/lib
+COPY --from=spark /opt/spark/RELEASE /opt/spark/RELEASE
+ENV JAVA_HOME=/opt/java/openjdk \
+    SPARK_HOME=/opt/spark \
+    PATH=/opt/spark/bin:/opt/java/openjdk/bin:$PATH
+# dbt-artifacts is a named volume: created here so it is owned by group 0 and writable by uid 185 (spark)
+RUN mkdir -p /opt/spark/conf /opt/airflow/dbt-artifacts && chown airflow:0 /opt/airflow/dbt-artifacts \
+    && chmod g+rwx /opt/airflow/dbt-artifacts
+COPY --from=venvs --chown=airflow:0 /opt/venvs /opt/venvs
+```
 
 ### Spark: jars baked into a new image
 
 `infra/spark/Dockerfile` resolves the packages once in a build stage and copies only the 13 jars Spark does not ship
-into `/opt/spark/jars`, plus the `delta-spark` Python module. The whole Ivy directory is not copied because Ivy also
+into `/opt/spark/jars`, plus the `delta-spark` Python module
+([`infra/spark/Dockerfile` L6-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/spark/Dockerfile#L6-L21)). The whole Ivy directory is not copied because Ivy also
 pulls an older jackson that breaks Spark on the classpath. The image is 1.3 GB bigger than `apache/spark`, once,
 instead of 600 MB per application. Nothing is downloaded at run time any more, `spark.jars.packages` /
 `spark.jars.ivy` are gone from `spark-defaults.conf`, and the Thrift Server no longer needs its 13-jar
 `extraClassPath` workaround (which also carried a Git Bash path-conversion artifact since P4). The worker also cleans
-up finished applications' directories (`SPARK_WORKER_OPTS`).
+up finished applications' directories (`SPARK_WORKER_OPTS`,
+[`infra/docker-compose.yaml` L192-L195](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/docker-compose.yaml#L192-L195)).
 
 ## Checks after the rebuild
 
@@ -104,7 +148,8 @@ of 2026-10-18: the `find ... -name tests` cleanup had also deleted
 `dbt/include/global_project/macros/materializations/tests`, which is code (the `test` materialization and
 `get_where_subquery`), so all 14 dbt tests failed to compile (`'get_where_subquery' is undefined`,
 `No materialization 'test'`). numpy 2 has the same trap: it imports `numpy._core.tests._natype` at run time. The
-cleanup now skips the `dbt` and `numpy` packages (a few hundred KB kept). Functional checks on the images in the repo:
+cleanup now skips the `dbt` and `numpy` packages (a few hundred KB kept,
+[`infra/airflow/Dockerfile` L28-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/airflow/Dockerfile#L28-L34)). Functional checks on the images in the repo:
 
 | Check | Image | Result |
 |---|---|---|

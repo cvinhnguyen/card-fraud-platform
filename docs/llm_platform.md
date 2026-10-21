@@ -20,7 +20,7 @@ Install, after the kind cluster (`infra/k8s/up.sh`) and with the model servers r
 sh infra/k8s/llm-platform.sh   # Gateway API + Inference Extension CRDs, agentgateway, llm-d router, kagent, KEDA, ...
 ```
 
-![InferencePool, gateway backends, the global ModelConfig and the model server, as the cluster reports them](images/llm_platform.png)
+![Git Bash: the InferencePool and its pods, the gateway backends, the global ModelConfig of the agents, and the model llama.cpp serves](images/llm_platform.png)
 
 ## The model server (custom model)
 
@@ -92,13 +92,51 @@ AgentgatewayPolicy (several policies on the same route overwrite each other with
 The keys themselves live in Vault (`infra/k8s/secrets.sh`): the gateway only stores their hashes, and each client
 gets its key as a Kubernetes Secret synced from Vault.
 
-![The LLM route's policy, live: keys, PII masking and the rate limit](images/llm_gateway_policy.png)
+The policy as written
+([`infra/k8s/agentgateway.yaml` L86-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/agentgateway.yaml#L86-L113)):
+
+```yaml
+# Security and policy of the LLM route: who may call (API key), how much (tokens and requests), and no PII to or
+# from the model (masked, not rejected: a support chat should go on with the number hidden).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: llm
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: llm}]
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    rateLimit:
+      local:
+        - {requests: 120, unit: Minutes, burst: 20}
+        - {tokens: 60000, unit: Minutes}
+  backend:
+    ai:
+      promptGuard:
+        request: &pii
+          - regex:
+              action: Mask
+              builtins: [CreditCard, Email, PhoneNumber]
+              matches:
+                - "\\b0\\d{11}\\b"                       # Vietnamese citizen ID (CCCD): 12 digits, province code first
+                - "(?:\\+84|\\b0)[35789]\\d{8}\\b"      # Vietnamese mobile number
+        response: *pii
+```
+
+The same policy called from Git Bash through a port-forward to the gateway. `chat` is a shell function defined
+earlier in the session: one curl `POST /v1/chat/completions` with model `qwen3-8b`, `max_tokens` 40 and the given
+prompt. The keys come from the environment; only their variable names appear:
+
+![The LLM route's policy, live: no key and a wrong key get 401, the agents' key gets an answer, a phone and a card number are masked, 160 requests at once hit the rate limit](images/llm_gateway_policy.png)
 
 Without a key and with an unknown key the gateway answers 401; with the agents' key the request reaches llama.cpp
 through the pool. A phone number and a test card number in the prompt reach the model as `<masked>` and
-`<CREDIT_CARD>`. 160 requests sent at once: 109 answered, 46 got 429 from the rate limit, and 5 got 504 after waiting
-60 s for a connection to llama.cpp, whose two slots were busy with the requests already admitted. The script runs in a
-container on the kind network and reads the keys from `infra/.env` without printing them.
+`<CREDIT_CARD>`. 160 requests sent at once from a container on the kind network: 138 answered and 22 got 429 from
+the rate limit. In an earlier run of the same burst, 5 requests also got 504 after waiting 60 s for a connection to
+llama.cpp, whose two slots were busy with the requests already admitted.
 
 ## Global model config for the agents
 

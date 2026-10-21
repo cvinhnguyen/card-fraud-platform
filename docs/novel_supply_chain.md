@@ -49,7 +49,29 @@ check is unchanged.
 
 ## Proof it worked
 
-![Signing, two refused Pods and the admitted signed one](images/supply_chain_admission.png)
+Output of the demo on 2026-10-21, while Kyverno was installed (see Limits):
+
+```text
+$ sh infra/k8s/supply-chain.sh sign card-support-mcp 265b1ba
+Pushing signature to: registry:5000/card-support-mcp
+signed registry:5000/card-support-mcp@sha256:bad0d365964f919e8f4883bf7f29d574f31bb4f207efd77acb36c7537996b053
+
+$ kubectl -n card-support run unsigned --image=registry:5000/card-support-mcp:unsigned   # pushed, never signed
+Error from server: admission webhook "mutate.kyverno.svc-fail" denied the request: 
+
+resource Pod/card-support/unsigned was blocked due to the following policies 
+
+card-support-signed-images:
+  signed-by-ci: 'failed to verify image registry:5000/card-support-mcp:unsigned: .attestors[0].entries[0].keys: no signatures found'
+
+$ kubectl -n card-support run other-registry --image=alpine:3   # not the platform registry
+Error from server: admission webhook "validate.kyverno.svc-fail" denied the request: 
+
+resource Pod/card-support/other-registry was blocked due to the following policies 
+
+card-support-signed-images:
+  platform-registry-only: 'validation error: card-support runs images from the platform registry (registry:5000) only. rule platform-registry-only failed at path /spec/containers/0/image/'
+```
 
 - The MCP image `265b1ba` was signed; the Helm release now references `registry:5000/card-support-mcp`, and the Pod
   Kubernetes runs is `registry:5000/card-support-mcp:265b1ba@sha256:bad0d365...`: Kyverno verified the signature and

@@ -9,10 +9,21 @@ What reaches DataHub, and from where:
 
 | What | Sent by | How |
 |---|---|---|
-| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in `spark-defaults.conf` -> GMS `/openapi/openlineage/api/v1/lineage` (novel idea 2) |
+| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in [`spark-defaults.conf` L28-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/conf/spark/spark-defaults.conf#L28-L35) -> GMS `/openapi/openlineage/api/v1/lineage` (novel idea 2) |
 | DAGs, tasks, task runs | Airflow | DataHub's Airflow listener (`acryl-datahub-airflow-plugin`) |
-| Validation results (GE) | `publish_results` task of every validate stage | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
+| Validation results (GE) | `publish_results` task of every validate stage ([`common.py` L57-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/common.py#L57-L112)) | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
 | Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in `pipelines/airflow/dags/datahub_recipes/` |
+
+The `datahub_metadata` DAG runs one `datahub ingest` per recipe,
+[`pipelines/airflow/dags/datahub_metadata.py` L33-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/datahub_metadata.py#L33-L37):
+
+```python
+with DAG("datahub_metadata", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
+         default_args={**DEFAULT_ARGS, "depends_on_past": False}, doc_md=__doc__, tags=["governance"]) as dag:
+    for name in ["core_banking", "kafka_topics", "dbt"]:
+        recipe = {"kafka_topics": "kafka"}.get(name, name)
+        BashOperator(task_id=name, bash_command=f"{DATAHUB} ingest -c {RECIPES}/{recipe}.yml", env=ENV, append_env=True)
+```
 
 After the DP1 -> DP2 -> DP3 runs of 2026-10-12..15 and one run of `datahub_metadata`, DataHub holds (GraphQL
 counts):
@@ -54,7 +65,8 @@ the labels, and the PySpark comparison job.
 
 Each table's upstream job carries the DAG's name: `bronze.raw_transactions` is produced by
 `create_table.bronze_raw_transactions` in the pipeline `dp1_source_to_bronze` (OpenLineage job name =
-`spark.openlineage.appName` = the DAG id). The Airflow DAG itself is an entity next to it, with its documentation,
+`spark.openlineage.appName` = the DAG id, set for every Spark task in
+[`pipelines/airflow/dags/common.py` L39-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/common.py#L39-L44)). The Airflow DAG itself is an entity next to it, with its documentation,
 tasks and runs from the Airflow listener.
 
 ![bronze.raw_transactions: produced by a task of dp1_source_to_bronze](images/datahub_lineage_bronze.png)
@@ -67,6 +79,31 @@ Every GE expectation of the validate stages is an assertion on its table with on
 (from `run_results.json`) sit next to them. On `silver.stg_transactions`: the 10 GE checks of that table, all
 passing after the drill in docs/airflow.md (its failing run is in each assertion's history), and the dbt
 reconciliation test.
+
+Each GE result becomes an `AssertionInfo` (what is checked) and an `AssertionRunEvent` (this run's result). The
+assertion id is a hash of table, expectation and column, so every run lands on the same assertion,
+[`pipelines/airflow/dags/common.py` L72-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/common.py#L72-L89):
+
+```python
+    for r in report["results"]:
+        dataset = make_dataset_urn(r.get("platform", "hive"), r["table"], "PROD")   # Layer 3 results name feast
+        col = r["kwargs"].get("column")
+        urn = make_assertion_urn(datahub_guid({"table": r["table"], "expectation": r["expectation"], "column": col}))
+        info = AssertionInfoClass(type=AssertionTypeClass.DATASET, description=f"{r['expectation']} {r['kwargs']}",
+                                  datasetAssertion=DatasetAssertionInfoClass(
+                                      dataset=dataset, operator=AssertionStdOperatorClass._NATIVE_,
+                                      nativeType=r["expectation"],
+                                      nativeParameters={k: str(v)[:200] for k, v in r["kwargs"].items()},
+                                      scope=DatasetAssertionScopeClass.DATASET_COLUMN if col else DatasetAssertionScopeClass.DATASET_ROWS,
+                                      fields=[f"urn:li:schemaField:({dataset},{col})"] if col else []))
+        result = AssertionResultClass(type=AssertionResultTypeClass.SUCCESS if r["success"] else AssertionResultTypeClass.FAILURE,
+                                      unexpectedCount=r["unexpected_count"], rowCount=r["element_count"],
+                                      nativeResults={"observed_value": str(r["observed_value"]), "filter": str(r["filter"])})
+        emitter.emit(MetadataChangeProposalWrapper(entityUrn=urn, aspect=info))
+        emitter.emit(MetadataChangeProposalWrapper(entityUrn=urn, aspect=AssertionRunEventClass(
+            timestampMillis=now, runId=run_id, asserteeUrn=dataset, assertionUrn=urn,
+            status=AssertionRunStatusClass.COMPLETE, result=result)))
+```
 
 ![silver.stg_transactions: Quality summary](images/datahub_quality_silver.png)
 
@@ -90,10 +127,13 @@ which the tables written by path do not get from the listener.
   the internal schema registry, GMS's Kafka consumers then ask for the "latest version" of a schema, get
   `lookUpSchemaUnderSubject method not implemented` / `Error retrieving Avro value schema version for id 16`, and stop.
   OpenLineage events were accepted (HTTP 200) but entities had no properties and search returned 0. DataHub's own
-  quickstart sets those variables (and `SCHEMA_REGISTRY_SYSTEM_UPDATE`) on system-update only; doing the same fixed it.
+  quickstart sets those variables (and `SCHEMA_REGISTRY_SYSTEM_UPDATE`) on system-update only; doing the same fixed it
+  ([`infra/docker-compose.yaml` L464-L469](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/docker-compose.yaml#L464-L469)).
 - Our broker has auto-create off, and GMS still consumes the legacy topic `MetadataChangeEvent_v4` (and its failed /
-  audit topics), which system-update does not create. `infra/init_infra.py` creates them.
+  audit topics), which system-update does not create. `infra/init_infra.py` creates them
+  ([`infra/init_infra.py` L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/init_infra.py#L15-L17)).
 - DataHub (GMS 1 GB heap, OpenSearch 512 MB) fits next to batch + orch only without the Spark Thrift Server (see
   docs/airflow.md); in the 8 GB Docker VM, swapping made Docker's DNS fail.
 - `acryl-datahub-airflow-plugin` 1.6.x needs Airflow 3; 1.5.0.6 pins a `sqlglotc` build no longer on PyPI; 1.5.0.17
-  works with Airflow 2.10 and the v1.5.0.6 server.
+  works with Airflow 2.10 and the v1.5.0.6 server
+  ([`infra/airflow/Dockerfile` L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/airflow/Dockerfile#L54-L57)).

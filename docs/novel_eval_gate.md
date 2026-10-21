@@ -59,8 +59,6 @@ a second search in other words; the commit message in Langfuse records why). The
 
 ![Stage view: #20 failed at the eval gate, #21 and #23 passed](images/eval_gate_jenkins.png)
 
-![Console of the eval gate stage in #20, #21 and #23](images/eval_gate_runs.png)
-
 ![Stage view later: #27 failed in the eval gate, #29 passed it](images/cicd_card-support-data-agents.png)
 
 Build #20 is the gate doing its job on a problem it was not written for: the deploy itself was fine, but the platform

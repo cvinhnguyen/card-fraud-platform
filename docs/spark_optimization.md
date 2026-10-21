@@ -9,8 +9,12 @@ docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spa
 
 `stg_transactions JOIN merchants ON merchant_id`, full transaction rows, result written to the `noop` sink. The biggest
 merchant (an e-wallet top-up) has 23.9% of the rows and the top 10 have 70%. Setup: 1 worker, 8 cores, 2 GB executor;
-the data is unioned 4 times (32M rows, 2 GB of shuffle) so tasks are long enough to measure. Each method runs once to
-warm up, then 3 times; the table shows the median. Task numbers come from the slowest stage of the last run (Spark REST API).
+the data is unioned 4 times (32M rows, 2 GB of shuffle) so tasks are long enough to measure
+([`pipelines/spark/skew_join.py` L133-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L133-L136)).
+Each method runs once to warm up, then 3 times; the table shows the median
+([`pipelines/spark/skew_join.py` L104-L118](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L104-L118)).
+Task numbers come from the slowest stage of the last run (Spark REST API,
+[`pipelines/spark/skew_join.py` L63-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L63-L79)).
 
 | Method | What changes | Median (s) | Runs (s) | Slowest task | Median task |
 |---|---|---:|---|---:|---:|
@@ -22,6 +26,35 @@ warm up, then 3 times; the table shows the median. Task numbers come from the sl
 With salting, AQE and broadcast the skew is gone: their slowest stage is the scan of the transactions.
 Broadcast's 23.9 s is roughly the cost of reading the data, so the join itself costs about 27 s in the baseline,
 22 s with salting, 14 s with AQE and almost nothing with broadcast.
+
+The four methods differ only in these session settings and in the join call
+([`pipelines/spark/skew_join.py` L38-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L38-L60)):
+
+```python
+def configure(spark: SparkSession, method: str) -> None:
+    """Session settings per method; everything else is identical across runs."""
+    conf = {
+        "spark.sql.adaptive.enabled": method == "aqe",
+        "spark.sql.autoBroadcastJoinThreshold": -1,            # no automatic broadcast: it would hide the skew
+        "spark.sql.adaptive.autoBroadcastJoinThreshold": -1,
+        "spark.sql.adaptive.skewJoin.enabled": True,
+        "spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes": SKEW_THRESHOLD,
+        "spark.sql.adaptive.advisoryPartitionSizeInBytes": ADVISORY or SKEW_THRESHOLD,
+    }
+    for k, v in conf.items():
+        spark.conf.set(k, str(v).lower() if isinstance(v, bool) else str(v))
+
+
+def join(txn: DataFrame, merchants: DataFrame, method: str) -> DataFrame:
+    """transactions JOIN merchants on merchant_id with one of the four methods."""
+    if method == "salting":
+        txn = txn.withColumn("salt", (F.rand(7) * SALTS).cast("int"))
+        merchants = merchants.crossJoin(txn.sparkSession.range(SALTS).withColumnRenamed("id", "salt"))
+        return txn.join(merchants, ["merchant_id", "salt"]).drop("salt")
+    if method == "broadcast":
+        return txn.join(F.broadcast(merchants), "merchant_id")
+    return txn.join(merchants, "merchant_id")
+```
 
 ### Baseline: one task reads the hot key
 
@@ -48,7 +81,8 @@ task reads 17 MB, the slowest join task runs 0.5 s, nothing spills.
    with default settings this join is broadcast and never skews. The benchmark turns automatic broadcast off on purpose
    to show the problem.
 2. AQE for large-to-large joins: configuration only, no code change. Its defaults (a partition is skewed above
-   256 MB and 5 times the median) target big data; at 1 GB the threshold had to be lowered to 8 MB. At the 100 GB target
+   256 MB and 5 times the median) target big data; at 1 GB the threshold had to be lowered to 8 MB
+   ([`pipelines/spark/skew_join.py` L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L31)). At the 100 GB target
    the hot partition is several GB and the defaults apply.
 3. Salting only when AQE cannot help: skew inside an aggregation or a window (AQE splits join partitions only),
    join types AQE does not split (full outer), or a key so hot that the split pieces are still too big. It costs code,
@@ -65,7 +99,8 @@ everything else.
 ### Skew level sweep
 
 `--top-shares 0.3,0.6,0.8` re-assigns `merchant_id` in memory so the top 10 merchants get 30%, 60% or 80% of the rows
-(rows moved into the top group are spread evenly over the 10, so the biggest merchant is smaller than in the generated
+([`pipelines/spark/skew_join.py` L82-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L82-L89);
+rows moved into the top group are spread evenly over the 10, so the biggest merchant is smaller than in the generated
 data). The re-assignment is recomputed in every run and changes the plan (broadcast is about 4.5 s faster than on the
 generated data), so compare methods within a row, not across rows. Median of 3 runs, seconds; 8 cores, 32M rows.
 

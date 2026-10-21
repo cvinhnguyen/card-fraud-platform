@@ -70,11 +70,38 @@ kubectl wait --for=condition=Ready isvc/card-fraud -n serving        # Ready aft
 `GET /v1/models/card-fraud` -> `{"name":"card-fraud","ready":true}`. The image is 968 MB (the `kserve` package and
 its dependencies); the model inside is 243 KB.
 
-![KServe: the InferenceService and its predictor pod, a direct V1 predict call, and two Scoring API decisions served by it](images/kserve_serving.png)
+The InferenceService
+([`infra/k8s/kserve-card-fraud.yaml` L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/kserve-card-fraud.yaml#L4-L22)):
 
-Checked again on 2026-10-21: the InferenceService is Ready with one predictor pod, a direct V1 `predict` call through
-the NodePort answers with `model_version` 1, and the Scoring API scores two payments on the same card through it
-(`fallback=False`): 450,000 VND at a shop is approved (score 0.0009), 45,000,000 VND online is declined (0.2221).
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: card-fraud
+  namespace: serving
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 3
+    containers:
+      - name: kserve-container
+        image: localhost:5001/fraud/predictor:MODEL_VERSION
+        args: ["--model_name", "card-fraud", "--http_port", "8080"]
+        ports: [{containerPort: 8080, protocol: TCP}]
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: "1", memory: 512Mi}
+```
+
+![KServe: the InferenceService and its predictor pod, a direct V1 predict call, and two Scoring API calls](images/kserve_serving.png)
+
+Checked again on 2026-10-21 from Git Bash: the InferenceService is Ready with one predictor pod, and a direct V1
+`predict` call through the NodePort answers with `model_version` 1. Then two payments on the same card through the
+Scoring API. The first one fell back: the machine was loaded, the feature lookup ran past its time budget, and
+`FallbackPolicy` approved the 450,000 VND payment by rule (`model_version: fallback`). The second one was scored by
+KServe: 45,000,000 VND online is declined (0.2221, `fallback: false`).
 
 Thresholds in compose are model v1's validated ones (`T_LOW=0.0018`, `T_HIGH=0.058`, MLflow tags of the version):
 the scores are calibrated to the real 0.3% fraud rate, so a 0.5 cut-off would decline almost nothing.

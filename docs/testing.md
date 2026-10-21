@@ -127,9 +127,27 @@ docker run --rm card-support-mcp:test                      # pytest + coverage g
 |---|---:|---:|
 | Card support MCP server | 97 | 97.84% |
 
-![Card support MCP server: 97 tests passed, coverage 97.84% against a gate of 90%](images/test_mcp_coverage.png)
+From the console log of Jenkins build #10 of `card-support-mcp` (commit `a1d4e12`), stage "Unit tests + coverage gate":
 
-This is Jenkins build #10 of `card-support-mcp` (commit `a1d4e12`). The lines left uncovered are the constructors that
+```text
+[2026-10-21T09:13:33.528Z] Name              Stmts   Miss  Cover   Missing
+[2026-10-21T09:13:33.528Z] -----------------------------------------------
+[2026-10-21T09:13:33.528Z] app/__init__.py       0      0   100%
+[2026-10-21T09:13:33.528Z] app/clients.py       54      5    91%   27-29, 48-49
+[2026-10-21T09:13:33.528Z] app/logic.py         25      0   100%
+[2026-10-21T09:13:33.528Z] app/main.py          97      1    99%   41
+[2026-10-21T09:13:33.528Z] app/schemas.py       58      0   100%
+[2026-10-21T09:13:33.528Z] app/service.py       33      0   100%
+[2026-10-21T09:13:33.528Z] app/settings.py      11      0   100%
+[2026-10-21T09:13:33.528Z] -----------------------------------------------
+[2026-10-21T09:13:33.528Z] TOTAL               278      6    98%
+[2026-10-21T09:13:33.528Z] Required test coverage of 90% reached. Total coverage: 97.84%
+[2026-10-21T09:13:33.528Z] ======================== 97 passed, 1 warning in 7.65s =========================
+```
+
+![Jenkins stage view of card-support-mcp: #9 failed at signing, #10 and #11 passed every stage, tests and mutation test included](images/cicd_card-support-mcp.png)
+
+The lines left uncovered are the constructors that
 open the real Feast repos (`clients.py` 27-29, 48-49) and `build_service` (`main.py` 41), which wires them. They need
 the registry database and Redis, so the pipeline's smoke test exercises them on the deployed release instead.
 
@@ -191,7 +209,22 @@ declarations, listed under `do_not_mutate`.
 docker run --rm card-support-mcp:test sh -c "mutmut run >/dev/null 2>&1; mutmut results --all true"
 ```
 
-![Mutation test in Jenkins #10: 243 of 245 mutants killed, gate 80%](images/test_mcp_mutmut.png)
+The same build, stage "Mutation test":
+
+```text
+[2026-10-21T09:13:34.825Z] + docker run --rm card-support-mcp:test-a1d4e12 sh -c mutmut run >/dev/null 2>&1; mutmut results --all true
+[2026-10-21T09:13:52.789Z] + grep -c :  mutmut.txt
+[2026-10-21T09:13:52.789Z] + total=245
+[2026-10-21T09:13:52.789Z] + grep -c : killed mutmut.txt
+[2026-10-21T09:13:52.789Z] + killed=243
+[2026-10-21T09:13:52.789Z] + echo mutation score: 243 / 245 killed
+[2026-10-21T09:13:52.789Z] mutation score: 243 / 245 killed
+[2026-10-21T09:13:52.789Z] + grep -E : (survived|timeout|suspicious) mutmut.txt
+[2026-10-21T09:13:52.789Z]     app.logic.x_realtime_now__mutmut_11: survived
+[2026-10-21T09:13:52.789Z]     app.logic.x_rank__mutmut_15: survived
+[2026-10-21T09:13:52.789Z] + [ 245 -gt 0 ]
+[2026-10-21T09:13:52.789Z] + [ 99 -ge 80 ]
+```
 
 243 of 245 mutants are killed (99.2%). The two survivors, one in `realtime_now` and one in `rank`, were read by hand
 and are equivalent mutants: neither changes anything the tools return.

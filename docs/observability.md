@@ -6,18 +6,20 @@ into the `monitoring` namespace and published by NGINX at `https://grafana|logs|
 
 | Signal | Tool | Where it comes from |
 |---|---|---|
-| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the MCP server's `/metrics` (ServiceMonitor in its chart), agentgateway's proxy (PodMonitor in [`monitors.yaml`](../infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig) |
-| Logs | VictoriaLogs v1.53 + its Vector agent | every pod's stdout, shipped by the Vector DaemonSet, kept 3 days |
-| Traces | Jaeger 2.21 (OTLP) | agentgateway's tracing policy ([`tracing.yaml`](../infra/k8s/tracing.yaml)) for every LLM, MCP and A2A request, plus the spans the kagent agents export themselves; joined by the W3C `traceparent` header |
+| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the MCP server's `/metrics` (ServiceMonitor in its chart, [`servicemonitor.yaml` L1-L13](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/servicemonitor.yaml#L1-L13)), agentgateway's proxy (PodMonitor in [`monitors.yaml`](../infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig; both in [`monitors.yaml` L5-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/monitors.yaml#L5-L26)) |
+| Logs | VictoriaLogs v1.53 + its Vector agent | every pod's stdout, shipped by the Vector DaemonSet, kept 3 days ([`observability.sh` L26-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/observability.sh#L26-L30)) |
+| Traces | Jaeger 2.21 (OTLP) | agentgateway's tracing policy ([`tracing.yaml`](../infra/k8s/tracing.yaml)) for every LLM, MCP and A2A request, plus the spans the kagent agents export themselves ([`llm-platform.sh` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/llm-platform.sh#L50)); joined by the W3C `traceparent` header |
 
 The four dashboards are code: [`infra/k8s/dashboards/*.json`](../infra/k8s/dashboards), loaded into ConfigMaps
-labelled `grafana_dashboard=1`, which Grafana's sidecar picks up. The fourth one, A/B tests, is described in
+labelled `grafana_dashboard=1`, which Grafana's sidecar picks up
+([`infra/k8s/observability.sh` L20-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/observability.sh#L20-L25)). The fourth one, A/B tests, is described in
 [ab_testing.md](ab_testing.md).
 
 ## Web API metrics
 
 Dashboard "Card Support - Web API" ([`card-support-api.json`](../infra/k8s/dashboards/card-support-api.json)), from
-`http_requests_total` and `http_request_duration_seconds` of the MCP server (prometheus-fastapi-instrumentator) and
+`http_requests_total` and `http_request_duration_seconds` of the MCP server (prometheus-fastapi-instrumentator,
+[`services/card_support_mcp/app/main.py` L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L111)) and
 of the Scoring API: requests per second per handler, failed requests per second (4xx and 5xx), requests and failures
 in the time range, p95 latency per handler.
 
@@ -68,6 +70,31 @@ Dashboard "Card Support - Agent telemetry" ([`agent-telemetry.json`](../infra/k8
 | failures per tool call | `card_support_tool_calls_total{outcome="error"}`, counted by the MCP server per tool, plus non-2xx A2A responses per agent |
 | (extra) | tool calls per second by outcome, tool latency p95 (`card_support_tool_seconds`), agent replicas set by KEDA |
 
+The MCP server counts and times every tool call in one wrapper that all four tools go through
+([`services/card_support_mcp/app/main.py` L49-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L49-L71)):
+
+```python
+    calls = Counter("card_support_tool_calls_total", "Tool calls by tool and outcome", ["tool", "outcome"],
+                    registry=registry)
+    latency = Histogram("card_support_tool_seconds", "Tool latency", ["tool"], registry=registry,
+                        buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5))
+...
+    async def run(tool: str, call):
+        """Run one tool call, counting it by outcome and timing it (agent telemetry)."""
+        start = time.perf_counter()
+        try:
+            result = await call
+        except Exception as e:
+            calls.labels(tool, "error").inc()
+            log.exception("tool %s failed", tool)
+            # what the agent reads: some errors (httpx.ReadTimeout) have an empty message
+            raise RuntimeError(f"{tool} unavailable: {type(e).__name__}") from e
+        finally:
+            latency.labels(tool).observe(time.perf_counter() - start)
+        calls.labels(tool, "ok").inc()
+        return result
+```
+
 ![Agent telemetry: calls per agent and per tool, tool outcomes and latency, replicas](images/obs_agents.png)
 
 In the hour shown the gateway counted about 2 calls to the coordinator, 3 to the card data agent, 1 to the risk agent
@@ -86,6 +113,26 @@ method, the status and a `trace.id`, the key into Jaeger.
 
 ## Traces
 
+The gateway's spans come from one policy on the whole Gateway
+([`infra/k8s/tracing.yaml` L43-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/tracing.yaml#L43-L56)):
+
+```yaml
+# Gateway-wide (all routes): sample every request, a demo-sized load
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: tracing
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: agentgateway-proxy}]
+  frontend:
+    tracing:
+      url: http://jaeger.monitoring.svc.cluster.local:4318
+      protocol: HTTP
+      path: /v1/traces
+      randomSampling: "true"
+```
+
 A support question becomes one trace across the gateway, the coordinator and the agents it asks:
 
 ![Jaeger: the coordinator's traces of the last hour](images/obs_traces_search.png)
@@ -102,4 +149,5 @@ call, and the coordinator's last LLM call (1.8 s) writes the answer.
   (`kubectl -n monitoring rollout restart ds/victoria-logs-vector`).
 - Jaeger 2's API is `/api/v3/...` (`/api/services` is 404) and it keeps traces in memory (20,000 at most): a restart
   empties it.
-- Grafana needs 640Mi here: at 384Mi its search API timed out and the liveness probe killed it.
+- Grafana needs 640Mi here: at 384Mi its search API timed out and the liveness probe killed it
+  ([`infra/k8s/observability-values.yaml` L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/observability-values.yaml#L15-L17)).

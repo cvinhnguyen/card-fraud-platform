@@ -3,7 +3,8 @@
 One training procedure, two ways to run it: the notebook (`ml/notebooks/fraud_model.ipynb`, exploration and the
 first model) and the Kubeflow pipeline `train_fraud_model` (`ml/pipelines/train_fraud_model.py`, every later model, triggered by the
 drift DAG). Both call the same seven functions of `ml/fraud_ml/steps.py`, so the notebook and the pipeline run the
-same code.
+same code. The pipeline wires the seven steps in
+[`ml/pipelines/train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/pipelines/train_fraud_model.py#L102-L124).
 
 ```mermaid
 flowchart LR
@@ -19,7 +20,9 @@ Steps pass S3 paths and the MLflow run id, never data. Each run's files live in 
 
 A payment's label is final only 60 days after it (disputes arrive up to 60 days late). Training "as of" day D
 reads `gold.label_transaction` at the Delta version that `build_labels` wrote on D (each commit carries
-`userMetadata label_as_of=D`). That is time travel, so a retrain next month can rebuild exactly the labels this run
+`userMetadata label_as_of=D`, read back in
+[`ml/fraud_ml/data.py` L46-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/data.py#L46-L54)).
+That is time travel, so a retrain next month can rebuild exactly the labels this run
 saw. Rows from the last 60 days before D are immature and left out.
 
 ```
@@ -27,11 +30,14 @@ saw. Rows from the last 60 days before D are immature and left out.
 ```
 
 The split is by time, never random: a random split puts next month's fraud pattern into training. Each gap is 60
-days because a model trained up to day T is only usable from T + 60 d, when T's labels are known (`TimeSplitter`).
+days because a model trained up to day T is only usable from T + 60 d, when T's labels are known (`TimeSplitter`,
+[`ml/fraud_ml/split.py` L32-L40](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/split.py#L32-L40)).
 
 Fraud is ~0.3% of payments. Negatives of the train period are downsampled to 2% by a hash of `transaction_id`
 (the same rows in every run, so the versioned training set only changes where the data did), with sample weight
-50. Validation and test keep every row: their metrics must reflect the real fraud rate.
+50 ([`ml/fraud_ml/data.py` L84-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/data.py#L84-L91),
+which also sets the `event_timestamp` below). Validation and test keep every row: their metrics must reflect the
+real fraud rate.
 
 ## Features and data versioning
 
@@ -46,6 +52,24 @@ no match (rows gone, or the old copy of a changed row). An unchanged row matches
 only marked in a small deletion-vector file. So a run on almost the same data stores just its new rows, and
 `VERSION AS OF n` returns any run's exact training set. Steps 3-4 read the table with Spark: the `deltalake` reader
 (0.25 and 1.1.4 tested) refuses deletion vectors.
+
+The MERGE, in `TrainingDataService.save_versioned`
+([`ml/fraud_ml/data.py` L98-L115](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/data.py#L98-L115)):
+
+```python
+    def save_versioned(self, df: pd.DataFrame, path: str) -> int:
+...
+        cols = [c for c in df.columns if c != KEY]
+        # ponytail: 64-bit hash; a collision between a row's old and new values would miss that one update
+        sdf = self.spark.createDataFrame(df).withColumn(ROW_HASH, F.xxhash64(*cols))
+        if not DeltaTable.isDeltaTable(self.spark, path):
+            sdf.write.format("delta").option("delta.enableDeletionVectors", "true").save(path)
+        else:
+            (DeltaTable.forPath(self.spark, path).alias("t")
+             .merge(sdf.alias("s"), f"t.{KEY} = s.{KEY} AND t.{ROW_HASH} = s.{ROW_HASH}")
+             .whenNotMatchedInsertAll().whenNotMatchedBySourceDelete().execute())
+        return delta_version(self.spark, path)
+```
 
 History of the table on 2026-10-19 (`DESCRIBE HISTORY` + the Delta log), each pipeline run one version:
 
@@ -76,13 +100,40 @@ Distributed training: in the KFP component `train`, the pod is the Spark driver
 (`k8s://https://kubernetes.default.svc`) and starts 2 executor pods. `SparkXGBClassifier(num_workers=2)` runs two
 Spark tasks that train one model together: each holds a shard of the rows, and the gradient histograms are
 all-reduced every boosting round. The executors get their S3 keys from the Kubernetes secret `s3-credentials`
-(`spark.kubernetes.executor.secretKeyRef`). In the notebook the same code runs on `local[2]`. Which row goes to
+(`spark.kubernetes.executor.secretKeyRef`, see the session in
+[`ml/fraud_ml/spark.py` L36-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/spark.py#L36-L48)). In the notebook the same code runs on `local[2]`. Which row goes to
 which worker follows the row order, so the rows are sorted by `transaction_id` first: the same training set then
 gives the same booster ([notebook run](#notebook-run-2026-10-20-label_as_of-2026-10-15)).
 
 The validation split is the early-stopping set (`validation_indicator_col`, stop after 30 rounds without PR-AUC
 gain). The 1/rate sample weight keeps the predicted probabilities on the real fraud rate, so no
 `scale_pos_weight`, which would distort them.
+
+`FraudModelTrainer.fit_xgboost`
+([`ml/fraud_ml/train.py` L41-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/train.py#L41-L60)):
+
+```python
+    def fit_xgboost(self, spark, train: pd.DataFrame, val: pd.DataFrame) -> xgb.Booster:
+        """Distributed XGBoost on Spark over train + val (val only as the early-stopping set)."""
+        from xgboost.spark import SparkXGBClassifier
+        cols = [*self.features, LABEL, WEIGHT, "is_val"]
+        # Sorted, then shuffled with a fixed seed. Sorted: the point-in-time join returns rows in any order, the row
+        # order decides which worker gets which row, and subsample draws by position within a worker, so the same
+        # rows in another order gave another booster (best iteration 93 vs 28 on one test set). Shuffled:
+        # xgboost.spark builds the DMatrix per Arrow batch, and a batch without any training row fails (KeyError
+        # 'values' with a feature-column list); train-then-val order made the later batches val only.
+        data = (pd.concat([train.assign(is_val=False), val.assign(is_val=True)], ignore_index=True)
+                .sort_values(KEY, ignore_index=True)
+                .sample(frac=1, random_state=self.seed, ignore_index=True)[cols])
+        data[self.features] = data[self.features].astype("float64")   # NaN = missing for XGBoost
+        sdf = spark.createDataFrame(data).repartition(self.num_workers)
+        clf = SparkXGBClassifier(features_col=self.features, label_col=LABEL, weight_col=WEIGHT,
+                                 validation_indicator_col="is_val", num_workers=self.num_workers,
+                                 random_state=self.seed, **self.xgb_params)
+        booster = clf.fit(sdf).get_booster()
+        booster.feature_names = list(self.features)
+        return booster
+```
 
 ## Evaluation and promotion
 
@@ -94,8 +145,11 @@ gain). The 1/rate sample weight keeps the predicted probabilities on the real fr
 | `passed` | no production model yet, or PR-AUC gain >= 0.005 and recall at 1% FPR not worse than production's **on the same test period** |
 
 The production model is scored on the new test period too, so the comparison is fair: an old test score would
-come from easier or harder months. `register` logs the booster (JSON format, signature, input example), tags the
-version with its thresholds, test PR-AUC and feature service, and sets alias `challenger`. A reviewer moves
+come from easier or harder months
+([`ml/fraud_ml/steps.py` L213-L224](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/steps.py#L213-L224),
+which then applies the rule `ModelEvaluator.passed`). `register` logs the booster (JSON format, signature, input example), tags the
+version with its thresholds, test PR-AUC and feature service, and sets alias `challenger`
+([`ml/fraud_ml/registry.py` L58-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/fraud_ml/registry.py#L58-L72)). A reviewer moves
 `production`; the very first model takes both. Rollback = move the alias back.
 
 `evaluate` also writes `reference_profile.json`: decile edges and bin shares of every input and of the score on the

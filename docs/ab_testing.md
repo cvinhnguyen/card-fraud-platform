@@ -16,9 +16,13 @@ flowchart LR
 
 ## Agent model config (risk-agent A vs B)
 
-The test is configured by `abTests` in [`agents/chart/values-data-agents.yaml`](../agents/chart/values-data-agents.yaml).
-The chart makes `risk-agent-b`, a copy of `risk-agent` (same prompt from Langfuse, same MCP tools, its own KEDA
-ScaledObject, SandboxAgent and NetworkPolicy) whose only difference is the ModelConfig `qwen3-8b-precise`: temperature
+The test is configured by `abTests` in [`agents/chart/values-data-agents.yaml`](../agents/chart/values-data-agents.yaml)
+([L28-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/values-data-agents.yaml#L28-L33)).
+The chart makes `risk-agent-b`
+([`agents/chart/templates/_helpers.tpl` L1-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/templates/_helpers.tpl#L1-L9)),
+a copy of `risk-agent` (same prompt from Langfuse, same MCP tools, its own KEDA
+ScaledObject, SandboxAgent and NetworkPolicy) whose only difference is the ModelConfig `qwen3-8b-precise`
+([`agents/chart/templates/modelconfigs.yaml` L1-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/templates/modelconfigs.yaml#L1-L19)): temperature
 0.2 and at most 512 output tokens, where the global config leaves llama.cpp's defaults (temperature 0.8, no cap).
 
 The coordinator still calls `risk-agent`; the A2A route of the release
@@ -26,15 +30,62 @@ The coordinator still calls `risk-agent`; the A2A route of the release
 Header `x-agent-variant: a|b` pins a call to one side, for evaluations. The gateway's metrics (label `backend`) give
 the online comparison: calls, latency p50 and error share per variant.
 
+For an agent listed in `abTests` the template writes three rules: pinned to A, pinned to B, and the weighted split
+([`agents/chart/templates/a2a-gateway.yaml` L29-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/templates/a2a-gateway.yaml#L29-L48)):
+
+```yaml
+    {{- range $name, $a := .Values.agents }}
+    {{- $host := dict "name" "x-kagent-host" "value" (printf "%s.%s" $name $.Release.Namespace) }}
+    {{- with index (default dict $.Values.abTests) $name }}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}, {name: x-agent-variant, value: a}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}, {name: x-agent-variant, value: b}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ .variant }}}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}]}]
+      backendRefs:
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}, weight: {{ sub 100 .weight }}}
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ .variant }}, weight: {{ .weight }}}
+      timeouts: {request: 300s}
+    {{- else }}
+    - matches: [{path: {type: PathPrefix, value: /}, headers: [{{ toJson $host }}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: agent-{{ $name }}}]
+      timeouts: {request: 300s}
+    {{- end }}
+    {{- end }}
+```
+
 ## LLM version (route `llm`: Qwen3-8B vs Qwen3.8-27B)
 
 The test is configured in [`infra/k8s/agentgateway.yaml`](../infra/k8s/agentgateway.yaml). Version A is the
 platform's model (Qwen3-8B Q4_K_M on llama.cpp behind the llm-d InferencePool); version B is Qwen3.8-27B on Groq (an
 OpenAI-compatible `AgentgatewayBackend`, key `llm-groq` from Vault). The route sent 80 % of all model calls to A and
 20 % to B (stopped since, see Decisions); callers keep sending model `qwen3-8b`, the backend rewrites it. Header
-`x-llm-variant: a|b` pins a call.
+`x-llm-variant: a|b` pins a call. The rules of route `llm` as they are now
+([`infra/k8s/agentgateway.yaml` L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/agentgateway.yaml#L70-L84)):
 
-The route's policy (API key, rate limits, PII masking) applies to both: a phone number in a prompt reaches Groq as
+```yaml
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: a}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b}]
+      timeouts: {request: 300s}
+    - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: b}]}]
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}]
+      timeouts: {request: 300s}
+    # Canary stopped on 2026-10-21 (docs/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
+    # free tier's output tokens a minute). B stays reachable with the header; raise its weight again on a paid tier.
+    - matches: [{path: {type: PathPrefix, value: /v1}}]
+      backendRefs:
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8b, weight: 100}
+        - {group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, weight: 0,
+           filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}
+      timeouts: {request: 300s}
+```
+
+The route's policy (API key, rate limits, PII masking,
+[`infra/k8s/agentgateway.yaml` L86-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/agentgateway.yaml#L86-L113))
+applies to both: a phone number in a prompt reaches Groq as
 `<masked>` (checked: "Repeat exactly: my phone is 0912345678" came back as "my phone is <masked>"). Groq's edge
 (Cloudflare, error 1010) refused Python's default User-Agent, so the gateway sets its own on that backend. The
 gateway's metrics (labels `backend` and `gen_ai_response_model`) give calls, round trip p50, error share, and input
@@ -51,8 +102,11 @@ blue, B orange in every panel.
 
 `dataset.jsonl` holds 12 card-policy questions (fees, disputes, authentication) with the facts a correct answer must
 state, taken from the bank documents (`generator/knowledge`). `run_eval.py` sends them through the gateway and scores
-each answer: in `agent` mode to the risk agent over A2A (as the coordinator does), in `llm` mode straight to `/v1` with
-the policy document as context. One experiment at a time: the agent runs were made with the LLM route at 100/0, so the
+each answer (correct when it states every expected fact,
+[`agents/eval/run_eval.py` L31-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/eval/run_eval.py#L31-L34)):
+in `agent` mode to the risk agent over A2A (as the coordinator does), in `llm` mode straight to `/v1` with
+the policy document as context
+([L45-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/eval/run_eval.py#L45-L70)). One experiment at a time: the agent runs were made with the LLM route at 100/0, so the
 only difference between A and B was the agent's model config.
 
 ```bash
@@ -87,6 +141,8 @@ and about 4x faster. On live agent traffic it failed: the coordinator pipeline's
 `429 ... output tokens per minute (OTPM): Limit 1000, Requested 1619`. Agents send no `max_tokens`, and the free
 tier's 1,000 output tokens a minute (for the whole account) is less than two agent answers; the dashboard's "LLM error
 share" shows B's failures next to A's none. The default rule is now 100 / 0; B stays reachable with
-`x-llm-variant: b`, with a gateway default of `max_tokens: 512`, for evaluations. Resuming the canary needs a paid Groq
+`x-llm-variant: b`, with a gateway default of `max_tokens: 512`
+([`infra/k8s/agentgateway.yaml` L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/agentgateway.yaml#L54-L57)),
+for evaluations. Resuming the canary needs a paid Groq
 tier, and a decision on sending (masked) customer text outside the bank. Because B only ever had a share of the
 traffic, stopping it was a weight change.

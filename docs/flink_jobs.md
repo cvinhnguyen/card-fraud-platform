@@ -28,8 +28,11 @@ result from the Parquet files with pandas. The numbers below are those compariso
 ## Event time
 
 The producer sets each Kafka message timestamp to the event time (`auth_ts`, `event_ts`), as a card network or app
-would. The jobs use it directly: `WatermarkStrategy.for_bounded_out_of_orderness(...)` without a timestamp assigner,
-so watermarks are generated inside the Kafka source.
+would
+([`generator/producer.py` L43-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/producer.py#L43-L55)).
+The jobs use it directly: `WatermarkStrategy.for_bounded_out_of_orderness(...)` without a timestamp assigner,
+so watermarks are generated inside the Kafka source
+([`pipelines/flink/auth_windows.py` L108-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/auth_windows.py#L108-L110)).
 
 ## Late events and duplicates (`pipelines/flink/auth_windows.py`)
 
@@ -51,6 +54,26 @@ modes add one fix each. Replay: 20,000 authorizations from 2026-06-01, of which 
 - Dedup keeps a flag per `auth_id` for 1 hour (retries come 1 to 10 s later) and passes only the first copy.
   It runs before any count.
 
+In the job, the three modes are a few lines around the window
+([`pipelines/flink/auth_windows.py` L117-L130](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/auth_windows.py#L117-L130)):
+
+```python
+    events = env.from_source(source, wm, f"kafka {TOPIC}").map(parse, output_type=EVENT)
+    if mode == "dedup":
+        events = events.key_by(lambda e: e[0], key_type=Types.STRING()).process(FirstSeen(), output_type=EVENT)
+
+    # ponytail: untyped (pickled) tag; a TUPLE-typed tag fails to pickle in PyFlink 2.2 (nested Java type info)
+    late = OutputTag("late")
+    windows = events.key_by(lambda e: e[1], key_type=Types.STRING()).window(TumblingEventTimeWindows.of(WINDOW))
+    if mode != "baseline":
+        windows = windows.allowed_lateness(LATENESS.to_milliseconds())
+    counts = windows.side_output_late_data(late).aggregate(Count(), ToJson(), accumulator_type=Types.LONG(),
+                                                           output_type=Types.STRING())
+    counts.sink_to(sink(f"auth_counts_{mode}")).name("counts")
+    (counts.get_side_output(late).map(lambda e: json.dumps({"auth_id": e[0], "card_id": e[1], "auth_ts": e[3]}), output_type=Types.STRING())
+     .sink_to(sink(f"auth_late_{mode}")).name("late events"))
+```
+
 ![auth_windows dedup job: 20,000 events in, 19,699 after dedup, 19,696 windows](images/flink_auth_windows_dedup.png)
 
 ### What it took to see the late events in a replay
@@ -63,7 +86,8 @@ The first runs reported 0 late events. Three replay effects hid them, each fixed
 2. The watermark moves in steps. It is emitted every 200 ms by default, and a replay covers days of event time in
    seconds, so one step jumped hours and a 30-minute-late event still arrived "before" it. The Python map also takes
    1,000 events per bundle, which lets the source run ahead. Fix: watermark every 10 ms and a Python bundle size of
-   1, so a step covers a few events, as with live traffic.
+   1, so a step covers a few events, as with live traffic
+   ([`pipelines/flink/auth_windows.py` L97-L102](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/auth_windows.py#L97-L102)).
 3. The watermark is the minimum over Kafka partitions. With the 6-partition topic, the partitions were read at
    very different speeds: a debug job measured the watermark at `Long.MIN_VALUE` for the first 30,000 events and
    then days behind the newest event, so almost nothing looked late (206 of 1,218 in a 50,000-event replay).
@@ -78,7 +102,8 @@ With live traffic none of this applies: partitions advance with the wall clock a
 
 One feature row per authorization, computed when it arrives over the same card's earlier authorizations:
 `auth_count_10m`, `amount_sum_1h`, `distinct_merchants_1h`, `distinct_units_1h`. The job is a `KeyedProcessFunction`
-per card that holds the last 90 minutes of authorizations in state. A window would only report when it closes, and
+per card that holds the last 90 minutes of authorizations in state
+([`pipelines/flink/rt_features.py` L64-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/rt_features.py#L64-L91)). A window would only report when it closes, and
 the scoring model needs the features of the payment being authorized now. Duplicates are dropped first, and
 locations are mapped to the 34 units (the 63-row mapping is loaded once; a broadcast stream would be needed only if
 it changed at runtime).
@@ -105,7 +130,8 @@ session. 15% of app events reach Kafka after the next event of their session (1 
 
 - `arrival`: a state machine per session fed in arrival order.
 - `event`: each session's events wait in keyed state; an event-time timer at each `event_ts` releases them in
-  `event_ts` order once the watermark (30 s behind the newest event) passes, then the same state machine runs.
+  `event_ts` order once the watermark (30 s behind the newest event) passes, then the same state machine runs
+  ([`pipelines/flink/ato_sequence.py` L67-L80](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/ato_sequence.py#L67-L80)).
 
 Replay: 150,000 app events from 2024-03-01 (before the biometric rule, which later stops most takeovers before the
 transfer); 67,443 sessions, 771 with the full pattern in event time, 658 of them generator-labelled `new_device` ATO.
@@ -148,6 +174,24 @@ front of it backpressured (88% and 100%): they could go faster, but the one hot 
 
 ![Data Skew tab: 100% on the counting vertex](images/flink_hot_key_skew.png)
 
+The two modes differ in the key and in a second window that adds the partial counts
+([`pipelines/flink/hot_key.py` L113-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/hot_key.py#L113-L124)):
+
+```python
+    if mode == "hot":
+        windows = auths.key_by(lambda a: a[1], key_type=Types.STRING())
+    else:
+        # The salt comes from auth_id, so a retry lands in the same partial count as its original.
+        windows = auths.key_by(lambda a: f"{a[1]}#{int(a[0][5:], 16) % salts}" if hot is None or a[1] in hot else a[1],
+                               key_type=Types.STRING())
+    partials = (windows.window(TumblingEventTimeWindows.of(WINDOW)).side_output_late_data(late)
+                .aggregate(Count(), Partial(), accumulator_type=Types.LONG(), output_type=PARTIAL).name("count per key"))
+    counts = partials
+    if mode == "two_phase":
+        counts = (partials.key_by(lambda p: p[0], key_type=Types.STRING()).window(TumblingEventTimeWindows.of(WINDOW))
+                  .reduce(lambda a, b: (a[0], a[1], a[2] + b[2]), output_type=PARTIAL).name("add partial counts"))
+```
+
 In two-phase aggregation, Ho Chi Minh's key gets a salt from `auth_id` (`Ho Chi Minh#0` .. `#7`), so its records
 spread over all subtasks; each counts its share per day, then `key_by(unit)` adds the at most 8 partial counts of a
 unit-day. Phase 2 receives 5,165 records instead of 1,000,000. The salt comes from `auth_id`, so a network retry
@@ -173,8 +217,11 @@ different question (per card, not per unit).
 
 Flink SQL copies `card_authorizations` unchanged (duplicates and late events included, plus Kafka partition and
 offset for tracing) to `s3://lakehouse/landing/card_authorizations/auth_date=YYYY-MM-DD/` as JSON lines; the file sink
-commits files on checkpoints (every 10 s). `ingest_bronze.py --part landing` then appends them to the Delta table
-`bronze.raw_card_authorizations` with a Spark file stream (`trigger(availableNow=True)`): its checkpoint remembers
+commits files on checkpoints (every 10 s)
+([`pipelines/flink/raw_landing.py` L25-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/raw_landing.py#L25-L53)).
+`ingest_bronze.py --part landing` then appends them to the Delta table
+`bronze.raw_card_authorizations` with a Spark file stream (`trigger(availableNow=True)`,
+[`pipelines/spark/ingest_bronze.py` L94-L98](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/ingest_bronze.py#L94-L98)): its checkpoint remembers
 which files were loaded, so a late event that adds a file to an older `auth_date` is still picked up, and a re-run
 loads nothing twice.
 

@@ -1,7 +1,8 @@
 # Schema design
 
-All tables are Delta tables in the SeaweedFS bucket `lakehouse`, registered in the Hive Metastore, so Spark, dbt
-(through the Spark Thrift Server) and Trino (`delta.<zone>.<table>`) see the same tables.
+All tables are Delta tables in the SeaweedFS bucket `lakehouse`, registered in the Hive Metastore
+([`pipelines/spark/ingest_bronze.py` L34-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/ingest_bronze.py#L34-L43)),
+so Spark, dbt (through the Spark Thrift Server) and Trino (`delta.<zone>.<table>`) see the same tables.
 
 ## Zones
 
@@ -12,7 +13,9 @@ All tables are Delta tables in the SeaweedFS bucket `lakehouse`, registered in t
 | gold | `s3a://lakehouse/gold/` | dbt models, `pipelines/spark/build_labels.py`, `pipelines/spark/build_features.py` (DP3) | Star schema for analysis, the label table and the feature table for Layer 2 |
 
 Bronze and silver are written by PySpark because the dedup, skew and merge demos need DataFrame-level control. Gold
-star schema models are SQL in dbt so they are tested (`dbt build`) and documented in one place.
+star schema models are SQL in dbt so they are tested (`dbt build`) and documented in one place. The dbt project
+writes every gold model as a Delta table under `s3a://lakehouse/gold`
+([`pipelines/dbt/dbt_project.yml` L11-L16](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/dbt_project.yml#L11-L16)).
 
 ## Naming
 
@@ -152,11 +155,63 @@ erDiagram
 - `fact_transaction.customer_sk` is resolved once, at build time, against the customer version valid at `txn_ts`.
   Queries join on `customer_sk` without a date condition.
 - Every location keeps two columns: the 34-unit value used for grouping (`txn_unit`, `customer_unit`,
-  `merchant_unit`) and the raw string from the source (`txn_city_raw`, `city_raw`) for lineage and audits.
+  `merchant_unit`) and the raw string from the source (`txn_city_raw`, `city_raw`) for lineage and audits
+  ([`pipelines/spark/build_silver.py` L28-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_silver.py#L28-L31)).
 - A fraud label can flip up to 60 days after the payment, so labels live in their own table, apart from the fact,
-  updated with `MERGE`; each run is a Delta version tagged `label_as_of=<date>` (see [spark_jobs.md](spark_jobs.md)).
+  updated with `MERGE`; each run is a Delta version tagged `label_as_of=<date>` (see [spark_jobs.md](spark_jobs.md),
+  [`pipelines/spark/build_labels.py` L51-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_labels.py#L51-L53)).
 - A feature row describes an active day L and carries `event_timestamp` = L + 1 day, the night it is written, so a
   point-in-time join in Feast sees the card's last active day before the payment, never the payment being scored.
-  `created` is the processing time.
+  `created` is the processing time
+  ([`pipelines/spark/build_features.py` L69-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_features.py#L69-L71)).
 - Facts are partitioned by month (`txn_month`, `event_month`), so a `MERGE` of recent data rewrites only the last few
-  partitions. Silver is partitioned by day (`txn_date`) to match the nightly export.
+  partitions. Silver is partitioned by day (`txn_date`) to match the nightly export
+  ([`pipelines/spark/build_silver.py` L83-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_silver.py#L83-L84)).
+
+The SCD2 versions and their validity range, from the first note
+([`pipelines/dbt/models/gold/dim_customer.sql` L4-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/models/gold/dim_customer.sql#L4-L38)):
+
+```sql
+with src as (
+    select
+        *,
+        md5(to_json(named_struct(
+            'full_name', full_name, 'dob', dob, 'unit', customer_unit,
+            'income_band', income_band, 'risk_tier', risk_tier, 'kyc_level', kyc_level
+        ))) as attr_hash
+    from {{ source('silver', 'stg_customers') }}
+),
+
+flagged as (
+    select *, lag(attr_hash) over (partition by customer_id order by updated_ts) as prev_hash
+    from src
+),
+
+versions as (
+    select * from flagged
+    where prev_hash is null or prev_hash != attr_hash
+)
+...
+    updated_ts as valid_from_ts,
+    coalesce(lead(updated_ts) over (partition by customer_id order by updated_ts),
+             timestamp_ntz '9999-12-31 00:00:00') as valid_to_ts,   -- exclusive end; open-ended = 9999-12-31
+    lead(updated_ts) over (partition by customer_id order by updated_ts) is null as is_current
+from versions
+```
+
+The fact's merge key, month partitions and the point-in-time join that sets `customer_sk`
+([`pipelines/dbt/models/gold/fact_transaction.sql` L4-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/models/gold/fact_transaction.sql#L4-L39)):
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='transaction_id',
+    partition_by=['txn_month'],
+) }}
+...
+from txn t
+join {{ ref('dim_card') }} c on c.card_id = t.card_id
+left join {{ ref('dim_customer') }} d
+    on d.customer_id = c.customer_id and t.txn_ts >= d.valid_from_ts and t.txn_ts < d.valid_to_ts
+```

@@ -25,7 +25,8 @@ sh infra/jenkins/setup.sh     # deploy ServiceAccount + its kubeconfig, then the
 ```
 
 Secrets never appear in a Jenkinsfile. They start in the gitignored `infra/.env` (or `infra/.secrets/` for files),
-reach the container as Docker secrets under `/run/secrets/`, and JCasC turns each into a Jenkins credential. A
+reach the container as Docker secrets under `/run/secrets/`, and JCasC turns each into a Jenkins credential
+([`infra/jenkins/casc.yaml` L13-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/jenkins/casc.yaml#L13-L30)). A
 Jenkinsfile names the credential id inside `withCredentials` and Jenkins masks the value in the console log. The API
 keys go to curl on stdin (`curl -K -`) and to containers through the environment (`docker run -e NAME`), so they do
 not show up in the process list or the build log.
@@ -45,7 +46,8 @@ cluster admin. The role is bound only in `card-support`, `kagent` and `agentgate
 and agents charts write to, so a pipeline cannot touch Vault, the monitoring stack or kube-system. `setup.sh` writes
 its kubeconfig to `infra/.secrets/jenkins-kubeconfig`.
 
-Every Jenkinsfile wraps its stages in a `when { changeset ... }` on its own paths. A poll that finds commits
+Every Jenkinsfile wraps its stages in a `when { changeset ... }` on its own paths (the RAG pipeline's:
+[`pipelines/rag/Jenkinsfile` L20-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/rag/Jenkinsfile#L20-L27)). A poll that finds commits
 elsewhere in the repo checks out and stops: these are the rows with only "Checkout SCM" in the stage views below.
 Jenkins keeps the host's Docker socket because it builds images. Airflow only runs the RAG image, so it reaches
 Docker through `docker-proxy` on an internal network, which allows the container and image API calls and denies exec,
@@ -67,7 +69,7 @@ itself: [rag_pipeline.md](rag_pipeline.md).
 | Unit tests | builds the `test` stage of [`ml/Dockerfile`](../ml/Dockerfile) and runs [`test_rag_ingest.py`](../ml/jobs/tests/test_rag_ingest.py) |
 | DAG check | imports [`rag_ingest.py`](../pipelines/airflow/dags/rag_ingest.py) in the Airflow image and asserts its 5 tasks |
 | Build image | `fraud/ml-train:<commit>` |
-| Release + run | Airflow REST API: sets Variable `rag_image` to the new tag, unpauses the DAG, triggers a run, waits for `success` or `failed` |
+| Release + run | Airflow REST API: sets Variable `rag_image` to the new tag, unpauses the DAG, triggers a run, waits for `success` or `failed` ([`pipelines/rag/Jenkinsfile` L53-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/rag/Jenkinsfile#L53-L77)) |
 | Validation results | prints the checks the `validate_rag.run_checks` task logged |
 
 Build #2 (started by hand, since the pipeline needs the Airflow profile up): 6 unit tests passed, the DAG imported
@@ -104,6 +106,32 @@ are deployed against the MCP release that just passed.
 | Smoke test | the Web API over HTTPS through NGINX must return a real card, and both kagent RemoteMCPServers must accept the new release |
 | post: success | `build job: 'card-support-data-agents'` |
 
+The two test gates
+([`services/card_support_mcp/Jenkinsfile` L29-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/Jenkinsfile#L29-L46)):
+the coverage threshold sits in `pytest.ini`, so the test container itself exits non-zero, and the mutation score is
+computed from mutmut's results in the stage.
+
+```groovy
+        stage('Unit tests + coverage gate') {
+          // EP/BVA, hypothesis properties, REST + MCP + adapter tests; pytest.ini fails the stage under 90 % coverage
+          steps {
+            sh 'docker build --target test -t card-support-mcp:test-$TAG $SVC'
+            sh 'docker run --rm card-support-mcp:test-$TAG'
+          }
+        }
+        stage('Mutation test') {
+          // mutmut on the code with the tool rules (setup.cfg); fails under 80 % killed
+          steps {
+            sh '''
+              docker run --rm card-support-mcp:test-$TAG sh -c 'mutmut run >/dev/null 2>&1; mutmut results --all true' > mutmut.txt || true
+              total=$(grep -c ': ' mutmut.txt || true); killed=$(grep -c ': killed' mutmut.txt || true)
+              echo "mutation score: $killed / $total killed"; grep -E ': (survived|timeout|suspicious)' mutmut.txt || true
+              [ "$total" -gt 0 ] && [ $((killed * 100 / total)) -ge 80 ]
+            '''
+          }
+        }
+```
+
 Build #9 failed at "Sign image": the signing key file was not readable by the Jenkins user, so cosign got an empty
 key (`reading key: invalid pem block`). Deploy and smoke test never ran and the cluster kept the release it had. After
 the key file was fixed, build #10 passed every stage: 97 tests at 97.84% coverage, 243 of 245 mutants killed, image
@@ -117,7 +145,8 @@ revision 12, and it started data agents #29.
 The agents' system prompts live in Langfuse (prompt `card-support/<agent>`, label `production`).
 [`agents/fetch_prompts.sh`](../agents/fetch_prompts.sh) pulls each one into `agents/chart/prompts/<agent>.md` and
 returns Helm flags with the prompt versions, which the chart writes into an annotation on each Agent. Every 15
-minutes both agent pipelines compare the deployed versions with production. Promoting a new prompt version in
+minutes both agent pipelines compare the deployed versions with production
+([`agents/Jenkinsfile.data-agents` L22-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/Jenkinsfile.data-agents#L22-L37)). Promoting a new prompt version in
 Langfuse therefore redeploys the agent without a commit, and a run with nothing new stops after this check.
 
 The chain for a tool change is MCP server, then data agents, then coordinator: each pipeline starts the next one when
@@ -128,7 +157,8 @@ but the `build` step records a `BuildUpstreamCause`, so the runs started by an u
 after MCP #10, coordinator #11, #19 and #21) checked the prompts and stopped without deploying. The running agents
 still used the new MCP release, because its service address and tool names stayed the same, but the redeploy and the
 eval gate that should follow a tool change did not run. Commit `b5bd125` added `triggeredBy 'BuildUpstreamCause'` to
-both agent Jenkinsfiles. The next chain ran end to end: MCP #11, then data agents #29 ("Started by upstream project
+both agent Jenkinsfiles
+([`agents/Jenkinsfile.data-agents` L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/Jenkinsfile.data-agents#L38-L43)). The next chain ran end to end: MCP #11, then data agents #29 ("Started by upstream project
 card-support-mcp build number 11": deploy, smoke test, eval gate passed), then coordinator #26. Coordinator #25 had
 already built that commit, so #26 had no change to deploy; it deployed and ran its smoke test only because data
 agents #29 started it, which is the case the fix is for.
@@ -149,6 +179,32 @@ release `card-support-data-agents`).
 | Smoke test (A2A through the gateway) | asks each agent one question through agentgateway, the way the coordinator calls it (coordinator key, header `x-kagent-host`); the answer must complete and contain the expected text |
 | Eval gate (Langfuse experiment) | the risk agent answers the eval dataset as a Langfuse experiment; below 0.6 accuracy, `helm rollback` and the build fails ([novel_eval_gate.md](novel_eval_gate.md)) |
 
+The eval gate stage
+([`agents/Jenkinsfile.data-agents` L85-L107](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/Jenkinsfile.data-agents#L85-L107),
+credentials block left out):
+
+```groovy
+    stage('Eval gate (Langfuse experiment)') {
+      // the risk agent just deployed answers the eval dataset as a Langfuse experiment (agents/eval/langfuse_gate.py);
+      // below EVAL_MIN_ACCURACY the release goes back to its previous revision and the build fails
+      when { environment name: 'DEPLOY', value: 'true' }
+...
+          sh 'docker build -q -t fraud/agent-eval:ci agents/eval >/dev/null'
+          script {
+            def gate = sh(returnStatus: true, script: '''
+              gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
+              prompt=$(printf '%s' "$PROMPT_FLAGS" | grep -o 'risk-agent=[0-9]*' | cut -d= -f2)
+              docker run --rm --network kind -e LANGFUSE_HOST -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e A2A_KEY \
+                -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
+                --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
+            ''')
+            if (gate != 0) {
+              sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
+              error "eval gate failed: $RELEASE rolled back to its previous revision"
+            }
+          }
+```
+
 - #20 (a commit under `agents/`): deploy and smoke test passed, the eval scored 0.583 against the 0.6 gate, Helm rolled
   the release back and the build failed.
 - #23 (risk-agent prompt v2 promoted in Langfuse): the first stage logged `risk-agent=1` deployed and `risk-agent=2` in
@@ -166,7 +222,8 @@ release `card-support-data-agents`).
 
 [`agents/Jenkinsfile.coordinator`](../agents/Jenkinsfile.coordinator) deploys the coordinator (Helm release
 `card-support-coordinator`) with the same first four stages. Its smoke test calls it the way a client application
-does: the public A2A route `/a2a/coordinator` with the support-app key, and a question that needs both data agents.
+does: the public A2A route `/a2a/coordinator` with the support-app key, and a question that needs both data agents
+([`agents/Jenkinsfile.coordinator` L58-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/Jenkinsfile.coordinator#L58-L77)).
 
 ![Jenkins stage view of card-support-coordinator: #24, #25 and #26 deployed and passed the client smoke test; #26 had no new commit and was started by data agents #29](images/cicd_card-support-coordinator.png)
 
@@ -198,7 +255,7 @@ push source). They run as compose services on the ml image.
 | Unit tests | the `test` stage of [`ml/Dockerfile`](../ml/Dockerfile): tests of the push jobs and the RAG steps |
 | Build image | `fraud/ml-train:<commit>` and `:latest` |
 | Deploy | starts Kafka if it is down, recreates `push-online` and `push-offline` on the new image |
-| Smoke test | [`ml/tools/stream_smoke.py`](../ml/tools/stream_smoke.py) sends one marked authorization summary (`ci_smoke_<random>`, never a real card) to Kafka; it must reach the online store and the offline table within 180 s |
+| Smoke test | [`ml/tools/stream_smoke.py`](../ml/tools/stream_smoke.py) sends one marked authorization summary (`ci_smoke_<random>`, never a real card) to Kafka; it must reach the online store and the offline table within 180 s ([`ml/jobs/Jenkinsfile.stream` L55-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/jobs/Jenkinsfile.stream#L55-L65)) |
 
 Build #2 (started by hand): 15 tests passed, both containers were recreated on the new image, and the smoke message
 arrived in both stores: `ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s (s3://lakehouse/gold/feat_card_auth_rt)`.

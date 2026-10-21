@@ -17,13 +17,27 @@ below, and warns when an arrow crosses a box, a label overlaps one, or two arrow
 ![Platform overview](images/platform-overview.png)
 
 Three bands, a bar between the first two, and bars under all of them. Layer 1 (top) turns the source systems into
-feature tables, daily with Spark and continuously with Flink. Layer 2 (middle) trains, registers, serves and monitors
-the model. Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
-see the same 20 features (`fraud_model_v1`). The loop inside Layer 2 is the retraining path: the drift check starts a
-pipeline run with the newest labels.
+feature tables, daily with Spark (DAG
+[`dp1_source_to_bronze.py` L26-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/dp1_source_to_bronze.py#L26-L39),
+which triggers DP2 and DP3) and continuously with Flink
+([`rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/rt_features.py#L94-L121)).
+Layer 2 (middle) trains, registers, serves and monitors the model (KFP pipeline
+[`train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/pipelines/train_fraud_model.py#L102-L124),
+Scoring API
+[`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/scoring_api/app/main.py#L60-L63)).
+Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
+see the same 20 features (`fraud_model_v1`,
+[`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/feature_repo/fraud_features.py#L123-L128)).
+The loop inside Layer 2 is the retraining path: the drift check starts a
+pipeline run with the newest labels
+([`drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L39-L51)).
 
-Layer 3 (bottom band) reads from both layers above it. The MCP server takes a card's features from the same Feast
-online store and a fraud score from the Layer 2 Scoring API; the RAG pipeline writes the policy chunks and their
+Layer 3 (bottom band) reads from both layers above it. The MCP server
+([`services/card_support_mcp/app/main.py` L73-L99](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L73-L99),
+its four tools) takes a card's features from the same Feast
+online store and a fraud score from the Layer 2 Scoring API; the RAG pipeline
+([`rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/rag_ingest.py#L64-L73))
+writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
 NGINX; every agent call (A2A, MCP, LLM) then goes through agentgateway, which sends the LLM calls to llama.cpp via the
 llm-d router. Airflow, the lakehouse, DataHub and the operations tools (CI/CD, metrics, logs, traces, Vault) run

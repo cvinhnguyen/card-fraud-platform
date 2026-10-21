@@ -40,6 +40,79 @@ file for the user `admin`, from Vault), `nginx.org/limit-req-rate` and `limit-re
 lists its two paths instead of `/`: the MCP endpoint is only reachable through agentgateway (with an agent's key) and
 `/metrics` only by Prometheus inside the cluster.
 
+[`infra/k8s/edge/templates/ingresses.yaml` L9-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/edge/templates/ingresses.yaml#L9-L29):
+
+```yaml
+  annotations:
+    {{- if $r.auth }}
+    nginx.org/basic-auth-secret: {{ $.Values.basicAuthSecret }}
+    nginx.org/basic-auth-realm: "Card fraud platform"
+    {{- end }}
+    nginx.org/limit-req-rate: {{ $r.rate }}
+    nginx.org/limit-req-burst: {{ $r.burst | quote }}
+    nginx.org/limit-req-no-delay: "true"
+    nginx.org/limit-req-reject-code: "429"
+    {{- if $r.streaming }}
+    nginx.org/proxy-buffering: "false"
+    nginx.org/proxy-read-timeout: "300s"
+    {{- end }}
+    {{- if $.Values.tls }}
+    nginx.org/redirect-to-https: "true"
+    {{- end }}
+spec:
+  ingressClassName: nginx
+  {{- if $.Values.tls }}
+  tls:
+    - hosts: [{{ printf "%s.%s" $r.host $.Values.domain }}]   # no secretName: the controller's wildcard TLS secret
+```
+
+[`infra/k8s/edge/values.yaml` L46-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/edge/values.yaml#L46-L55), the Web API route:
+
+```yaml
+  - name: web-api             # card support Web API: card data and chunks by id, policy search, fraud score
+    namespace: card-support
+    host: api
+    service: {name: card-support-mcp, port: 8000}
+    auth: true
+    rate: 5r/s
+    burst: 10
+    paths:                     # REST only: /mcp is reachable only through agentgateway, /metrics only by Prometheus
+      - {path: /v1, type: Prefix}
+      - {path: /healthz, type: Exact}
+```
+
+The controller and the Ingresses in the cluster (the last line is KServe's own Istio ingress from
+[serving.md](serving.md), not part of the edge):
+
+```text
+$ kubectl -n nginx-ingress get pods,svc
+NAME                                            READY   STATUS    RESTARTS       AGE
+pod/nginx-ingress-controller-779d6dc759-wbr6g   1/1     Running   10 (39m ago)   20h
+
+NAME                               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+service/nginx-ingress-controller   ClusterIP   10.96.153.207   <none>        80/TCP,443/TCP   21h
+
+$ kubectl get ingress -A
+NAMESPACE       NAME             CLASS   HOSTS                                                                     ADDRESS   PORTS     AGE
+agentregistry   agent-registry   nginx   registry.cvinhnguyen.duckdns.org                                                    80, 443   21h
+card-support    web-api          nginx   api.cvinhnguyen.duckdns.org                                                         80, 443   21h
+kagent          agent-ui         nginx   agents.cvinhnguyen.duckdns.org                                                      80, 443   21h
+monitoring      grafana          nginx   grafana.cvinhnguyen.duckdns.org                                                     80, 443   21h
+monitoring      logs             nginx   logs.cvinhnguyen.duckdns.org                                                        80, 443   21h
+monitoring      traces           nginx   traces.cvinhnguyen.duckdns.org                                                      80, 443   21h
+serving         card-fraud       istio   card-fraud-serving.example.com,card-fraud-predictor-serving.example.com             80        45h
+```
+
+Every host opened in Chrome, logged in as `admin`:
+
+| `https://agents.cvinhnguyen.duckdns.org` (C40, C42) | `https://registry.cvinhnguyen.duckdns.org` (C41) |
+|---|---|
+| ![kagent UI over HTTPS](images/edge_https_agents.png) | ![agentregistry UI over HTTPS](images/edge_https_registry.png) |
+| **`https://logs.cvinhnguyen.duckdns.org` (C38)** | **`https://traces.cvinhnguyen.duckdns.org` (C39)** |
+| ![VictoriaLogs UI over HTTPS](images/edge_https_logs.png) | ![Jaeger UI over HTTPS](images/edge_https_traces.png) |
+| **`https://grafana.cvinhnguyen.duckdns.org` (C37)** | **`https://api.cvinhnguyen.duckdns.org` (C43)** |
+| ![Grafana over HTTPS](images/edge_https_grafana.png) | ![Web API over HTTPS](images/edge_https_api.png) |
+
 ## Domain and HTTPS
 
 The domain is `cvinhnguyen.duckdns.org` (DuckDNS, free), with its A record set to `127.0.0.1` because the platform runs
@@ -49,13 +122,79 @@ lego v5.5.2 in a container with the DNS-01 challenge through the DuckDNS API, wr
 and External Secrets syncs them to `nginx-ingress/wildcard-tls`, NGINX's default wildcard TLS secret. Certificates last
 90 days: re-run `tls.sh` within the last 30 (this one expires on 2027-01-18).
 
-![The Ingresses, the certificate as a client verifies it, logins, the Web API paths and the rate limit](images/edge_nginx.png)
+[`infra/k8s/tls.sh` L22-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/tls.sh#L22-L26):
 
-The certificate verifies against the system's trust store (issuer Let's Encrypt YE1), plain HTTP gets a 301 to HTTPS,
-every host but Grafana answers 401 without a login and with a wrong password and 200 with the right one (Grafana
-redirects to its own login page), the Web API answers `/v1/...` and `/healthz` but 404 for `/mcp`, `/metrics` and
-`/docs`, and of 40 requests sent at once 9 passed and 31 got 429. The agents' chat UI over HTTPS is in
-[agents.md](agents.md#chat-with-the-agents-kagent-ui).
+```sh
+# the token reaches the container through the environment (-e NAME without a value), not the command line
+DUCKDNS_TOKEN=$(val DUCKDNS_TOKEN) MSYS_NO_PATHCONV=1 docker run --rm -e DUCKDNS_TOKEN -v "$dir:/data" \
+  "goacme/lego:$LEGO" run --accept-tos --dns duckdns -d "*.$DOMAIN" --key-type ec256 --path /data ${email:+--email "$email"}
+sh infra/k8s/secrets.sh   # cert + key -> Vault -> nginx-ingress/wildcard-tls
+sh infra/k8s/edge.sh      # wildcard TLS on, HTTPS hosts
+```
+
+What a client sees. The certificate verifies against the trust store, and plain HTTP is redirected to HTTPS:
+
+```text
+$ curl -sv -o /dev/null https://api.cvinhnguyen.duckdns.org/healthz 2>&1 | grep -E 'SSL connection|subject|date:|issuer|verify ok|< HTTP'
+* SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384 / x25519 / id-ecPublicKey
+*  subject: CN=*.cvinhnguyen.duckdns.org
+*  start date: Oct 20 16:08:50 2026 GMT
+*  expire date: Jan 18 16:08:49 2027 GMT
+*  subjectAltName: host "api.cvinhnguyen.duckdns.org" matched cert's "*.cvinhnguyen.duckdns.org"
+*  issuer: C=US; O=Let's Encrypt; CN=YE1
+*  SSL certificate verify ok.
+< HTTP/1.1 401 Unauthorized
+
+$ curl -sI http://api.cvinhnguyen.duckdns.org/healthz
+HTTP/1.1 301 Moved Permanently
+Server: nginx/1.31.6
+Date: Wed, 21 Oct 2026 13:58:52 GMT
+Content-Type: text/html
+Content-Length: 169
+Connection: keep-alive
+Location: https://api.cvinhnguyen.duckdns.org:443/healthz
+```
+
+### Login and rate limit
+
+Without a login, Chrome shows its own sign-in dialog for the realm NGINX sends:
+
+![Chrome's basic-auth dialog on agents.cvinhnguyen.duckdns.org](images/edge_basic_auth_prompt.png)
+
+Status codes per host without a login, with a wrong password and with the `admin` login (Grafana is not behind basic
+auth and redirects to its own login page), then the Web API paths:
+
+```text
+$ for h in agents registry logs traces grafana; do
+    echo $h $(code https://$h.$D/) $(code -u admin:wrong https://$h.$D/) $(code -u "admin:$EDGE_ADMIN_PASSWORD" https://$h.$D/)
+  done      # code() = curl -s -o /dev/null -w "%{http_code}"; columns: no login, wrong password, admin
+agents    401 401 200
+registry  401 401 200
+logs      401 401 200
+traces    401 401 200
+grafana   302 302 302
+
+$ for p in /v1/cards/card_00006087 /healthz /mcp /metrics /docs; do echo $p $(code -u "admin:$EDGE_ADMIN_PASSWORD" https://api.$D$p); done
+/v1/cards/card_00006087  200
+/healthz                 200
+/mcp                     404
+/metrics                 404
+/docs                    404
+```
+
+The Web API allows 5 requests per second per client IP with a burst of 10. 40 requests sent at once:
+
+```text
+$ seq 40 | xargs -P 40 -I{} curl -s -o /dev/null -w "%{http_code}\n" -u "admin:$EDGE_ADMIN_PASSWORD" https://api.$D/healthz | sort | uniq -c
+     12 200
+     28 429
+```
+
+The same limit in the browser, right after such a burst:
+
+![NGINX answers 429 Too Many Requests on the Web API](images/edge_rate_limit_429.png)
+
+The agents' chat UI over HTTPS is in [agents.md](agents.md#chat-with-the-agents-kagent-ui).
 
 ## Secrets: HashiCorp Vault + External Secrets
 
@@ -72,7 +211,84 @@ and connects them:
 - Values never enter git: `infra/.env` and `infra/.secrets/` are gitignored and `infra/make_env.py` generates random
   local values. The gateway keeps only SHA-256 hashes of its API keys.
 
-![Vault's tree of secrets (names and versions only), the Kubernetes auth role, and every ExternalSecret synced](images/vault_eso.png)
+[`infra/k8s/secrets.sh` L34-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/secrets.sh#L34-L54),
+one call per secret: the value goes to Vault, the ExternalSecret tells ESO where to read it:
+
+```sh
+secret() {
+  ns=$1 name=$2 type=$3; shift 3
+  kubectl get ns "$ns" >/dev/null 2>&1 || return 0
+  json=$(for kv in "$@"; do printf '"%s":"%s",' "${kv%%=*}" "${kv#*=}"; done)
+  printf '{"data":{%s}}' "${json%,}" | curl -fsS -o /dev/null -K "$hdr" --data @- \
+    "http://127.0.0.1:18200/v1/secret/data/card-fraud/$ns/$name" || { echo "vault write failed: $ns/$name" >&2; return 1; }
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: $name
+  namespace: $ns
+  annotations: {force-sync: "$sync"}   # sync now, not at the next refresh
+spec:
+  refreshInterval: 1h
+  secretStoreRef: {kind: ClusterSecretStore, name: vault}
+  target: {name: $name, creationPolicy: Owner, template: {type: $type}}
+  dataFrom: [{extract: {key: card-fraud/$ns/$name, decodingStrategy: ${DECODE:-None}}}]
+EOF
+  echo "  vault -> $ns/$name"
+}
+```
+
+The NGINX login is one of them
+([L68-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/secrets.sh#L68-L69)):
+only the apr1 hash of `EDGE_ADMIN_PASSWORD` is stored.
+
+```sh
+htpasswd="admin:$(printf '%s' "$(val EDGE_ADMIN_PASSWORD)" | openssl passwd -apr1 -stdin)"
+for ns in kagent agentregistry monitoring card-support; do secret "$ns" edge-basic-auth nginx.org/htpasswd htpasswd="$htpasswd"; done
+```
+
+Vault in the cluster (key names only, values are never listed) and the role External Secrets logs in with:
+
+```text
+$ kubectl -n vault exec vault-0 -- vault status
+Key             Value
+---             -----
+Seal Type       shamir
+Initialized     true
+Sealed          false
+Total Shares    1
+Threshold       1
+Version         2.0.4
+Build Date      2026-08-03T16:14:36Z
+Storage Type    inmem
+Cluster Name    vault-cluster-fdad89ac
+Cluster ID      aa388810-675a-93b4-0f0e-9bb76dd8b727
+HA Enabled      false
+
+$ kubectl -n vault exec vault-0 -- vault read auth/kubernetes/role/external-secrets
+Key                                         Value
+---                                         -----
+alias_metadata                              map[]
+alias_name_source                           serviceaccount_uid
+bound_service_account_names                 [external-secrets]
+bound_service_account_namespace_selector    n/a
+bound_service_account_namespaces            [external-secrets]
+policies                                    [card-fraud-read]
+token_bound_cidrs                           []
+token_explicit_max_ttl                      0s
+token_max_ttl                               0s
+token_no_default_policy                     false
+token_num_uses                              0
+token_period                                0s
+token_policies                              [card-fraud-read]
+token_ttl                                   1h
+token_type                                  default
+ttl                                         1h
+```
+
+The secrets in Vault (names only, `vault kv list` never prints values) and every ExternalSecret synced from them:
+
+![Git Bash: vault kv list of secret/card-fraud and its kagent folder, the ClusterSecretStore vault Valid, 16 ExternalSecrets SecretSynced](images/vault_eso.png)
 
 16 secrets in 7 namespaces, from the agents' gateway keys to the TLS certificate, all `SecretSynced`. Jenkins is
 outside the cluster and keeps its own credentials, filled from Docker secrets by configuration as code

@@ -70,7 +70,24 @@ The chart [`services/card_support_mcp/chart`](../services/card_support_mcp/chart
 last good revision by itself. MCP sessions are stateless (the gateway backend sets `sessionRouting: Stateless`), so
 any replica can answer any call and a rolling update does not break a conversation.
 
-![helm history with a failed release and its automatic rollback, the rolling update settings and the probes](images/mcp_release.png)
+The rolling update settings are in the chart
+([`deployment.yaml` L8-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/deployment.yaml#L8-L15)),
+the fallback is the deploy stage of the pipeline
+([`Jenkinsfile` L62-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/Jenkinsfile#L62-L70)):
+
+```groovy
+        stage('Deploy (helm --atomic)') {
+          // rolling update with maxUnavailable 0; a release whose pods never get Ready is rolled back by --atomic
+          steps {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+              sh 'helm upgrade --install card-support-mcp $SVC/chart -n card-support --atomic --timeout 4m --set image.tag=$TAG'
+              sh 'kubectl -n card-support rollout status deploy/card-support-mcp --timeout=60s'
+            }
+          }
+        }
+```
+
+![helm history: revision 3 failed and revision 4 rolled back to 2; the rolling update settings and probes of the Deployment](images/mcp_release.png)
 
 Revision 3 was a release that could not start (its knowledge base setting was missing on purpose): its pods never got
 Ready, the upgrade failed after the timeout and Helm wrote revision 4, "Rollback to 2". During that test a client kept
@@ -86,7 +103,34 @@ minimum 2 replicas, maximum 4, scaled on the agent's A2A request rate through th
 about 1.6 conversations in flight per replica. More replicas add no LLM capacity (one GPU behind llm-d); they keep a
 slow conversation from blocking the next one.
 
-![Agents Ready, two replicas each, the ScaledObjects, the MCP tool servers and the network policies](images/agents_k8s.png)
+[`scaledobjects.yaml` L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/templates/scaledobjects.yaml#L1-L22):
+
+```yaml
+{{- $as := .Values.autoscaling }}
+{{- range $name, $a := include "card-support.agents" . | fromYaml }}
+---
+# KEDA owns the replicas of the Deployment kagent creates for the agent (the Agent leaves replicas unset)
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  scaleTargetRef: {name: {{ $name }}}
+  minReplicaCount: {{ $as.minReplicas }}
+  maxReplicaCount: {{ $as.maxReplicas }}
+  pollingInterval: 15   # scale-down: the HPA's 5 min stabilization (cooldownPeriod applies only to scale-to-zero)
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $as.prometheus }}
+        query: sum(rate(agentgateway_requests_total{backend="{{ $.Values.gateway.namespace }}/agent-{{ $name }}"}[1m]))
+        threshold: {{ $as.requestsPerSecond | quote }}
+        ignoreNullValues: "true"
+{{- end }}
+```
+
+![kubectl: the four Agents Ready, two replicas each, their ScaledObjects, the MCP tool servers and the network policies](images/agents_k8s.png)
 
 Scaling test: locust sent 6 users for 4 minutes to `/a2a/coordinator` (31 conversations, 0 failures). The coordinator
 went from 2 to 4 replicas, the risk agent from 2 to 4 and the card data agent from 2 to 3, and they came back down
@@ -94,7 +138,13 @@ after the load. The full locust reports: [`locust_agents_scaling.html`](images/l
 and [`locust_agents_a2a.html`](images/locust_agents_a2a.html) (6 users, 5 minutes, 37 conversations, 0 failures,
 p95 85 s).
 
-![KEDA scaling the agents during the locust run](images/keda_agents_scaling.png)
+Run again on 2026-10-21 from Git Bash: locust in a container on the kind network, 6 users for 3 minutes against the
+gateway's `/a2a/coordinator` (18 conversations, 0 failures). Right after it, the coordinator was at 4 replicas and
+risk-agent-b at 3, and the HPA events KEDA drives give the reason: the agent's request rate through the gateway
+(`s0-prometheus`) above its target. The older events at the top are the HPAs being created and an earlier rise and
+fall of the coordinator.
+
+![locust summary, the HPAs after the run, and the SuccessfulRescale events: coordinator 2 to 3 to 4, risk-agent-b 2 to 3](images/keda_agents_scaling.png)
 
 The agents' pods are limited by a NetworkPolicy ([`networkpolicy.yaml`](../agents/chart/templates/networkpolicy.yaml)):
 they accept A2A calls only from the gateway proxy and the kagent controller, and they can open connections only to
@@ -105,22 +155,28 @@ Prometheus, NGINX and its own namespace.
 ### Sandboxed agents on Agent Substrate (warm-up)
 
 The same chart renders every agent a second time as a SandboxAgent
-([`sandboxagents.yaml`](../agents/chart/templates/sandboxagents.yaml)), from the same spec helper, so the sandboxed
-copy has the same prompt, tools and model config. A SandboxAgent runs each conversation in its own gVisor sandbox on
-Agent Substrate 0.0.9 ([`infra/k8s/llm-platform.sh`](../infra/k8s/llm-platform.sh)), restored from a snapshot taken
-once the agent was warm, so there is no cold start. Its network egress is limited to two hosts, the gateway and the
-kagent controller (`sandbox.allowedDomains` in [`values.yaml`](../agents/chart/values.yaml)).
+([`sandboxagents.yaml` L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/templates/sandboxagents.yaml#L1-L22)),
+from the same spec helper, so the sandboxed copy has the same prompt, tools and model config. A SandboxAgent runs each
+conversation in its own gVisor sandbox on Agent Substrate 0.0.9, installed by
+[`infra/k8s/llm-platform.sh` L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/llm-platform.sh#L34)
+with kagent's worker pool turned on at
+[L51-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/llm-platform.sh#L51-L55).
+Each sandbox is restored from a snapshot taken once the agent was warm, so there is no cold start. Its network egress
+is limited to two hosts, the gateway and the kagent controller
+([`values.yaml` L32-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/chart/values.yaml#L32-L39)).
 
 All sandboxed agents share the worker pool `kagent-default`. One worker runs one active conversation; after it, the
-sandbox is snapshotted and the worker takes the next one. On this machine the pool has a single worker:
+sandbox is snapshotted and the worker takes the next one. On this machine the pool has a single worker. In Git Bash,
+`ask` is a shell function defined earlier in the session: an A2A `message/send` to
+`/api/a2a-sandboxes/kagent/<agent>-sandbox/` on the kagent controller (port-forward), retried every 3 s while the
+answer is "no free workers"; it prints the time and the number of retries:
 
 ![One gVisor worker serving three sandboxed agents, one after the other and three at once](images/substrate_one_worker.png)
 
-The three agents answered one after the other in about 18 s each on the same worker. Sent at once, the first got the
-worker and the others got "no free workers" until it was free, retried, and all three answered within 68 s. The number
-of workers a fleet needs is the number of conversations it runs at the same time, whatever the number of agents. The
-demo calls the
-sandboxes through the kagent controller's A2A endpoint (`/api/a2a-sandboxes/kagent/<agent>-sandbox/`).
+One after the other, the three agents answered in 8 to 28 s on the same worker (the retries are the worker taking
+the snapshot of the previous conversation). Sent at once, one got the worker and the others got "no free workers"
+until it was free, retried, and all three answered within 61 s. The number of workers a fleet needs is the number of
+conversations it runs at the same time, whatever the number of agents.
 
 ## MCP gateway
 
@@ -151,7 +207,47 @@ The gateway rewrites the URL in each agent card to its own address, so an A2A cl
 going through the gateway. The A/B split of the risk agent also happens on the internal route (weights and the
 `x-agent-variant` header, [ab_testing.md](ab_testing.md)).
 
-![MCP and A2A policies, live: keys, tool access per agent, and the network policies](images/gateway_mcp_a2a.png)
+The MCP policy is generated from one map in the chart's values (`agents.access`, agent key user to its tools), in
+[`gateway.yaml` L30-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/gateway.yaml#L30-L56):
+
+```yaml
+# Who: an API key from agentgateway-api-keys. How much: a request rate limit. What: per agent, only its tools, both in
+# tools/list (the rule runs once per listed tool) and in tools/call.
+{{- $rules := list }}
+{{- range $agent, $tools := .Values.agents.access }}
+{{- $rules = append $rules (printf "(apiKey.user_id == %q && mcp.tool.name in %s)" $agent (toJson $tools)) }}
+{{- end }}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ $ns }}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: {{ .Release.Name }}}]
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    rateLimit:
+      local:
+        - {requests: {{ .Values.gateway.rateLimit.requests }}, unit: Minutes, burst: {{ .Values.gateway.rateLimit.burst }}}
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+            - {{ join " || " $rules | quote }}
+```
+
+The policies called from Git Bash through a port-forward to the gateway. `mcp` is a shell function defined earlier
+in the session: one curl `POST /mcp` with the given key as a Bearer token and the given JSON-RPC body (the server is
+stateless, so `tools/list` needs no `initialize` first). The keys come from the environment; only their variable
+names appear:
+
+![MCP route: no key 401, each agent's key lists only its tools, the LLM key lists none, a tool of the other agent is unknown](images/gateway_mcp.png)
+
+![A2A routes: /a2a/coordinator accepts only the support-app key, the internal route only the coordinator's key; the card URL is rewritten to the gateway](images/gateway_a2a.png)
 
 With no key the MCP route answers 401. The card data agent's key lists only its two tools, the risk agent's key only
 its two, and the agents' LLM key passes authentication but sees no tool. Calling `score_payment` with the card data

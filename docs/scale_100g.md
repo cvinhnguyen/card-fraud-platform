@@ -2,7 +2,9 @@
 
 The rubric asks for at least 100 GB of offline source data, so that optimizations show. Everything else in this repo
 runs on the ~1 GB dataset (`generator/generate.py`), which stays as it is; the 100 GB dataset is a separate run of
-the same generator code with larger volumes, kept under its own prefixes.
+the same generator code with larger volumes, kept under its own prefixes
+([`generator/generate_scale.py` L77-L92](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/generate_scale.py#L77-L92)
+calls the same `gen_day` once per day and chunk).
 
 | | 1 GB dataset | 100 GB dataset |
 |---|---|---|
@@ -36,6 +38,22 @@ pruning: Spark reads 2 of the 13 column chunks of every row group). The 2% dupli
 hot. Shuffle files are zstd-compressed and cleaned every 5 minutes, and a watcher stops the job if the disk falls
 below 25 GB.
 
+The job reuses the 1 GB benchmark code (`skew_join.py`) and sets Spark's AQE defaults back
+([`pipelines/spark/scale_100g.py` L30-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_100g.py#L30-L39)):
+
+```python
+    spark = SparkSession.builder.appName("p9_scale_skew").getOrCreate()
+    txn = spark.read.parquet(f"{SRC}/transactions").select("merchant_id", "amount_vnd")
+    merchants = spark.read.parquet(f"{SRC}/merchants.parquet").select("merchant_id", "merchant_name", "mcc").cache()
+    merchants.count()
+    if not args.no_stats:
+        skew_join.TOP = [r.merchant_id for r in txn.groupBy("merchant_id").count().orderBy(F.desc("count"))
+                         .limit(skew_join.TOP_N).collect()]
+    # Spark's own AQE defaults at this size (skew threshold 256 MB, target partition 64 MB)
+    skew_join.RUNS, skew_join.WARMUP, skew_join.SKEW_THRESHOLD, skew_join.ADVISORY = 1, False, "256m", "64m"
+    skew_join.bench(spark, txn, merchants, "100 GB raw export", args.methods, stats=not args.no_stats)
+```
+
 ### Results
 
 4,131,056,674 rows (4.05B + 2% duplicates), biggest merchant **23.9%** of all rows (~990M rows), top 10 merchants
@@ -53,7 +71,9 @@ rows alone while 1,999 others finish in seconds. The 1 GB run only hinted at thi
 
 > [!note] A mistake of the first attempt
 > The first AQE run also ran out of memory, after 67 min. `skew_join.configure` set the target partition size
-> equal to the skew threshold (right for the 1 GB run, where both are 8 MB), so at 100 GB each task aimed at 256 MB
+> equal to the skew threshold
+> ([`pipelines/spark/skew_join.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L46);
+> right for the 1 GB run, where both are 8 MB), so at 100 GB each task aimed at 256 MB
 > instead of Spark's default 64 MB. The run in the table uses Spark's defaults. The broadcast of that attempt failed
 > only because the executor was still broken from the OOM.
 
@@ -77,7 +97,8 @@ The silver dedup (latest `created_ts` per `transaction_id`, as in `pipelines/spa
 the 100 GB dataset, with `pipelines/spark/scale_dedup.py`. The full 100 GB plus its silver copy (~190 GB) does not fit the free
 disk since the Docker disk moved to the C: SSD. The slice is every 51st day of the period at full daily volume:
 20 export dates spread over 2024-2026, so it has both schemas (before and after 2024-07-01) and the trend.
-Generating it with the same seed writes the same files as the full run (each day and chunk has its own random stream).
+Generating it with the same seed writes the same files as the full run (each day and chunk has its own random stream,
+[`generator/generate_scale.py` L109-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/generate_scale.py#L109-L110)).
 
 ```bash
 python generator/generate_scale.py --transactions 4050000000 --every 51 --workers 3   # 81,072,211 rows, 2.0 GiB, 8 min
@@ -89,7 +110,8 @@ docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spa
 Two choices are measured:
 
 - Scope: global runs all dates in one job, as a one-shot backfill would run it; batched runs a few export dates per
-  job, appended to the same Delta table. Batching is correct because a duplicate comes from re-running one nightly
+  job, appended to the same Delta table
+  ([`pipelines/spark/scale_dedup.py` L81-L85](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L81-L85)). Batching is correct because a duplicate comes from re-running one nightly
   export, so both copies always share an `export_date`; DP2 relies on the same fact every night, when it dedups only
   the new export dates.
 - Method: window is `row_number()` over `transaction_id`, the `build_silver.py` code, which shuffles and sorts every
@@ -97,7 +119,24 @@ Two choices are measured:
   `transaction_id` column alone, passes every other row through a broadcast anti join (no shuffle, no sort) and runs
   the window on the duplicated rows only.
 
-Every run wrote the same 79,482,558 rows from 81,072,211 (1,589,653 duplicates removed) with the same checksum.
+The two methods
+([`pipelines/spark/scale_dedup.py` L38-L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L38-L47)):
+
+```python
+def latest(raw, method: str):
+    """One row per transaction_id, the one with the latest created_ts."""
+    if method == "window":
+        w = Window.partitionBy("transaction_id").orderBy(F.col("created_ts").desc())
+        return raw.withColumn("_rn", F.row_number().over(w)).where("_rn = 1").drop("_rn")
+    # broadcast: only 2% of the ids are duplicated. Find them from the id column alone (column pruning), pass the
+    # other rows through a broadcast anti join (no shuffle, no sort) and run the window on the duplicated rows only.
+    dup = F.broadcast(raw.groupBy("transaction_id").count().where("count > 1").select("transaction_id"))
+    return (raw.join(dup, "transaction_id", "left_anti")
+            .unionByName(latest(raw.join(dup, "transaction_id", "left_semi"), "window")))
+```
+
+Every run wrote the same 79,482,558 rows from 81,072,211 (1,589,653 duplicates removed) with the same checksum
+([`pipelines/spark/scale_dedup.py` L88-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L88-L93)).
 Setup as in the rest of P9: one 2 GB executor, 8 cores, Docker disk on the SSD; one run each.
 
 | Method | Scope | AQE partition target | Time (20 dates) | Per date | Spill (memory / disk) |
