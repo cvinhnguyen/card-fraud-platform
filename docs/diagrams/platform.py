@@ -100,9 +100,9 @@ class Arrow:
         return f"{self.flow}{self.n}"
 
 
-def text_w(s: str, size: float, mono: bool) -> float:
-    """Approximate rendered width of a string (enough to place labels and check overlaps)."""
-    return len(s) * size * (0.6 if mono else 0.56)
+def text_w(s: str, size: float, mono: bool, spacing: float = 0.0) -> float:
+    """Approximate rendered width of a string (enough to place labels and check overlaps); spacing in em."""
+    return len(s) * size * ((0.6 if mono else 0.56) + spacing)
 
 
 def t(x, y, s, size=12.0, color=INK, anchor="middle", weight=400, mono=False, halo=None, spacing=0.0):
@@ -137,7 +137,7 @@ def box_svg(b: Box) -> str:
         stroke, fill = b.accent, b.accent + "14"   # 8% tint
     s = [f'<rect x="{b.x}" y="{b.y}" width="{b.w}" height="{b.h}" rx="8" fill="{fill}" stroke="{stroke}"{dash}/>']
     if b.tag:
-        tw = text_w(b.tag, 9, True) + 10
+        tw = text_w(b.tag, 9, True, 0.06) + 10   # the tag is drawn with 0.06em letter-spacing
         s.append(f'<rect x="{b.x + 8}" y="{b.y + 8}" width="{tw:.0f}" height="15" rx="3" fill="none" '
                  f'stroke="{b.accent or LINE}"/>')
         s.append(t(b.x + 13, b.y + 19, b.tag, 9, b.accent or INK2, "start", mono=True, spacing=0.06))
@@ -251,7 +251,7 @@ def panel(x, y, w, h, title, fill, stroke, dashed=False, note=""):
     s = [f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{fill}" stroke="{stroke}"{dash}/>',
          t(x + 16, y + 22, title, 11, INK2, "start", 600, mono=True, spacing=0.08)]
     if note:
-        s.append(t(x + 16 + text_w(title, 11, True) * 1.14 + 14, y + 22, note, 11, MUTED, "start", mono=True))
+        s.append(t(x + 16 + text_w(title, 11, True, 0.08) + 14, y + 22, note, 11, MUTED, "start", mono=True))
     return "\n".join(s)
 
 
@@ -367,7 +367,7 @@ def architecture():
               desc="Pipeline steps 1-2 read the labels as of label_as_of and the point-in-time features"),
         Arrow("T", 4, "training set (MERGE)", [(kfp.x, s3y + 56), (B["s3"].x + B["s3"].w, s3y + 56)], 0.5, "d",
               desc="Step 2 MERGEs the run's rows into ml/training_set_fraud_model_v1 (one Delta version per run)"),
-        Arrow("T", 5, "metrics, model @challenger", [kfp.left(0.06), (B["mlflow"].x + BW, kfp.y + kfp.h * 0.06)], 0.5, "u",
+        Arrow("T", 5, "metrics, model @challenger", [kfp.left(0.06), (B["mlflow"].x + BW, kfp.y + kfp.h * 0.06)], 0.6, "u",
               desc="Steps 5-7 log params, data versions, metrics and the booster; alias challenger when the gate passes"),
         Arrow("T", 6, "@production model", [B["mlflow"].top(), B["registry"].bottom()],
               desc="ML engineer: fetch_model.py --alias production, docker build + push of fraud/predictor:<v>"),
@@ -477,7 +477,7 @@ def layer3():
         "scoring": Box(c6, q(5), BW, BH, "Scoring API", ("Layer 2: features", "+ KServe -> score"), "ml", "fastapi"),
         "github": Box(c7, q(1), BW, BH, "GitHub", ("card-fraud-platform", "branch main"), "internet"),
         "langfuse": Box(c8, q(1), BW, BH, "Langfuse Cloud", ("prompts, datasets,", "experiments (EU)"), "internet"),
-        "jenkins": Box(c8, q(2), BW, BH, "Jenkins", ("5 pipelines", "polls main, :8095"), "cicd"),
+        "jenkins": Box(c8, q(2), BW, BH, "Jenkins", ("5 pipelines", "polls main, :8095"), "CI/CD", "jenkins"),
         "registry": Box(c7, q(3), BW, BH, "Docker registry", ("images + cosign", "signatures, :5001"), "ml", "docker"),
         "airflow": Box(c7, q(4), BW, BH, "Airflow", ("DAG rag_ingest, steps", "in fraud/ml-train"), "orch", "airflow"),
         "s3": Box(c7, q(5), BW, BH, "SeaweedFS (S3)", ("bank-documents,", "lakehouse/kb Parquet"), "core", "bucket"),
@@ -623,8 +623,9 @@ def group(x, y, title, note, chips, w=CW + 28, cols=1) -> tuple[str, float]:
     h = 34 + rows * (CH + 8) + 6
     cw = (w - 28 - (cols - 1) * 12) / cols
     s = [f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="9" fill="#f9fafb" stroke="{LINE}"/>',
-         t(x + 14, y + 22, title, 11.5, INK, "start", 700, mono=True, spacing=0.06),
-         t(x + 14 + text_w(title, 11.5, True) * 1.06 + 10, y + 22, note, 10.5, MUTED, "start", mono=True)]
+         t(x + 14, y + 22, title, 11.5, INK, "start", 700, mono=True, spacing=0.06)]
+    if note:
+        s.append(t(x + 14 + text_w(title, 11.5, True, 0.06) + 10, y + 22, note, 10.5, MUTED, "start", mono=True))
     for i, ch in enumerate(chips):
         cx, cy = x + 14 + (i % cols) * (cw + 12), y + 34 + (i // cols) * (CH + 8)
         s.append(chip(cx, cy, *ch, w=cw))
@@ -636,7 +637,7 @@ def net(pts, label, lx, ly, anchor="start", halo=PANEL) -> str:
     d = path_d(pts)
     return "\n".join([f'<path d="{d}" fill="none" stroke="{halo}" stroke-width="7"/>',
                       f'<path d="{d}" fill="none" stroke="{INK2}" stroke-width="1.8" marker-end="url(#ah-net)"/>',
-                      *[t(lx, ly + 14 * i, ln, 11, INK, anchor, halo=halo) for i, ln in enumerate(label.split("\n"))]])
+                      *[t(lx, ly + 14 * i, ln, 11, INK, anchor, halo=halo) for i, ln in enumerate(label.split("\n")) if ln]])
 
 
 def deployment():
@@ -702,7 +703,7 @@ def deployment():
     g, _ = group(gx[2], y3 + 14, "gov", "P8", [
         ("datahub-frontend", "datahub-frontend-react:v1.5.0.6", ":9002", "lineage"),
         ("datahub-gms", "acryldata/datahub-gms:v1.5.0.6", ":8083", "lineage"),
-        ("opensearch", "opensearch:2.19.3", "", ""),
+        ("opensearch", "opensearch:2.19.3", "", "opensearch"),
         ("datahub-db", "postgres:16-alpine", "", "postgres"),
         ("datahub-system-update", "one-shot: schema upgrade", "", "lineage", True)])
     body.append(g)
@@ -719,8 +720,8 @@ def deployment():
         ("scoring-api", "fraud/scoring-api", ":8000", "fastapi"),
         ("registry", "registry:3", ":5001", "docker")])
     body.append(g)
-    g, _ = group(gx[4], gy, "cicd", "Layer 3", [
-        ("jenkins", "fraud/jenkins:2.580.1", ":8095", "")])
+    g, _ = group(gx[4], gy, "CI/CD", "profile cicd · Layer 3", [
+        ("jenkins", "fraud/jenkins:2.580.1", ":8095", "jenkins")])
     body.append(g)
     comp_r = gx[4] + CW + 28 + 20
     compose.append(panel(cx0, cy0, comp_r - cx0, ml_b + 20 - cy0, "COMPOSE PROJECT fraud · network fraud_default",
@@ -813,20 +814,22 @@ def deployment():
             "S3, APIs, UIs", hosts["py"].x + 282, vy - 34),   # right of the VM panel's title
         net([hosts["docker"].bottom(190 / 210), (hosts["docker"].x + 190, cy0)], "push :5001", hosts["docker"].x + 202,
             vy - 34),
-        net([(1620, ky), (1620, 262), (chat.x + 125, 262), chat.bottom()], "", 0, 0),
-        net([(1650, ky), (1650, 248), (embed.x + 114, 248), embed.bottom()],
-            "pods ->\nhost.docker\n.internal:\n:8085 chat\n:8086 embed", 1662, 540),
-        net([browser.bottom(0.75), (browser.x + 112.5, 236), (1790, 236), (1790, ky)],
-            "https://\nagents,\nregistry,\ngrafana,\nlogs,\ntraces,\napi\n.<domain>\n-> :443", 1800, 330),
-        net([kindb.bottom(134 / kindb.w), (kindb.x + 134, ky)], "kind\nAPI,\nhelm", 1800, 800),
+        # corridor between compose (right edge ~1579) and the VM edge (~1890): every path lands on the kind panel
+        net([(1600, ky), (1600, 262), (chat.x + 125, 262), chat.bottom()], "", 0, 0),
+        net([(1622, ky), (1622, 248), (embed.x + 114, 248), embed.bottom()],
+            "pods ->\nhost.docker.internal\n:8085 chat\n:8086 embed", 1634, 700),
+        net([browser.bottom(0.75), (browser.x + 112.5, 236), (1770, 236), (1770, ky)],
+            "HTTPS :443 to NGINX\nagents.<domain>\nregistry.<domain>\ngrafana.<domain>\nlogs.<domain>\n"
+            "traces.<domain>\napi.<domain>", 1762, 330, "end"),
+        net([kindb.bottom(82 / kindb.w), (kindb.x + 82, ky)], "kind API,\nhelm", 1810, 800),
         net([(200, ky), (200, cb)], "pods -> lakehouse-s3:8333, kafka, ml-db, redis, mlflow, vector-db, scoring-api "
             "(node on fraud_default)", 212, cb + 36),
         net([(1020, cb), (1020, ky)], "scoring-api -> :31080 KServe · Airflow -> :31888 KFP\n"
             "Jenkins -> kind API (helm), :31508 (eval)", 1032, cb + 30),
-        net([(1400, cb), (1400, ky)], "image pulls:\nlocalhost:5001 =\nregistry:5000", 1412, cb + 24),
+        net([(1400, cb), (1400, ky)], "images pulled from\nregistry:5000\n(host: localhost:5001)", 1412, cb + 24),
     ]
     notes = ["8 GB does not hold every profile: run stream alone; keep trino and dbt off while orch + gov run; "
-             "Layer 3 runs with core + ml + cicd and the kind cluster.",
+             "Layer 3 runs with core + ml + CI/CD (profile cicd) and the kind cluster.",
              "seaweedfs has the alias lakehouse-s3: inside kind, KFP's own seaweedfs Service shadows the short name.",
              "The model servers run on the host GPU (GTX 1070, Pascal: no vLLM); llm-d's InferencePool selects thin "
              "bridge pods that forward to them.",
