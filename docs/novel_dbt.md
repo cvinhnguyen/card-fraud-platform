@@ -3,8 +3,8 @@
 dbt was not taught in the course. Here it builds the gold star schema (`dim_customer` SCD2, `dim_card`,
 `dim_merchant`, `dim_date`, incremental `fact_transaction`) as SQL `SELECT` models on Spark: dbt renders the SQL,
 works out the build order from `ref()` / `source()`, runs it on Spark (Spark still does all the work), runs the tests,
-and writes docs and lineage artifacts. Silver stays PySpark (dedup, skew and schema evolution demos need DataFrame
-code); everything after silver that is "join and reshape" is dbt.
+and writes docs and lineage artifacts. Silver stays PySpark (the dedup window and the MERGE on `created_ts` need DataFrame code; `mergeSchema` is in
+DP1 and the skew benchmark is its own job); everything after silver that is "join and reshape" is dbt.
 
 | Where | What |
 |---|---|

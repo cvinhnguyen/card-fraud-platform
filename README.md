@@ -41,13 +41,16 @@ Layer 2's online features and model.
 
 ## Architecture
 
-![Platform overview: Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents; below them the CI/CD path (GitHub, Jenkins, registry, deploy) and what runs in the cloud (SaaS and the Azure IaC resources)](docs/images/platform-overview.png)
+![Platform overview: Layer 1 builds the features, each step writing a lakehouse zone (landing, bronze, silver, gold, features) that the next step reads; Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents; below them the CI/CD path (GitHub, Jenkins, registry, deploy, signed images, eval gate) and what runs in the cloud (SaaS and the Azure IaC resources)](docs/images/platform-overview.png)
 
 Layer 1 turns the source systems into feature tables (batch) and realtime features (stream). Feast is the hand-over:
 the same 20 features for training (offline store, point-in-time joins) and for serving (online store). Layer 2 trains
 on them, serves the model behind the Scoring API and retrains when the drift check fails. Layer 3 reads the same
 online features and the Scoring API through its MCP server, adds the bank's documents as a second Feast project
-(chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below. The
+(chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below. Blue
+cards are where the data rests between two steps (lakehouse zones on SeaweedFS, Kafka topics, databases): a step
+writes a store and the next step reads it, so no arrow goes straight from one Spark job to the next. Orange cards are
+the four novel ideas. The
 two rows at the bottom show how a change ships (CI/CD: GitHub, Jenkins, the signed image, deploy and check) and
 what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deployment](#deployment)).
 
@@ -55,12 +58,12 @@ what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deplo
 
 | Step | Component | What it does |
 |---|---|---|
-| 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC) and the daily export files (S3A) into bronze `raw_*` Delta tables, unchanged |
-| 02 · DP2 | Spark silver | Dedup, `mergeSchema` for the 2024-07-01 auth columns, 63 → 34 unit normalization, skew salting → `stg_*` |
+| 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged |
+| 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in `skew_join.py`) |
 | 03 · DP2 | dbt-spark (novel idea 1) | Gold `dim_*` / `fact_*` on Spark (own session in Airflow, Thrift Server by hand), SCD2 `dim_customer` model, incremental fact, 22 dbt tests |
 | 04 · DP3 | Spark features | `feat_*` tables with `event_timestamp` and `created` for the Layer 2 feature store |
-| 05 | Trino | SQL over gold and feature tables through the Hive Metastore |
-| 06 | Flink | Watermarks, late events, dedup and windows on Kafka; raw events → bronze, realtime features → `card_features_rt` |
+| 05 | Trino | SQL over every zone (`delta.<zone>.<table>`): finds a table's location in the Hive Metastore, reads its Delta files from S3 |
+| 06 | Flink | Watermarks, late events, dedup and windows on Kafka; raw events → `landing/` JSON files (DP1 loads them into bronze), realtime features → `card_features_rt` |
 | 07 | Airflow | Runs DP1 → DP2 → DP3 (each: ingest stage + Great Expectations validate stage); connections and variables in Airflow |
 | 08 | DataHub | Tables of every zone, lineage sent by every Spark job through OpenLineage (novel idea 2), validation results as assertions |
 
@@ -100,7 +103,8 @@ Five classes carry the ML logic:
 | 23 | Card-data + risk agents | kagent agents with MCP tools through the gateway; 2-4 replicas each (KEDA) |
 | 24 | Agent Substrate | Sandboxed copies of the agents in gVisor, restored from warm snapshots on a shared worker pool |
 | 25 | agentregistry | Catalog of the agents and the MCP server they use |
-| 26 | Operations | Jenkins CI/CD (prompts from Langfuse, eval gate, signed images), Prometheus + Grafana, VictoriaLogs, Jaeger, Vault |
+| 26 | Operations | Prometheus + Grafana, VictoriaLogs, Jaeger, Vault |
+| 27 | CI/CD | Jenkins: five pipelines, prompts from Langfuse, signed images (Layer 3 novel idea 2), eval gate (Layer 3 novel idea 1) |
 
 ### System diagram
 

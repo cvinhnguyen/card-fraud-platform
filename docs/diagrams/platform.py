@@ -27,6 +27,7 @@ SANS = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
 MONO = "'Cascadia Mono', Consolas, 'Courier New', monospace"
 INK, INK2, MUTED, LINE = "#2d3142", "#4f5d75", "#8a91a3", "#c8ccd4"
 PAGE, PANEL, KIND_PANEL = "#f5f5f5", "#eceef1", "#e6ebf4"
+STORE_FILL, STORE_LINE = "#eaf0f8", "#7d8fb3"   # a store: where the data rests between steps
 
 # Flows: letter, name, who / when, colour. Normal-vision separation >= 17 (OKLab x100) between every pair; colour-blind
 # readers tell flows apart by the letter in every badge.
@@ -61,6 +62,7 @@ class Box:
     icon: str = ""
     soft: bool = False   # support service: lighter, no main-flow arrows
     accent: str = ""     # novel idea: tinted card in this colour
+    store: bool = False  # storage (bucket zone, database, topic): blue card, cylinder glyph
 
     def top(self, f=0.5):
         """Point on the top edge, f = fraction of the width from the left."""
@@ -121,6 +123,8 @@ def icon(name, x, y, size=20, color=INK):
     glyph = {   # line icons for units without a logo
         "card": '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/>',
         "bucket": '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5l2 14c.3 1.7 2.8 3 6 3s5.7-1.3 6-3l2-14"/>',
+        "db": '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/>'
+              '<path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
         "lineage": '<circle cx="5" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="12" r="2.5"/>'
                    '<path d="M7.5 6.5L16.5 11M7.5 17.5L16.5 13"/>',
     }[name]
@@ -133,6 +137,8 @@ def box_svg(b: Box) -> str:
     stroke, fill = (LINE, "#fafafa") if b.soft else ("#9aa1b1", "#ffffff")
     dash = ' stroke-dasharray="4 3"' if b.soft else ""
     ink = b.accent or INK
+    if b.store:
+        stroke, fill = STORE_LINE, STORE_FILL
     if b.accent:
         stroke, fill = b.accent, b.accent + "14"   # 8% tint
     s = [f'<rect x="{b.x}" y="{b.y}" width="{b.w}" height="{b.h}" rx="8" fill="{fill}" stroke="{stroke}"{dash}/>']
@@ -141,8 +147,8 @@ def box_svg(b: Box) -> str:
         s.append(f'<rect x="{b.x + 8}" y="{b.y + 8}" width="{tw:.0f}" height="15" rx="3" fill="none" '
                  f'stroke="{b.accent or LINE}"/>')
         s.append(t(b.x + 13, b.y + 19, b.tag, 9, b.accent or INK2, "start", mono=True, spacing=0.06))
-    if b.icon:
-        s.append(icon(b.icon, b.x + b.w - 28, b.y + 7, 20, ink if not b.soft else INK2))
+    if b.icon or b.store:
+        s.append(icon(b.icon or "db", b.x + b.w - 28, b.y + 7, 20, ink if not b.soft else INK2))
     lines = b.lines
     ty = b.y + b.h / 2 + (4 if b.tag else 0) - 6 * len(lines) + 5
     s.append(t(b.x + b.w / 2, ty, b.title, 14.5, ink, weight=600))
@@ -294,7 +300,7 @@ def architecture():
         "mlflow": Box(c(5), r(4), BW, BH, "MLflow", ("tracking + registry", "card_fraud_xgb"), "ml", "mlflow"),
         "flink": Box(c(1), r(5), BW, BH, "Flink", ("rt_features", "device_seen, raw_landing"), "stream", "flink"),
         "pushoff": Box(c(2), r(5), BW, BH, "push-offline", ("push job B", "Kafka -> Delta"), "ml", "python"),
-        "trino": Box(c(3), r(5), BW, BH, "Trino", ("SQL on gold", "and feat_* :8090"), "batch", "trino"),
+        "trino": Box(c(3), r(5), BW, BH, "Trino", ("SQL on every zone", "of the lake :8090"), "batch", "trino"),
         "spark": Box(c(4), r(5), BW, BH, "Spark", ("master + worker", "DP1 · DP2 · DP3"), "batch", "spark"),
         "airflow": Box(c(5), r(5), BW, BH, "Airflow", ("DP1-3 + dbt + GE", "materialize, drift"), "orch", "airflow"),
         "jupyter": Box(c(6), r(5), BW, BH, "Jupyter", ("fraud_model.ipynb", ":8899"), "ml", "jupyter"),
@@ -334,7 +340,7 @@ def architecture():
               desc="Flink reads card_authorizations (watermarks, dedup of network retries)"),
         Arrow("R", 3, "rt features", [B["flink"].top(115 / BW), kafka.bottom(115 / kafka.w)],
               desc="Realtime features to card_features_rt, first (card, device) pairs to card_device_seen"),
-        Arrow("R", 4, "raw events -> bronze", [B["flink"].bottom(), (B["flink"].x + 85, s3y)],
+        Arrow("R", 4, "raw events -> landing", [B["flink"].bottom(), (B["flink"].x + 85, s3y)],
               desc="raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1's Spark task loads them into "
                    "bronze.raw_card_authorizations (Delta)"),
         Arrow("R", 5, "features", [kafka.top((c(2) + 85 - c(1)) / kafka.w), B["pushon"].bottom()],
@@ -353,8 +359,9 @@ def architecture():
               desc="DP1 loads the new daily export folders from s3://core-banking-export"),
         Arrow("B", 4, "bronze -> feat_*", [B["spark"].bottom(138 / BW), (c(4) + 138, s3y)],
               desc="Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse"),
-        Arrow("B", 5, "gold, feat_*", [(c(3) + 85, s3y), B["trino"].bottom()],
-              desc="Trino reads the gold and feature tables for analysts (catalog: Hive Metastore)"),
+        Arrow("B", 5, "Delta tables", [(c(3) + 85, s3y), B["trino"].bottom()],
+              desc="Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table "
+                   "lives"),
         Arrow("B", 6, "daily stats", [(c(5) + 40, s3y), B["airflow"].bottom(40 / BW)], side="r",
               desc="DAG feast_materialize (after DP3) reads feat_card_txn_stats_daily through the Feast offline store"),
         Arrow("B", 7, "latest stats", [B["airflow"].left(0.22), (c(4) + BW + 14, B["airflow"].y + BH * 0.22),
@@ -868,111 +875,113 @@ def deployment():
 
 
 # ---------------------------------------------------------------- overview
-NOVEL1, NOVEL2 = "#bf4520", "#6b7a3a"
+NOVEL = "#bf4520"   # one colour for the four novel ideas
 
 
 def overview():
-    """The README steps: Layer 1 writes the features, Feast hands them over, Layer 2 uses them, Layer 3 builds on both."""
-    W, H, CWD = 2166, 1858, 286
+    """The README steps and where their data rests: a step writes a store, the next step reads it from there."""
+    W, H, CWD, SW = 2166, 2092, 286, 268
     x = [40 + i * 352 for i in range(6)]
 
     def card(i, y, tag, title, lines, ico, accent=""):
         """A step card in column i."""
         return Box(x[i], y, CWD, 100, title, lines, tag, ico, accent=accent)
 
-    r1a, r1b, fy, r2, r3a, r3b = 136, 270, 430, 610, 846, 1046
-    B = [card(0, r1a, "SOURCE", "Core banking", ("PostgreSQL core_banking (JDBC)", "daily export files (S3)"), "postgres"),
-         card(1, r1a, "01 · DP1", "Spark ingest", ("JDBC + S3A -> bronze raw_*", "Delta, schema evolution"), "spark"),
-         card(2, r1a, "02 · DP2", "Spark silver", ("dedup · mergeSchema · salting", "63 -> 34 units · labels"), "spark"),
-         card(3, r1a, "03 · NOVEL 1", "dbt-spark gold", ("dim_* · fact_* · SCD2 customer", "22 dbt tests"), "dbt", NOVEL1),
-         card(4, r1a, "04 · DP3", "Spark features", ("feat_* tables with", "event_timestamp (PIT ready)"), "spark"),
-         card(5, r1a, "05 · SQL", "Trino", ("gold + feat_* for analysts", "Hive Metastore catalog"), "trino"),
-         card(0, r1b, "SOURCE", "Card network", ("authorizations -> Kafka", "card_authorizations"), "kafka"),
-         card(1, r1b, "06 · STREAM", "Flink", ("watermarks · dedup · windows", "realtime features -> Kafka"), "flink"),
-         Box(x[0], fy, x[5] + CWD - x[0], 76, "Feast",
-             ("card_fraud: offline Delta feat_* (point-in-time joins on Spark) · online Redis · registry PostgreSQL",
-              "fraud_model_v1 = 20 features for training and serving  ·  card_support_kb: policy chunks + vectors "
-              "(pgvector)"),
-             "09 · FEATURE STORE", ""),
-         card(0, r2, "10 · NOTEBOOK", "Jupyter", ("the 7 steps one by one", "LR baseline + XGBoost"), "jupyter"),
-         card(1, r2, "11 · TRAIN", "Kubeflow Pipelines", ("same 7 steps as pods (kind)", "distributed XGBoost"), "kubernetes"),
-         card(2, r2, "12 · REGISTRY", "MLflow", ("runs · data versions", "@challenger · @production"), "mlflow"),
-         card(3, r2, "13 · MODEL SERVER", "KServe", ("booster inside the image", "V1 predict, 1-3 replicas"), "kubernetes"),
-         card(4, r2, "14 · API", "Fraud Scoring API", ("authorization -> features", "-> approve/step_up/decline"), "fastapi"),
-         card(5, r2, "15 · DRIFT", "Drift API + DAG", ("PSI per feature, live", "PR-AUC on labels, daily"), "fastapi"),
-         card(0, r3a, "16 · RAG", "RAG pipeline", ("bank documents -> chunks", "-> vectors -> Feast KB"), "airflow"),
-         card(1, r3a, "17 · MODEL SERVER", "llama.cpp", ("Qwen3-8B chat on the GPU", "Qwen3-Embedding 0.6B"), ""),
-         card(2, r3a, "18 · ROUTER", "llm-d", ("InferencePool qwen3-8b", "endpoint picker"), "kubernetes"),
-         card(3, r3a, "19 · GATEWAY", "agentgateway", ("LLM · MCP · A2A routes", "keys, limits, PII masking"), ""),
-         card(4, r3a, "20 · MCP SERVER", "card-support-mcp", ("4 tools: card data, chunk,", "policy search, fraud score"),
-              "fastapi"),
-         card(0, r3b, "USERS", "Support staff", ("kagent chat in a browser", "or an app over A2A"), ""),
-         card(1, r3b, "21 · EDGE", "NGINX Ingress", ("HTTPS *.<domain>", "basic auth, rate limits"), ""),
-         card(2, r3b, "22 · COORDINATOR", "Coordinator agent", ("plans the answer, asks", "the two agents (A2A)"), ""),
-         card(3, r3b, "23 · AGENTS", "Card-data + risk agents", ("kagent, MCP tools", "KEDA: 2-4 replicas each"), ""),
-         card(4, r3b, "24 · WARM POOL", "Agent Substrate", ("sandboxed agents restored", "from snapshots, 1 worker"), ""),
-         card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog of the 3 agents", "and the MCP server"), "")]
-    bars = [Box(x[0], 1196, x[5] + CWD - x[0], 56, "Airflow",
-                ("DP1 -> DP2 -> DP3 -> feast_materialize, daily  ·  drift_monitoring, daily: a KFP run on drift  ·  "
-                 "rag_ingest (16)  ·  validate stages (Great Expectations)",), "07 · ORCHESTRATION", "airflow"),
-            Box(x[0], 1262, x[5] + CWD - x[0], 56, "SeaweedFS (S3) + Delta Lake",
-                ("bronze raw_* -> silver stg_* -> gold dim_* / fact_* -> feat_*  ·  ml/ training sets (one Delta version "
-                 "per run)  ·  bank-documents (RAG)  ·  MLflow artifacts",), "STORAGE", "bucket"),
-            Box(x[0], 1328, x[5] + CWD - x[0], 56, "DataHub + OpenLineage",
-                ("lineage sent by every Spark job and by Airflow  ·  validation results as assertions (RAG chunks "
-                 "included)",), "08 · NOVEL 2", "lineage", accent=NOVEL2),
-            Box(x[0], 1394, x[5] + CWD - x[0], 56, "Prometheus, Grafana, VictoriaLogs, Jaeger + Vault",
-                ("metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
-                 "call  ·  secrets in Vault",), "26 · OPERATIONS", "")]
+    def store(i, y, tag, title, lines, ico="", h=86):
+        """A store under the gap between columns i and i + 1: column i writes it, column i + 1 reads it."""
+        return Box(x[i] + 185, y, SW, h, title, lines, tag, ico, store=True)
 
-    # CI/CD: one row, commit to running unit (Layer 3 diagram: the same flow arrow by arrow)
-    cy, cyc = 1470, 1500
-    cicd = [Box(x[0], cyc, CWD, 100, "GitHub", ("cvinhnguyen/card-fraud-platform", "branch main"), "SAAS", ""),
-            Box(x[1], cyc, CWD, 100, "Jenkins", ("5 pipelines: test, build,", "sign, deploy, evaluate"), "27 · CI/CD",
-                "jenkins"),
-            Box(x[2], cyc, CWD, 100, "Docker registry", ("images + cosign signatures", "localhost:5001"), "REGISTRY",
-                "docker"),
-            Box(x[3], cyc, x[5] + CWD - x[3], 100, "Deploy, then check against the running platform",
-                ("kind: helm upgrade --atomic of the MCP server (signed image) and the 3 agents + Langfuse prompts, "
-                 "then the eval gate",
-                 "Airflow: new rag_image, rag_ingest run + 7 checks  ·  compose: push-online / push-offline + online "
-                 "and offline smoke test"), "DEPLOY", "")]
-    mid_c = cyc + 50
-    cicd_arrows = [net([(x[i] + CWD, mid_c), (x[i + 1], mid_c)], lab, x[i] + CWD + 33, mid_c - 8, "middle")
-                   for i, lab in ((0, "polled"), (1, "push"), (2, "pull"))]
+    # Layer 1: steps (top row), the lakehouse zones between them, the stream (bottom row)
+    rA, lk, zy, rC, fy = 136, 262, 276, 404, 554
+    zb = zy + 86
+    L1 = [card(0, rA, "SOURCE", "Core banking", ("PostgreSQL core_banking (JDBC)", "export files: S3 core-banking-export"),
+               "postgres"),
+          card(1, rA, "01 · DP1", "Spark ingest", ("JDBC snapshot + new exports", "+ landing files, mergeSchema"), "spark"),
+          card(2, rA, "02 · DP2", "Spark silver", ("dedup · 63 -> 34 units", "auth_method for old rows"), "spark"),
+          card(3, rA, "03 · NOVEL L1 #1", "dbt-spark gold", ("dim_* · fact_* · SCD2 customer", "22 dbt tests"), "dbt",
+               NOVEL),
+          card(4, rA, "04 · DP3", "Spark features", ("30 / 90 / 180-day windows", "event_timestamp (PIT ready)"), "spark"),
+          card(5, rA, "05 · SQL", "Trino", ("analysts' SQL on any zone,", "tables found in the catalog"), "trino"),
+          store(0, zy, "S3 lakehouse/landing/", "landing", ("raw authorizations, JSON", "a folder per auth_date")),
+          store(1, zy, "S3 lakehouse/bronze/", "bronze", ("raw_* Delta tables", "sources copied as they are")),
+          store(2, zy, "S3 lakehouse/silver/", "silver", ("stg_* Delta tables", "clean, one row per id")),
+          store(3, zy, "S3 lakehouse/gold/", "gold", ("dim_* · fact_* (dbt)", "label_transaction (Spark)")),
+          store(4, zy, "S3 lakehouse/gold/feat_*", "features", ("feat_* Delta tables", "= Feast offline store")),
+          Box(1921, zy, 203, 86, "Hive Metastore", ("Spark registers tables,", "Trino and dbt look up"), "CATALOG",
+              "hive", store=True),
+          Box(x[0], rC, CWD, 100, "Kafka", ("card_authorizations (card network)", "card_features_rt · card_device_seen"),
+              "SOURCE · TOPICS", "kafka", store=True),
+          card(1, rC, "06 · STREAM", "Flink", ("watermarks · dedup · windows", "raw -> landing, features -> Kafka"),
+               "flink")]
+    lake = [f'<rect x="30" y="{lk}" width="{W - 60}" height="114" rx="10" fill="#f6f8fc" stroke="#b5c0d6" '
+            f'stroke-dasharray="6 4"/>',
+            t(44, lk + 30, "LAKEHOUSE", 11, INK2, "start", 700, mono=True, spacing=0.08),
+            *[t(44, lk + 50 + 16 * i, s, 11, INK2, "start", mono=True)
+              for i, s in enumerate(("SeaweedFS (S3)", "bucket lakehouse", "Delta tables"))]]
+    arrows = [net([(x[0] + CWD, rA + 50), (x[1], rA + 50)], "", 0, 0),                      # core banking -> DP1
+              net([(x[0] + CWD, rC + 34), (x[1], rC + 34)], "", 0, 0),                      # Kafka -> Flink
+              net([(x[1], rC + 70), (x[0] + CWD, rC + 70)], "", 0, 0),                      # Flink -> Kafka
+              net([(x[1] + 30, rC), (x[1] + 30, zb)], "", 0, 0),                            # Flink writes landing
+              net([(x[1] + 80, zy), (x[1] + 80, rA + 100)], "", 0, 0),                      # DP1 reads it
+              net([(2010, zy), (2010, rA + 100)], "", 0, 0)]                                # catalog -> Trino
+    arrows += [net([(x[i] + 236, rA + 100), (x[i] + 236, zy)], "writes" if i == 1 else "", x[i] + 248, lk - 6)
+               for i in range(1, 5)]                                                        # step i writes its zone
+    arrows += [net([(x[i] + 402, zy), (x[i] + 402, rA + 100)], "reads" if i == 1 else "", x[i] + 414, lk - 6)
+               for i in range(1, 4)]                                                        # step i + 1 reads it
+    arrows += [net([(x[0] + 143, rC + 100), (x[0] + 143, fy)], "push jobs: Redis + Delta feat_*", x[0] + 155, fy - 12),
+               net([(x[4] + 319, zb), (x[4] + 319, fy)], "offline store; daily materialize -> Redis", x[4] + 331,
+                   rC + 54)]
+    feast = Box(x[0], fy, x[5] + CWD - x[0], 76, "Feast",
+                ("card_fraud: offline = the Delta feat_* tables (point-in-time joins on Spark)  ·  online = Redis  ·  "
+                 "registry = PostgreSQL ml-db",
+                 "fraud_model_v1 = 20 features for training and serving  ·  card_support_kb: chunks as Parquet in "
+                 "lakehouse/kb, vectors in pgvector"),
+                "09 · FEATURE STORE", "")
 
-    # cloud: the SaaS the platform calls, and Azure as built by an IaC run
-    zy, zc = 1640, 1696
-    saas = [Box(x[0], zc, CWD, 100, "Groq", ("LLM side B of the A/B test", "through agentgateway (19)"), "SAAS", ""),
-            Box(x[1], zc, CWD, 100, "Langfuse Cloud EU", ("agent prompts (production)", "eval datasets, experiments"),
-                "SAAS", ""),
-            Box(x[2], zc, CWD, 100, "Let's Encrypt + DuckDNS", ("wildcard certificate,", "DNS-01, for NGINX (21)"),
-                "SAAS", "")]
-    ax, aw = x[3] - 12, x[5] + CWD - x[3] + 24
-    cw2 = (aw - 28 - 12) / 2
-    azure = [panel(ax, zy + 36, aw, 142, "AZURE · polandcentral", "#f4f7fc", "#b5c0d6", True,
-                   note="created from the PC: terraform (Azure API), ansible (SSH), kubectl (AKS API). Destroyed after "
-                        "each IaC run")]
-    for i, ch in enumerate([("VNet + NSG", "22, 8080, 9100 from the admin IP only", "", ""),
-                            ("VM B2s v2", "model server of 13 + node_exporter (Ansible)", ":8080", "python"),
-                            ("AKS, Free tier", "card-fraud: 2 pods, image from ACR", "", "kubernetes"),
-                            ("ACR, Basic", "fraud/predictor, AcrPull for AKS", "", "docker")]):
-        azure.append(chip(ax + 14 + (i % 2) * (cw2 + 12), zy + 70 + (i // 2) * (CH + 8), *ch, w=cw2))
-    jx = x[1] + 143
-    cloud_arrows = [net([(jx - 40, zc), (jx - 40, cyc + 100)], "prompts", jx - 48, zy - 4, "end", halo=PAGE),
-                    net([(jx + 40, cyc + 100), (jx + 40, zc)], "eval scores", jx + 48, zy - 4, halo=PAGE)]
-
-    mid1, mid1b, mid2 = r1a + 50, r1b + 50, r2 + 50
-    arrows = [net([(x[i] + CWD, y), (x[i + 1], y)], "", 0, 0) for y, n in ((mid1, 5), (mid1b, 1), (mid2, 5))
-              for i in range(n)]
-    down = [(4, r1a + 100, fy, "daily stats, materialized to Redis"), (1, r1b + 100, fy, "push jobs: realtime + device")]
-    arrows += [net([(x[i] + 143, y0), (x[i] + 143, y1)], lab, x[i] + 155, y0 + 40) for i, y0, y1, lab in down]
+    # Layer 2: steps, the stores they write, the retraining loop under them
+    l2, r2, s2, loop = fy + 96, fy + 180, fy + 316, fy + 420
+    L2 = [card(0, r2, "10 · NOTEBOOK", "Jupyter", ("the 7 steps one by one", "LR baseline + XGBoost"), "jupyter"),
+          card(1, r2, "11 · TRAIN", "Kubeflow Pipelines",
+               ("same 7 steps as pods (kind)", "labels from gold + PIT features", "distributed XGBoost"), "kubernetes"),
+          card(2, r2, "12 · REGISTRY", "MLflow", ("runs · data versions", "@challenger · @production"), "mlflow"),
+          card(3, r2, "13 · MODEL SERVER", "KServe", ("booster inside the image", "V1 predict, 1-3 replicas"),
+               "kubernetes"),
+          card(4, r2, "14 · API", "Fraud Scoring API", ("authorization -> features", "-> approve/step_up/decline"),
+               "fastapi"),
+          card(5, r2, "15 · DRIFT", "Drift API + DAG", ("PSI per feature, live (Redis)", "PR-AUC on labels, daily"),
+               "fastapi"),
+          Box(x[1] + 60, s2, CWD - 60, 80, "training sets", ("Delta, one version per run", "+ step files runs/<id>/"),
+              "S3 lakehouse/ml/", "", store=True),
+          Box(x[2] + 9, s2, SW, 80, "MLflow store", ("runs, registry: PostgreSQL", "model files: S3 mlflow"),
+              "POSTGRES + S3", "", store=True),
+          store(4, s2, "KAFKA TOPIC", "fraud_predictions", ("every decision, read by", "the drift forwarder"), "kafka",
+                h=80)]
     reads = [(0, "point-in-time"), (1, "point-in-time"), (4, "online features"), (5, "offline features")]
     arrows += [net([(x[i] + 200, fy + 76), (x[i] + 200, r2)], lab, x[i] + 212, r2 - 22) for i, lab in reads]
-    loop = r2 + 100 + 30
-    arrows.append(net([(x[5] + 143, r2 + 100), (x[5] + 143, loop), (x[1] + 143, loop), (x[1] + 143, r2 + 100)],
-                      "drift: retraining run with the newest labels", (x[1] + x[5]) / 2 + 143, loop - 8, "middle"))
+    arrows += [net([(x[i] + CWD, r2 + 50), (x[i + 1], r2 + 50)], "", 0, 0) for i in range(4)]
+    arrows += [net([(x[1] + 173, r2 + 100), (x[1] + 173, s2)], "", 0, 0),                   # KFP -> training sets
+               net([(x[2] + 143, r2 + 100), (x[2] + 143, s2)], "", 0, 0),                   # MLflow -> its store
+               net([(x[4] + 236, r2 + 100), (x[4] + 236, s2)], "", 0, 0),                   # API -> fraud_predictions
+               net([(x[4] + 402, s2), (x[4] + 402, r2 + 100)], "", 0, 0)]                   # -> drift
+    arrows.append(net([(x[5] + 230, r2 + 100), (x[5] + 230, loop), (x[1] + 28, loop), (x[1] + 28, r2 + 100)],
+                      "drift: retraining run with the newest labels", (x[1] + x[5]) / 2 + 129, loop - 8, "middle"))
+
     # Layer 3: the agents' path (bottom row), the gateway's backends (top row), what it reads from Layers 1-2
+    l3 = loop + 50
+    r3a, r3b = l3 + 46, l3 + 246
+    L3 = [card(0, r3a, "16 · RAG", "RAG pipeline", ("S3 bank-documents/*.md ->", "chunks -> vectors -> Feast KB"),
+               "airflow"),
+          card(1, r3a, "17 · MODEL SERVER", "llama.cpp", ("Qwen3-8B chat on the GPU", "Qwen3-Embedding 0.6B"), ""),
+          card(2, r3a, "18 · ROUTER", "llm-d", ("InferencePool qwen3-8b", "endpoint picker"), "kubernetes"),
+          card(3, r3a, "19 · GATEWAY", "agentgateway", ("LLM · MCP · A2A routes", "keys, limits, PII masking"), ""),
+          card(4, r3a, "20 · MCP SERVER", "card-support-mcp", ("4 tools: card data, chunk,", "policy search, fraud score"),
+               "fastapi"),
+          card(0, r3b, "USERS", "Support staff", ("kagent chat in a browser", "or an app over A2A"), ""),
+          card(1, r3b, "21 · EDGE", "NGINX Ingress", ("HTTPS *.<domain>", "basic auth, rate limits"), ""),
+          card(2, r3b, "22 · COORDINATOR", "Coordinator agent", ("plans the answer, asks", "the two agents (A2A)"), ""),
+          card(3, r3b, "23 · AGENTS", "Card-data + risk agents", ("kagent, MCP tools", "KEDA: 2-4 replicas each"), ""),
+          card(4, r3b, "24 · WARM POOL", "Agent Substrate", ("sandboxed agents restored", "from snapshots, 1 worker"), ""),
+          card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog of the 3 agents", "and the MCP server"), "")]
     mid3a, mid3b = r3a + 50, r3b + 50
     arrows += [net([(x[i] + CWD, mid3b), (x[i + 1], mid3b)], "", 0, 0) for i in range(3)]
     arrows += [net([(x[3], mid3a), (x[2] + CWD, mid3a)], "", 0, 0), net([(x[2], mid3a), (x[1] + CWD, mid3a)], "", 0, 0),
@@ -980,26 +989,103 @@ def overview():
     arrows.append(net([(x[3] + 143, r3b), (x[3] + 143, r3a + 100)], "every A2A, MCP and LLM call",
                       x[3] + 155, r3a + 150))
     arrows.append(net([(x[0] + CWD, r3a + 24), (x[0] + CWD + 33, r3a + 24), (x[0] + CWD + 33, fy + 76)],
-                      "chunks + vectors", x[0] + CWD + 45, 790))
-    arrows.append(net([(x[4] + 143, r2 + 100), (x[4] + 143, r3a)], "fraud score", x[4] + 155, 790))
+                      "chunks + vectors", x[0] + CWD + 45, l3 - 12))
+    arrows.append(net([(x[4] + 143, r2 + 100), (x[4] + 143, r3a)], "fraud score", x[4] + 155, l3 - 12))
     arrows.append(net([(x[5] + CWD, fy + 38), (W - 44, fy + 38), (W - 44, mid3a), (x[4] + CWD, mid3a)],
                       "card features (Redis)\n+ policy chunks (pgvector)", W - 56, r3a + 22, "end"))
+
+    by = l3 + 396   # bars under Layer 3
+    full = x[5] + CWD - x[0]
+    bars = [Box(x[0], by, full, 56, "Airflow",
+                ("DP1 -> DP2 -> DP3 -> feast_materialize, daily  ·  drift_monitoring, daily: a KFP run on drift  ·  "
+                 "rag_ingest (16)  ·  validate stages (Great Expectations)",), "07 · ORCHESTRATION", "airflow"),
+            Box(x[0], by + 66, full, 66, "Storage servers",
+                ("SeaweedFS (S3): lakehouse (landing, bronze, silver, gold, ml, kb, Flink checkpoints)  ·  "
+                 "core-banking-export  ·  mlflow  ·  bank-documents",
+                 "PostgreSQL: core_banking + serving  ·  metastore-db  ·  ml-db (MLflow, Feast registry, agentregistry)  ·  "
+                 "vector-db (pgvector)  ·  Airflow, DataHub  |  Redis: online features, drift counts  |  "
+                 "Kafka: authorizations, features, predictions"), "STORAGE", "", store=True),
+            Box(x[0], by + 142, full, 56, "DataHub + OpenLineage",
+                ("lineage sent by every Spark job and by Airflow  ·  validation results as assertions (RAG chunks "
+                 "included)",), "08 · NOVEL L1 #2", "lineage", accent=NOVEL),
+            Box(x[0], by + 208, full, 56, "Prometheus, Grafana, VictoriaLogs, Jaeger + Vault",
+                ("metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
+                 "call  ·  secrets in Vault",), "26 · OPERATIONS", "")]
+
+    # CI/CD: one row, commit to running unit (Layer 3 diagram: the same flow arrow by arrow)
+    cy = by + 284
+    cyc = cy + 30
+    cicd = [Box(x[0], cyc, CWD, 100, "GitHub", ("cvinhnguyen/card-fraud-platform", "branch main"), "SAAS", ""),
+            Box(x[1], cyc, CWD, 100, "Jenkins", ("5 pipelines: test, build,", "sign, deploy, evaluate"), "27 · CI/CD",
+                "jenkins"),
+            Box(x[2], cyc, CWD, 100, "Docker registry", ("images + cosign signatures", "localhost:5001"), "REGISTRY",
+                "docker", store=True),
+            Box(x[3], cyc, CWD, 100, "Deploy", ("kind: helm upgrade --atomic", "(MCP server, 3 agents, prompts)",
+                                                "Airflow rag_image · compose jobs"), "DEPLOY", ""),
+            Box(x[4], cyc, CWD, 100, "Signed images only", ("Kyverno checks the cosign", "signature, pins the digest;",
+                                                            "unsigned Pod: rejected"), "NOVEL L3 #2", "", accent=NOVEL),
+            Box(x[5], cyc, CWD, 100, "Eval gate", ("smoke test, then 20 questions", "x 2 as a Langfuse experiment",
+                                                   "accuracy < 0.6: rollback"), "NOVEL L3 #1", "", accent=NOVEL)]
+    mid_c = cyc + 50
+    cicd_arrows = [net([(x[i] + CWD, mid_c), (x[i + 1], mid_c)], lab, x[i] + CWD + 33, mid_c - 8, "middle")
+                   for i, lab in ((0, "polled"), (1, "push"), (2, "pull"), (3, "pods"), (4, "admitted"))]
+
+    # cloud: the SaaS the platform calls, and Azure as built by an IaC run
+    zy2 = cy + 170
+    zc = zy2 + 56
+    saas = [Box(x[0], zc, CWD, 100, "Groq", ("LLM side B of the A/B test", "through agentgateway (19)"), "SAAS", ""),
+            Box(x[1], zc, CWD, 100, "Langfuse Cloud EU", ("agent prompts (production)", "eval datasets, experiments"),
+                "SAAS", ""),
+            Box(x[2], zc, CWD, 100, "Let's Encrypt + DuckDNS", ("wildcard certificate,", "DNS-01, for NGINX (21)"),
+                "SAAS", "")]
+    ax, aw = x[3] - 12, x[5] + CWD - x[3] + 24
+    cw2 = (aw - 28 - 12) / 2
+    azure = [panel(ax, zy2 + 36, aw, 142, "AZURE · polandcentral", "#f4f7fc", "#b5c0d6", True,
+                   note="created from the PC: terraform (Azure API), ansible (SSH), kubectl (AKS API). Destroyed after "
+                        "each IaC run")]
+    for i, ch in enumerate([("VNet + NSG", "22, 8080, 9100 from the admin IP only", "", ""),
+                            ("VM B2s v2", "model server of 13 + node_exporter (Ansible)", ":8080", "python"),
+                            ("AKS, Free tier", "card-fraud: 2 pods, image from ACR", "", "kubernetes"),
+                            ("ACR, Basic", "fraud/predictor, AcrPull for AKS", "", "docker")]):
+        azure.append(chip(ax + 14 + (i % 2) * (cw2 + 12), zy2 + 70 + (i // 2) * (CH + 8), *ch, w=cw2))
+    jx = x[1] + 143
+    cloud_arrows = [net([(jx - 40, zc), (jx - 40, cyc + 100)], "prompts", jx - 48, zy2 - 4, "end", halo=PAGE),
+                    net([(jx + 40, cyc + 100), (jx + 40, zc)], "eval scores", jx + 48, zy2 - 4, halo=PAGE)]
+
+    # legend, top right: store, arrow, novel idea
+    legend, lx = [], W - 36
+    for kind, label in (("novel", "novel idea (not taught in EDAI)"), ("arrow", "data or a request moves this way"),
+                        ("store", "storage: where the data rests")):
+        lx -= text_w(label, 11, False)
+        legend.append(t(lx, 50, label, 11, INK2, "start"))
+        lx -= 30
+        if kind == "arrow":
+            legend.append(net([(lx, 46), (lx + 22, 46)], "", 0, 0, halo=PAGE))
+        else:
+            st, fl = (STORE_LINE, STORE_FILL) if kind == "store" else (NOVEL, NOVEL + "14")
+            legend.append(f'<rect x="{lx}" y="38" width="22" height="16" rx="3" fill="{fl}" stroke="{st}"/>')
+        lx -= 26
 
     body = [t(28, 46, "CARD FRAUD PLATFORM · OVERVIEW", 12, INK2, "start", 600, mono=True, spacing=0.14),
             t(28, 76, "From core banking and the card network to a fraud decision in real time, back to retraining, "
                       "and on to the agents that answer card support questions", 22, INK, "start", 400),
-            panel(20, 100, W - 40, 290, "LAYER 1 · DATA PLATFORM", PANEL, LINE),
-            panel(20, 526, W - 40, 244, "LAYER 2 · ML PLATFORM", KIND_PANEL, "#b5c0d6"),
-            panel(20, 800, W - 40, 376, "LAYER 3 · LLM + AGENT PLATFORM", PANEL, LINE),
+            *legend,
+            panel(20, 100, W - 40, rC + 120 - 100, "LAYER 1 · DATA PLATFORM", PANEL, LINE,
+                  note="each step writes a zone of the lakehouse; the next step reads it from there"),
+            panel(20, l2, W - 40, loop + 20 - l2, "LAYER 2 · ML PLATFORM", KIND_PANEL, "#b5c0d6"),
+            panel(20, l3, W - 40, 376, "LAYER 3 · LLM + AGENT PLATFORM", PANEL, LINE),
             panel(20, cy, W - 40, 150, "CI/CD · JENKINS", PANEL, LINE,
                   note="a commit or a new production prompt -> tested, built, signed, deployed, checked"),
-            panel(20, zy, W - 40, 198, "CLOUD", PANEL, LINE, note="SaaS + Azure"),
-            t(W - 36, zy + 22, "everything above runs on one Windows PC: Docker Desktop (compose + kind), llama.cpp "
-                               "on the GTX 1070", 11, MUTED, "end", mono=True)]
-    body += arrows + [box_svg(b) for b in B + bars + cicd + saas] + cicd_arrows + cloud_arrows + azure
+            panel(20, zy2, W - 40, 198, "CLOUD", PANEL, LINE, note="SaaS + Azure"),
+            t(W - 36, zy2 + 22, "everything above runs on one Windows PC: Docker Desktop (compose + kind), llama.cpp "
+                                "on the GTX 1070", 11, MUTED, "end", mono=True)]
+    body += lake + arrows + [box_svg(b) for b in L1 + [feast] + L2 + L3 + bars + cicd + saas]
+    body += cicd_arrows + cloud_arrows + azure
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: overview",
-                   "Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the "
-                   "model; Layer 3's agents read the same features, the fraud score and a policy knowledge base.")
+                   "Layer 1 lands every source in the lakehouse zones (landing, bronze, silver, gold, features), each "
+                   "step reading the zone the step before wrote; Feast hands the features to Layer 2, which trains, "
+                   "serves and monitors the model; Layer 3's agents read the same features, the fraud score and a policy "
+                   "knowledge base. Storage is drawn as blue cards, the four novel ideas in orange.")
 
 
 # ---------------------------------------------------------------- output

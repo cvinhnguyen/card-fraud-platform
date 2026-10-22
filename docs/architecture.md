@@ -7,7 +7,7 @@ below, and warns when an arrow crosses a box, a label overlaps one, or two arrow
 
 | View | Question it answers | Boxes are |
 |---|---|---|
-| [Overview](#overview) | What does the platform do, step by step? | the 26 steps of the README tables |
+| [Overview](#overview) | What does the platform do, step by step, and where does the data rest? | the 27 steps of the README tables and their stores |
 | [System diagram, Layers 1-2](#system-diagram) | Which unit sends which data to which unit? | deployable units |
 | [System diagram, Layer 3](#layer-3-system-diagram) | The same question for the agents, the gateway and the model servers | deployable units |
 | [Deployment](#deployment) | Where does each unit run, on which port? | containers, Kubernetes workloads, host processes |
@@ -16,15 +16,25 @@ below, and warns when an arrow crosses a box, a label overlaps one, or two arrow
 
 ![Platform overview](images/platform-overview.png)
 
-Three bands, a bar between the first two, and bars under all of them. Layer 1 (top) turns the source systems into
+Three bands, a bar between the first two, and bars under all of them. White cards are steps, blue cards are stores
+(where the data rests between two steps), orange cards are the four novel ideas. Layer 1 (top) turns the source systems into
 feature tables, daily with Spark (DAG
 [`dp1_source_to_bronze.py` L26-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/dp1_source_to_bronze.py#L26-L39),
 which triggers DP2 and DP3) and continuously with Flink
 ([`rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/rt_features.py#L94-L121)).
+No step hands its data straight to the next one: each writes a zone of the lakehouse (Delta tables under
+`s3a://lakehouse/<zone>/` on SeaweedFS, registered in the Hive Metastore) and the next step reads that zone. Flink
+lands the raw authorizations as JSON files in `landing/`, DP1 copies them and the core banking sources into
+`bronze/`, DP2 cleans bronze into `silver/`, dbt builds `gold/` from silver, DP3 computes `gold/feat_*` from gold.
+Trino has no arrow from Spark: it asks the Hive Metastore where a table lives and reads the Delta files itself, so it
+can query any zone.
 Layer 2 (middle) trains, registers, serves and monitors the model (KFP pipeline
 [`train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/pipelines/train_fraud_model.py#L102-L124),
 Scoring API
 [`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/scoring_api/app/main.py#L60-L63)).
+Its stores sit under the steps: the versioned training sets in `lakehouse/ml/`, MLflow's PostgreSQL (runs, registry)
+and bucket `mlflow` (model files), and the Kafka topic `fraud_predictions` that carries every decision to the drift
+check.
 Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
 see the same 20 features (`fraud_model_v1`,
 [`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/feature_repo/fraud_features.py#L123-L128)).
@@ -88,7 +98,7 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 | B2 | Batch data | DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes) |
 | B3 | Batch data | DP1 loads the new daily export folders from s3://core-banking-export |
 | B4 | Batch data | Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse |
-| B5 | Batch data | Trino reads the gold and feature tables for analysts (catalog: Hive Metastore) |
+| B5 | Batch data | Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table lives |
 | B6 | Batch data | DAG feast_materialize (after DP3) reads feat_card_txn_stats_daily through the Feast offline store |
 | B7 | Batch data | ... and loads the newest row per card into Redis (feast materialize-incremental) |
 | T1 | Training and deploy | The notebook builds the training set: labels + Feast point-in-time features |

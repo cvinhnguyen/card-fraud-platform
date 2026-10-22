@@ -12,7 +12,8 @@ so Spark, dbt (through the Spark Thrift Server) and Trino (`delta.<zone>.<table>
 | silver | `s3a://lakehouse/silver/` | `pipelines/spark/build_silver.py` (DP2) | Cleaned rows: deduplicated, locations mapped to the 34 units, `auth_method` filled |
 | gold | `s3a://lakehouse/gold/` | dbt models, `pipelines/spark/build_labels.py`, `pipelines/spark/build_features.py` (DP3) | Star schema for analysis, the label table and the feature table for Layer 2 |
 
-Bronze and silver are written by PySpark because the dedup, skew and merge demos need DataFrame-level control. Gold
+Bronze and silver are written by PySpark: `mergeSchema` on the bronze appends, the dedup window and the MERGE into
+silver need DataFrame-level control (the skew benchmark, `skew_join.py`, is a separate job). Gold
 star schema models are SQL in dbt so they are tested (`dbt build`) and documented in one place. The dbt project
 writes every gold model as a Delta table under `s3a://lakehouse/gold`
 ([`pipelines/dbt/dbt_project.yml` L11-L16](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/dbt/dbt_project.yml#L11-L16)).
