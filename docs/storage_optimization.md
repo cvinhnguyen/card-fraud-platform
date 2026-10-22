@@ -53,8 +53,8 @@ The two writes, then the two `OPTIMIZE` runs that make versions 1 and 2
 Queries: all payments of the busiest card (fraud investigation); spend per unit in 2026-06 (reporting); spend in
 raw city "Da Nang".
 
-- The number of files costs more than the bytes. The naive month layout reads the same 555 MB as after `OPTIMIZE`
-  but takes 7.6× longer, because opening 6,800 objects on S3 dominates. `OPTIMIZE` (bin-packing) turns them into 165
+- The number of files costs more than the bytes. The naive month layout reads about as much (555 MB, against 475 MB
+  after `OPTIMIZE`) but takes 7.6× longer, because opening 6,800 objects on S3 dominates. `OPTIMIZE` (bin-packing) turns them into 165
   files and the scans drop from ~15 s to ~2 s.
 - Partition by what queries filter on, with low cardinality and even sizes. Partitioning by city wins the city
   query (only its 200 files are read) and loses everything else, and the city with 60% of the rows makes partitions

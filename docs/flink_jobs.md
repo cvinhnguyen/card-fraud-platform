@@ -1,6 +1,6 @@
 # Flink jobs
 
-Flink 2.2.1 session cluster (compose profile `stream`: 1 JobManager, 1 TaskManager with 4 slots), PyFlink 2.2.1
+Flink 2.2.1 session cluster (compose profile `stream`: 1 JobManager, 1 TaskManager with 6 slots), PyFlink 2.2.1
 DataStream API, Kafka connector 5.0.0-2.2. Jobs live in `pipelines/flink/` (mounted at `/opt/flink/jobs`). UI:
 http://127.0.0.1:8088.
 

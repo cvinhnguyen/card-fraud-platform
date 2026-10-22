@@ -335,7 +335,8 @@ def architecture():
         Arrow("R", 3, "rt features", [B["flink"].top(115 / BW), kafka.bottom(115 / kafka.w)],
               desc="Realtime features to card_features_rt, first (card, device) pairs to card_device_seen"),
         Arrow("R", 4, "raw events -> bronze", [B["flink"].bottom(), (B["flink"].x + 85, s3y)],
-              desc="raw_landing writes the raw authorizations to bronze.raw_card_authorizations (Delta)"),
+              desc="raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1's Spark task loads them into "
+                   "bronze.raw_card_authorizations (Delta)"),
         Arrow("R", 5, "features", [kafka.top((c(2) + 85 - c(1)) / kafka.w), B["pushon"].bottom()],
               desc="push job A consumes card_features_rt and card_device_seen"),
         Arrow("R", 6, "Feast push (online)", [B["pushon"].top(), (c(2) + 85, redis.y + 42), redis.left()], 0.75, "u",
@@ -670,8 +671,8 @@ def deployment():
     # Azure: what Terraform, Ansible and kubectl create for an IaC run (docs/iac.md), destroyed after it
     ay, gw = 614, iw + 8
     az = [t(ix, ay + 50 + 16 * i, ln, 11, INK2, "start", mono=True) for i, ln in enumerate(
-        ("rg-cardfraud-dev · Azure for Students", "created per IaC run, then destroyed:", "terraform apply / destroy,",
-         "ansible over SSH, docker push, kubectl"))]
+        ("rg-cardfraud-dev · Azure for Students", "created from the PC: terraform (Azure", "API), ansible (SSH), kubectl (AKS API).",
+         "Destroyed after each IaC run."))]
     g, z1 = group(ix - 4, ay + 122, "vm", "B2s_v2 · Ubuntu 24.04", [
         ("predictor", "built on the VM by Ansible", ":8080", "python"),
         ("node_exporter", "host metrics", ":9100", "")], w=gw)
@@ -872,7 +873,7 @@ NOVEL1, NOVEL2 = "#bf4520", "#6b7a3a"
 
 def overview():
     """The README steps: Layer 1 writes the features, Feast hands them over, Layer 2 uses them, Layer 3 builds on both."""
-    W, H, CWD = 2166, 1574, 286
+    W, H, CWD = 2166, 1858, 286
     x = [40 + i * 352 for i in range(6)]
 
     def card(i, y, tag, title, lines, ico, accent=""):
@@ -920,15 +921,46 @@ def overview():
             Box(x[0], 1328, x[5] + CWD - x[0], 56, "DataHub + OpenLineage",
                 ("lineage sent by every Spark job and by Airflow  ·  validation results as assertions (RAG chunks "
                  "included)",), "08 · NOVEL 2", "lineage", accent=NOVEL2),
-            Box(x[0], 1394, x[5] + CWD - x[0], 76, "Jenkins + Prometheus, Grafana, VictoriaLogs, Jaeger + Vault",
-                ("CI/CD of the MCP server, agents (prompts from Langfuse, eval gate: L3 novel 1), RAG pipeline, stream "
-                 "jobs; signed images (L3 novel 2)",
-                 "metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
-                 "call  ·  secrets in Vault"), "26 · OPERATIONS", ""),
-            Box(x[0], 1480, x[5] + CWD - x[0], 76, "Where it runs: one Windows PC  ·  Azure for the IaC runs  ·  SaaS",
-                ("PC (16 GB RAM, GTX 1070): every box above, as compose profiles in Docker Desktop and a kind cluster",
-                 "Azure, created per IaC run then destroyed: a VM (Ansible) and AKS serve the model image of 13, pulled "
-                 "from ACR  ·  SaaS: GitHub, Langfuse Cloud EU, Groq, Let's Encrypt + DuckDNS"), "27 · CLOUD", "")]
+            Box(x[0], 1394, x[5] + CWD - x[0], 56, "Prometheus, Grafana, VictoriaLogs, Jaeger + Vault",
+                ("metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
+                 "call  ·  secrets in Vault",), "26 · OPERATIONS", "")]
+
+    # CI/CD: one row, commit to running unit (Layer 3 diagram: the same flow arrow by arrow)
+    cy, cyc = 1470, 1500
+    cicd = [Box(x[0], cyc, CWD, 100, "GitHub", ("cvinhnguyen/card-fraud-platform", "branch main"), "SAAS", ""),
+            Box(x[1], cyc, CWD, 100, "Jenkins", ("5 pipelines: test, build,", "sign, deploy, evaluate"), "27 · CI/CD",
+                "jenkins"),
+            Box(x[2], cyc, CWD, 100, "Docker registry", ("images + cosign signatures", "localhost:5001"), "REGISTRY",
+                "docker"),
+            Box(x[3], cyc, x[5] + CWD - x[3], 100, "Deploy, then check against the running platform",
+                ("kind: helm upgrade --atomic of the MCP server (signed image) and the 3 agents + Langfuse prompts, "
+                 "then the eval gate",
+                 "Airflow: new rag_image, rag_ingest run + 7 checks  ·  compose: push-online / push-offline + online "
+                 "and offline smoke test"), "DEPLOY", "")]
+    mid_c = cyc + 50
+    cicd_arrows = [net([(x[i] + CWD, mid_c), (x[i + 1], mid_c)], lab, x[i] + CWD + 33, mid_c - 8, "middle")
+                   for i, lab in ((0, "polled"), (1, "push"), (2, "pull"))]
+
+    # cloud: the SaaS the platform calls, and Azure as built by an IaC run
+    zy, zc = 1640, 1696
+    saas = [Box(x[0], zc, CWD, 100, "Groq", ("LLM side B of the A/B test", "through agentgateway (19)"), "SAAS", ""),
+            Box(x[1], zc, CWD, 100, "Langfuse Cloud EU", ("agent prompts (production)", "eval datasets, experiments"),
+                "SAAS", ""),
+            Box(x[2], zc, CWD, 100, "Let's Encrypt + DuckDNS", ("wildcard certificate,", "DNS-01, for NGINX (21)"),
+                "SAAS", "")]
+    ax, aw = x[3] - 12, x[5] + CWD - x[3] + 24
+    cw2 = (aw - 28 - 12) / 2
+    azure = [panel(ax, zy + 36, aw, 142, "AZURE · polandcentral", "#f4f7fc", "#b5c0d6", True,
+                   note="created from the PC: terraform (Azure API), ansible (SSH), kubectl (AKS API). Destroyed after "
+                        "each IaC run")]
+    for i, ch in enumerate([("VNet + NSG", "22, 8080, 9100 from the admin IP only", "", ""),
+                            ("VM B2s v2", "model server of 13 + node_exporter (Ansible)", ":8080", "python"),
+                            ("AKS, Free tier", "card-fraud: 2 pods, image from ACR", "", "kubernetes"),
+                            ("ACR, Basic", "fraud/predictor, AcrPull for AKS", "", "docker")]):
+        azure.append(chip(ax + 14 + (i % 2) * (cw2 + 12), zy + 70 + (i // 2) * (CH + 8), *ch, w=cw2))
+    jx = x[1] + 143
+    cloud_arrows = [net([(jx - 40, zc), (jx - 40, cyc + 100)], "prompts", jx - 48, zy - 4, "end", halo=PAGE),
+                    net([(jx + 40, cyc + 100), (jx + 40, zc)], "eval scores", jx + 48, zy - 4, halo=PAGE)]
 
     mid1, mid1b, mid2 = r1a + 50, r1b + 50, r2 + 50
     arrows = [net([(x[i] + CWD, y), (x[i + 1], y)], "", 0, 0) for y, n in ((mid1, 5), (mid1b, 1), (mid2, 5))
@@ -958,8 +990,13 @@ def overview():
                       "and on to the agents that answer card support questions", 22, INK, "start", 400),
             panel(20, 100, W - 40, 290, "LAYER 1 · DATA PLATFORM", PANEL, LINE),
             panel(20, 526, W - 40, 244, "LAYER 2 · ML PLATFORM", KIND_PANEL, "#b5c0d6"),
-            panel(20, 800, W - 40, 376, "LAYER 3 · LLM + AGENT PLATFORM", PANEL, LINE)]
-    body += arrows + [box_svg(b) for b in B + bars]
+            panel(20, 800, W - 40, 376, "LAYER 3 · LLM + AGENT PLATFORM", PANEL, LINE),
+            panel(20, cy, W - 40, 150, "CI/CD · JENKINS", PANEL, LINE,
+                  note="a commit or a new production prompt -> tested, built, signed, deployed, checked"),
+            panel(20, zy, W - 40, 198, "CLOUD", PANEL, LINE, note="SaaS + Azure"),
+            t(W - 36, zy + 22, "everything above runs on one Windows PC: Docker Desktop (compose + kind), llama.cpp "
+                               "on the GTX 1070", 11, MUTED, "end", mono=True)]
+    body += arrows + [box_svg(b) for b in B + bars + cicd + saas] + cicd_arrows + cloud_arrows + azure
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: overview",
                    "Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the "
                    "model; Layer 3's agents read the same features, the fraud score and a policy knowledge base.")

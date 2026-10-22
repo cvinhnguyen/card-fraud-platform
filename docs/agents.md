@@ -132,7 +132,7 @@ spec:
 
 ![kubectl: the four Agents Ready, two replicas each, their ScaledObjects, the MCP tool servers and the network policies](images/agents_k8s.png)
 
-Scaling test: locust sent 6 users for 4 minutes to `/a2a/coordinator` (31 conversations, 0 failures). The coordinator
+Scaling test: locust sent 6 users for 3 min 41 s to `/a2a/coordinator` (31 conversations, 0 failures). The coordinator
 went from 2 to 4 replicas, the risk agent from 2 to 4 and the card data agent from 2 to 3, and they came back down
 after the load. The full locust reports: [`locust_agents_scaling.html`](images/locust_agents_scaling.html) (this run)
 and [`locust_agents_a2a.html`](images/locust_agents_a2a.html) (6 users, 5 minutes, 37 conversations, 0 failures,

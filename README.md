@@ -41,13 +41,15 @@ Layer 2's online features and model.
 
 ## Architecture
 
-![Platform overview: Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents](docs/images/platform-overview.png)
+![Platform overview: Layer 1 builds the features, Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents; below them the CI/CD path (GitHub, Jenkins, registry, deploy) and what runs in the cloud (SaaS and the Azure IaC resources)](docs/images/platform-overview.png)
 
 Layer 1 turns the source systems into feature tables (batch) and realtime features (stream). Feast is the hand-over:
 the same 20 features for training (offline store, point-in-time joins) and for serving (online store). Layer 2 trains
 on them, serves the model behind the Scoring API and retrains when the drift check fails. Layer 3 reads the same
 online features and the Scoring API through its MCP server, adds the bank's documents as a second Feast project
-(chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below.
+(chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below. The
+two rows at the bottom show how a change ships (CI/CD: GitHub, Jenkins, the signed image, deploy and check) and
+what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deployment](#deployment)).
 
 ### Layer 1: data platform
 
@@ -253,7 +255,7 @@ push it, `helm upgrade --install card-support-mcp services/card_support_mcp/char
 then `helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml` and
 the same with `card-support-coordinator` / `values-coordinator.yaml`.
 
-UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP http://127.0.0.1:31888, Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8001/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
+UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP UI http://127.0.0.1:31880 (port-forward, `infra/k8s/platform.sh`), Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8001/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
 
 Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data_characteristics.md](docs/data_characteristics.md).
 

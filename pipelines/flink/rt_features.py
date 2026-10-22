@@ -49,13 +49,13 @@ class FirstSeen(KeyedProcessFunction):
     """Pass only the first event of each auth_id (network retries arrive 1-10 s later)."""
 
     def open(self, ctx: RuntimeContext):
-        """Per-card state: the authorizations of the last KEEP ms (pickled list, TTL 2 h)."""
+        """Per-auth_id state: a flag set by the first event (TTL 1 h, longer than any retry)."""
         desc = ValueStateDescriptor("seen", Types.BOOLEAN())
         desc.enable_time_to_live(StateTtlConfig.new_builder(Time.hours(1)).build())
         self.seen = ctx.get_state(desc)
 
     def process_element(self, value, ctx):
-        """Add the authorization to the card's history and emit its features over that history."""
+        """Emit the event only if this auth_id has not been seen yet."""
         if not self.seen.value():
             self.seen.update(True)
             yield value

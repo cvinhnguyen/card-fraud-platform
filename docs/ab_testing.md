@@ -100,7 +100,7 @@ blue, B orange in every panel.
 
 ## Evaluation: [`agents/eval/`](../agents/eval)
 
-`dataset.jsonl` holds 12 card-policy questions (fees, disputes, authentication) with the facts a correct answer must
+`dataset.jsonl` held 12 card-policy questions at the time of these runs (fees, disputes, authentication; 20 now, for the eval gate) with the facts a correct answer must
 state, taken from the bank documents (`generator/knowledge`). `run_eval.py` sends them through the gateway and scores
 each answer (correct when it states every expected fact,
 [`agents/eval/run_eval.py` L31-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/eval/run_eval.py#L31-L34)):

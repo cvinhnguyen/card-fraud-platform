@@ -3,7 +3,7 @@
   transactions JOIN merchants ON merchant_id   (the biggest merchant has ~24% of the rows)
 
   baseline   sort-merge join, AQE off, broadcast off: one task gets the whole hot key
-  salting    hot keys split over SALTS buckets (merchants copied once per bucket)
+  salting    every row gets a random salt in 0..SALTS-1, merchants copied once per salt: the hot key spreads over SALTS tasks
   aqe        AQE skew-join handling splits the oversized partitions at run time
   broadcast  merchants (5k rows) sent to every executor: no shuffle of transactions at all
 

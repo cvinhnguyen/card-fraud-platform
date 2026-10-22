@@ -40,8 +40,15 @@ online store and a fraud score from the Layer 2 Scoring API; the RAG pipeline
 writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
 NGINX; every agent call (A2A, MCP, LLM) then goes through agentgateway, which sends the LLM calls to llama.cpp via the
-llm-d router. Airflow, the lakehouse, DataHub and the operations tools (CI/CD, metrics, logs, traces, Vault) run
-under everything.
+llm-d router. Airflow, the lakehouse, DataHub and the operations tools (metrics, logs, traces, Vault) run under
+everything.
+
+The CI/CD row is the path of a change: Jenkins polls GitHub, tests and builds, pushes signed images to the registry,
+then deploys and checks against the running platform (Helm into kind with the eval gate, a new RAG image in Airflow,
+the push jobs in compose); prompts come from Langfuse and eval scores go back to it
+([cicd.md](cicd.md)). The cloud row shows what runs outside the PC: the SaaS the platform calls (Groq, Langfuse
+Cloud EU, Let's Encrypt + DuckDNS, GitHub above) and the Azure resources an IaC run creates (VNet + NSG, a VM with
+the model server, AKS running the same model image from ACR), destroyed after the run ([iac.md](iac.md)).
 
 ## System diagram
 
@@ -72,7 +79,7 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 | R1 | Streaming features | Every authorization (retries included) to Kafka topic card_authorizations |
 | R2 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries) |
 | R3 | Streaming features | Realtime features to card_features_rt, first (card, device) pairs to card_device_seen |
-| R4 | Streaming features | raw_landing writes the raw authorizations to bronze.raw_card_authorizations (Delta) |
+| R4 | Streaming features | raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1's Spark task loads them into bronze.raw_card_authorizations (Delta) |
 | R5 | Streaming features | push job A consumes card_features_rt and card_device_seen |
 | R6 | Streaming features | Writes them to the Redis online store through Feast push (offsets committed after the write) |
 | R7 | Streaming features | push job B consumes the same two topics |
@@ -154,7 +161,7 @@ server (C4) are there for that reason.
 | O3 | Observability and scaling | Grafana dashboards: Web API, compute, LLM telemetry, agent telemetry, A/B tests |
 | O4 | Observability and scaling | KEDA's trigger: A2A requests per second for each agent |
 | O5 | Observability and scaling | KEDA sets each agent's replicas between 2 and 4 |
-| O6 | Observability and scaling | Agents send spans over OTLP; the gateway's spans join the same traces (one conversation: about 20) |
+| O6 | Observability and scaling | Agents send spans over OTLP; the gateway's spans join the same traces (one conversation: 28 spans over 4 services) |
 
 ## Deployment
 

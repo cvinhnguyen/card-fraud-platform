@@ -11,7 +11,7 @@ for 2026-10-16 .. 2026-11-15, driven by the
 | Phase | Days | Kind | What changes |
 |---|---|---|---|
 | normal | 10-16 .. 10-25 | none | same as history |
-| `fraud_shift` | from 10-26 | **concept drift** | fraud rings pay from the victim's own phone (malware): 60% of ecom frauds on a device the card already knows, so `is_new_device`, the model's strongest signal, fades; frauds lean to large night payments; fraud rate 0.3% -> 0.5% |
+| `fraud_shift` | from 10-26 | **concept drift** | fraud rings pay from the victim's own phone (malware): 60% of ecom frauds on a device the card already knows, so `is_new_device`, the model's second strongest feature by gain (after `is_otp`), fades; frauds lean to large night payments; fraud rate 0.3% -> 0.5% |
 | `sale_season` | 11-09 .. 11-12 (11/11) | **data drift** | volume x2, online merchants' weight x2, amounts x1.6: the inputs move, fraud behaviour does not |
 
 Outputs in `data/drift/`: the authorization stream (with retries and late events, as the history), the request
@@ -217,7 +217,8 @@ The 11-02 run submitted the KFP run `drift-retrain-2026-11-02` (`a7cfc35f`) thro
 
 Two bugs found on the way: `trigger_retraining(host, ds)` failed with `The key 'ds' in args is a part of kwargs and
 therefore reserved` (Airflow passes its context by name; the parameter is now `label_as_of`), and the job's Spark
-session needs the Hive metastore up (the Feast offline store reads through the session catalog).
+session needs the Hive metastore up: Feast reads the tables by path, but the shared `spark-defaults.conf` sets the
+Hive catalog, so the session connects to the metastore when it starts.
 
 The retrain: the run the DAG submitted (`a7cfc35f`, `label_as_of` 2026-11-02) failed in step 2 with
 `OutOfMemoryError: Java heap space` (a heap tuned to the previous run's peak, see

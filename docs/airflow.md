@@ -80,8 +80,9 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
   backfill showed why: a Docker DNS error failed DP2 for 10-13, DP2 for 10-14 ran first, and its labels (as of 10-14)
   made the 10-13 label step a no-op, so the 10-13 validation would have failed with no rows labelled as of 10-13.
 - XCom carries paths only. Data moves through the lakehouse; the only XCom value is the path of a results file.
-- Tasks are idempotent and incremental. Bronze appends only export dates it does not have, silver and the fact MERGE
-  on `transaction_id`, labels skip an `as_of` already written. A retry or a rerun of an old date adds nothing twice.
+- Tasks are idempotent. The transaction path is incremental: bronze appends only export dates it does not have,
+  silver and the fact MERGE on `transaction_id`, labels skip an `as_of` already written. The Postgres snapshots and the
+  DP3 feature table are rewritten whole. A retry or a rerun of an old date adds nothing twice.
 
 ## DP1: source -> bronze
 
@@ -221,5 +222,5 @@ longer for reasons outside the DAGs, all in `docs/datahub.md` and below:
   back to E: (a USB HDD, so later runs were I/O bound) and moved to the C: SSD (`C:\DockerDesktopWSL`) on
   2026-10-19.
 
-Every task is incremental and idempotent, so after the restart the interrupted runs were cleared and finished with
+Every task is idempotent, so after the restart the interrupted runs were cleared and finished with
 the same results.

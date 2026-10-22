@@ -80,9 +80,9 @@
 <rect x="1904" y="614" width="322" height="704" rx="12" fill="#f4f7fc" stroke="#b5c0d6" stroke-dasharray="6 4"/>
 <text x="1920.0" y="636.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="600" letter-spacing="0.08em">AZURE · polandcentral</text>
 <text x="1918.0" y="664.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">rg-cardfraud-dev · Azure for Students</text>
-<text x="1918.0" y="680.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">created per IaC run, then destroyed:</text>
-<text x="1918.0" y="696.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">terraform apply / destroy,</text>
-<text x="1918.0" y="712.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">ansible over SSH, docker push, kubectl</text>
+<text x="1918.0" y="680.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">created from the PC: terraform (Azure</text>
+<text x="1918.0" y="696.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">API), ansible (SSH), kubectl (AKS API).</text>
+<text x="1918.0" y="712.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Destroyed after each IaC run.</text>
 <rect x="1914" y="736" width="302" height="144" rx="9" fill="#f9fafb" stroke="#c8ccd4"/>
 <text x="1928.0" y="758.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11.5" fill="#2d3142" text-anchor="start" font-weight="700" letter-spacing="0.06em">vm</text>
 <text x="1953.2" y="758.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#8a91a3" text-anchor="start" font-weight="400">B2s_v2 · Ubuntu 24.04</text>
