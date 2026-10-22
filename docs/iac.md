@@ -6,15 +6,56 @@ flowchart LR
     rg --> net["module network<br/>VNet, subnet, NSG"]
     rg --> vm["module vm<br/>Ubuntu 24.04, B2s_v2"]
     rg --> aks["module aks<br/>AKS Free tier, 1 node B2s_v2"]
+    rg --> acr["module acr<br/>container registry, Basic"]
+    acr -->|AcrPull: kubelet identity| aks
     tf -->|writes| inv["ansible/inventory/hosts.ini<br/>.secrets/aks-kubeconfig"]
     inv --> ans["Ansible<br/>infra/ansible/site.yml"]
-    ans -->|SSH| vm
+    ans -->|SSH: model server, node_exporter| vm
+    inv -->|kubectl apply<br/>infra/k8s/aks/predictor.yaml| aks
 ```
 
-Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it. The cloud is an Azure
-for Students subscription ($100 credit, no card): it caps a region at 6 vCPU, refuses quota increases and only allows
-5 EU regions. Of those, only `polandcentral` lets AKS use the B-series the quota covers (in `germanywestcentral` AKS
-only offers v6/v7 sizes, whose quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
+Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it; kubectl deploys the
+same model image to AKS, which pulls it from the registry. The cloud is an Azure for Students subscription ($100
+credit, no card): it caps a region at 6 vCPU, refuses quota increases and only allows 5 EU regions. Of those, only
+`polandcentral` lets AKS use the B-series the quota covers (in `germanywestcentral` AKS only offers v6/v7 sizes, whose
+quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
+
+## What runs where
+
+| Where | What | Lifetime |
+|---|---|---|
+| The Windows PC (Ryzen 5 3600, 16 GB RAM, GTX 1070) | all of Layers 1-3: the compose profiles in the Docker Desktop VM (8 GB + 4 GB swap), the kind cluster, the two llama.cpp model servers on the GPU | always |
+| Azure, `rg-cardfraud-dev` in `polandcentral` | VNet, NSG, a VM running the fraud model server and node_exporter (Ansible), AKS running the same model server from ACR (kubectl) | one IaC run: created, checked, destroyed |
+| SaaS | GitHub (Jenkins polls it), Langfuse Cloud EU (agent prompts, eval experiments), Groq (side B of the LLM A/B test), Let's Encrypt + DuckDNS (the HTTPS certificate) | always |
+
+## Why not all of it on Azure
+
+Every part is a container image, a compose service or a Helm chart, so most of it could move:
+
+| On the PC | On Azure it would be |
+|---|---|
+| kind cluster: KFP, KServe, kagent, agentgateway, monitoring, Vault | AKS with the same charts and manifests; the NodePorts become a load balancer or the NGINX ingress |
+| local registry `localhost:5001` | ACR, as in the run below |
+| compose services: Kafka, Spark, Airflow, DataHub, Postgres, Redis, SeaweedFS | VMs configured by Ansible, as the model server here, or managed services: Event Hubs (Kafka API), Blob Storage, Azure Database for PostgreSQL, Azure Cache for Redis |
+| llama.cpp on the GTX 1070 | a GPU VM, or an LLM API such as Groq, already wired as side B of the A/B test |
+
+The subscription keeps it on the PC. Quotas were read with `az vm list-usage` and `az network list-usages` during the
+run on 2026-10-22 ([screenshot below](#run-on-2026-10-22)); prices are Linux pay-as-you-go in `polandcentral`, from the
+Azure Retail Prices API.
+
+- 6 vCPU per region and no increase. The run below takes 4 (2 for the VM, 2 for the AKS node) and another VM in the
+  subscription the last 2, so the quota is full.
+- 3 public IPs per region. The VM's, the AKS outbound load balancer's and the other VM's take them, so not even the
+  model server on AKS can get a load balancer (below).
+- The GPU sizes on sale (T4, A10, A100, H100 families) have a quota of 0, so the chat and embedding models cannot run
+  there. A T4 VM (NC4as T4 v3) would cost $0.656 an hour.
+- The PC has 16 GB (8 GB + 4 GB swap for the Docker Desktop VM), and not every compose profile fits in it at once. A
+  VM with 16 GB (D4s v3, 4 vCPU) costs $0.23 an hour, about $168 a month left on, so the $100 credit lasts about 18
+  days. One with 32 GB (D8s v3, $0.46 an hour) does not fit the 6 vCPU quota.
+
+So the cloud part is the deployment path of one service, in two forms (a VM configured by Ansible and AKS pulling from
+a registry), built from the same image the local platform serves. A run of an hour or two costs under a dollar of
+credit: two B2s v2 at $0.096 an hour each, plus the registry, the disks and the load balancer while they exist.
 
 ## Terraform (`infra/terraform`)
 
@@ -25,7 +66,8 @@ infra/terraform/
   modules/network/   VNet, subnet, NSG: only the admin's IP reaches SSH (22), the model server (8080), node_exporter (9100)
   modules/vm/        static public IP, NIC, Ubuntu 24.04 VM, SSH key login only
   modules/aks/       AKS Free tier (no control plane fee), 1 system node, Azure CNI overlay, managed identity
-  envs/dev/          the resource group + the 3 modules; writes Ansible's inventory and the AKS kubeconfig
+  modules/acr/       container registry (Basic, no admin user): AKS pulls with its kubelet identity
+  envs/dev/          the resource group + the 4 modules + AcrPull for AKS; writes Ansible's inventory and the AKS kubeconfig
 ```
 
 ```bash
@@ -79,56 +121,32 @@ variable "admin_cidr" {
   }
 ```
 
-### Run on 2026-10-21
+### Run on 2026-10-22
 
-`terraform apply` from an empty state. The plan body and the `[id=/subscriptions/...]` suffixes are cut from the log:
+`terraform apply` from an empty state, in Git Bash. The `grep` keeps the "Creation complete" lines and the `sed` cuts
+their `[id=/subscriptions/...]` suffix; the plan body is left out because it prints the admin IP:
 
-```text
-$ terraform apply -var admin_cidr=<my-ip>/32
-...
-Plan: 11 to add, 0 to change, 0 to destroy.
-azurerm_resource_group.this: Creation complete after 26s
-module.vm.azurerm_public_ip.this: Creation complete after 3s
-module.network.azurerm_network_security_group.vm: Creation complete after 4s
-module.network.azurerm_virtual_network.this: Creation complete after 5s
-module.network.azurerm_subnet.vm: Creation complete after 5s
-module.network.azurerm_subnet_network_security_group_association.vm: Creation complete after 5s
-module.vm.azurerm_network_interface.this: Creation complete after 2s
-module.vm.azurerm_linux_virtual_machine.this: Creation complete after 49s
-local_file.inventory: Creation complete after 0s
-module.aks.azurerm_kubernetes_cluster.this: Creation complete after 3m54s
-local_sensitive_file.kubeconfig: Creation complete after 0s
+![terraform apply in Git Bash: 13 resources created, the AKS cluster in 3m23s](images/iac_terraform_apply.png)
 
-Apply complete! Resources: 11 added, 0 changed, 0 destroyed.
+The first attempts (2026-10-21) hit the subscription's limits: `Standard_B2s_v2` not allowed for AKS and out of
+capacity for VMs in `germanywestcentral`, then two transient `404` right after the VNet and the subnet were created in
+`polandcentral`.
 
-Outputs:
+The resource group in the Azure Portal, then the Portal's own drawing of it (Resource visualizer). Tenant, subscription
+id and account are blanked out:
 
-aks_name = "aks-cardfraud-dev"
-resource_group = "rg-cardfraud-dev"
-ssh = "ssh azureuser@74.248.36.47"
-vm_public_ip = "74.248.36.47"
-```
+![Resource group rg-cardfraud-dev with its 8 Azure resources: AKS, container registry, NIC, NSG, public IP, VM, disk, VNet](images/iac_portal_rg.png)
 
-Earlier attempts failed on the subscription's limits, not on the code: `Standard_B2s_v2` not allowed for AKS and out
-of capacity for VMs in `germanywestcentral`, then two transient `404` right after the VNet and the subnet were created
-in `polandcentral`.
-
-The state holds the 11 resources and a new plan finds no difference with Azure (the `grep` hides the refresh lines,
-which print the subscription id):
-
-![terraform state list, output and plan in Git Bash](images/iac_terraform_state.png)
-
-The resource group, the VM and the AKS cluster in the Azure Portal (tenant, subscription id and account blanked out):
-
-![Resource group rg-cardfraud-dev with its 7 Azure resources](images/iac_portal_rg.png)
+![Resource visualizer of rg-cardfraud-dev: the VM with its disk and NIC, the NIC with its public IP and VNet, the NSG; the registry and the AKS cluster](images/iac_portal_visualizer.png)
 
 ![VM vm-cardfraud-dev-serving: Running, Standard B2s v2, Ubuntu 24.04, Poland Central](images/iac_portal_vm.png)
 
-![AKS aks-cardfraud-dev: Kubernetes 1.36.4, Free tier, Azure CNI Overlay, 1 node pool](images/iac_portal_aks.png)
+![AKS aks-cardfraud-dev: Kubernetes 1.36.4, Free tier, Azure CNI Overlay, 1 node pool, container registry crcardfrauddev](images/iac_portal_aks.png)
 
-The AKS node and its system pods, with the kubeconfig Terraform wrote:
+The state and the subscription's quotas while the run is up: the run's 4 vCPU (Bsv2 family) and the other VM's 2
+(Basv2) fill the 6 of the region, the GPU families have a limit of 0, and the 3 public IPs are taken:
 
-![kubectl get nodes and pods on the AKS cluster](images/iac_aks_nodes.png)
+![terraform state list and az usage in Git Bash: Total Regional vCPUs 6 of 6, GPU families 0 of 0, Public IP Addresses 3 of 3](images/iac_quota.png)
 
 ## Ansible (`infra/ansible`)
 
@@ -175,10 +193,12 @@ the play fails unless the model answers.
   failed_when: prediction.json.predictions | length != 1
 ```
 
-First run on the new VM: 9 changes.
+First run on the new VM, from Git Bash: 9 changes, the model answers with version 1 of the registry:
+
+![first ansible-playbook run in Git Bash: the predictor role builds and checks the model server, ok=17 changed=9](images/iac_ansible_run1.png)
 
 <details>
-<summary>Full log of the first run</summary>
+<summary>Full log of a first run (2026-10-21, the same tasks)</summary>
 
 ```text
 $ ansible-playbook site.yml
@@ -249,19 +269,60 @@ vm-cardfraud-dev-serving   : ok=17   changed=9    unreachable=0    failed=0    s
 
 </details>
 
-Run again from Git Bash on Windows (the same container, with Windows paths for the mounts): 0 changes, the play is
-idempotent. The `pull access denied` warning of the first run is expected: the image is built on the VM, never pulled.
+Run again right after: 0 changes, the play is idempotent. The `pull access denied` warning of the first run is
+expected: the image is built on the VM, never pulled.
 
 ![second ansible-playbook run in Git Bash: ok=16 changed=0](images/iac_ansible_run2.png)
 
-From the local machine, through the NSG:
+From the local machine, through the NSG (2026-10-21 run):
 
 ![curl to the model server (8080) and node_exporter (9100) on the VM](images/iac_vm_http.png)
 
-Then everything goes away again (only the summary lines are kept: the plan of a destroy prints the ids and the admin
-IP):
+## AKS: the same model server, from ACR
 
-![terraform destroy: 11 destroyed](images/iac_terraform_destroy.png)
+The VM builds its image from source. AKS runs the image the local platform serves, `fraud/predictor:1` (the model
+inside the image, as on kind), pulled from the registry Terraform creates. Terraform also grants the cluster's kubelet
+identity `AcrPull` on that registry, so the cluster holds no image pull secret
+([`envs/dev/main.tf`](../infra/terraform/envs/dev/main.tf)):
+
+```hcl
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  scope                            = module.acr.id
+  role_definition_name             = "AcrPull"
+  principal_id                     = module.aks.kubelet_object_id
+  skip_service_principal_aad_check = true
+}
+```
+
+[`infra/k8s/aks/predictor.yaml`](../infra/k8s/aks/predictor.yaml) is a plain Deployment (one B2s v2 node has no
+room for KServe and cert-manager): 2 replicas, `maxUnavailable: 0`, a readiness probe on the model, non-root.
+
+```bash
+az acr login -n crcardfrauddev
+docker tag localhost:5001/fraud/predictor:1 crcardfrauddev.azurecr.io/fraud/predictor:1
+docker push crcardfrauddev.azurecr.io/fraud/predictor:1
+sed -e "s#ACR#crcardfrauddev.azurecr.io#; s#MODEL_VERSION#1#" infra/k8s/aks/predictor.yaml |
+  kubectl --kubeconfig infra/.secrets/aks-kubeconfig apply -f -
+```
+
+A `LoadBalancer` Service gets no public IP here: Azure answers `PublicIPCountLimitReached`, "Cannot create more than
+3 public IP addresses for this subscription in this region". The Service is a `ClusterIP`, and the check goes through
+`kubectl port-forward`:
+
+![kubectl on AKS: the node, card-fraud 2/2 from crcardfrauddev.azurecr.io/fraud/predictor:1, tag 1 in ACR, a prediction through port-forward](images/iac_aks_predictor.png)
+
+In the Portal, the deployment next to the system pods, and the repository in the registry:
+
+![AKS Workloads: card-fraud in namespace serving, 2/2 ready, next to the kube-system deployments](images/iac_portal_aks_workloads.png)
+
+![ACR crcardfrauddev, Repositories: fraud/predictor](images/iac_portal_acr.png)
+
+## Destroy
+
+Then everything goes away again. Only the summary lines are kept, since the plan of a destroy prints the ids and the
+admin IP:
+
+![terraform destroy in Git Bash: 13 destroyed, the resource group no longer exists](images/iac_terraform_destroy.png)
 
 ## Gotchas
 

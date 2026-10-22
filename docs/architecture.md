@@ -161,7 +161,8 @@ server (C4) are there for that reason.
 ![Deployment](images/platform-deployment.png)
 
 Compose sits on top and the kind cluster underneath, both inside the Docker Desktop VM. The host runs the CLIs and
-the two llama.cpp servers. The column on the right lists the internet services the platform talks to. The corridor
+the two llama.cpp servers. The column on the right holds the SaaS the platform talks to and, under it, the Azure
+resources an IaC run creates, reached from the host's terraform and ansible. The corridor
 between compose and the VM's edge carries the three paths between the host and the cluster: pods to the model
 servers, the browser to NGINX, and kubectl/helm to the API server.
 
@@ -175,4 +176,4 @@ servers, the browser to NGINX, and kubectl/helm to the API server.
 | Local registry `registry:3` | the host pushes to `localhost:5001`; containerd on the node maps that name to `registry:5000` on the compose network. Jenkins signs the MCP image there (cosign), and the signature sits next to the image |
 | Alias `lakehouse-s3` for SeaweedFS | KFP installs its own `seaweedfs` Service, which shadows the short name inside the cluster |
 | Ports published on 127.0.0.1 only | nothing is reachable from the network; local secrets stay in `infra/.env` (gitignored), the cluster's come from Vault through External Secrets |
-| Azure only for the IaC run | Terraform built the VNet, VM and AKS cluster and Ansible deployed the model server to the VM ([iac.md](iac.md)); everything was destroyed afterwards |
+| Azure only for the IaC run | Terraform builds the VNet, VM, AKS cluster and container registry; Ansible deploys the model server to the VM and AKS runs the same image from the registry; `terraform destroy` follows. The rest stays on the PC because of the subscription: 6 vCPU and 3 public IPs per region, a GPU quota of 0, $100 of credit ([iac.md](iac.md#why-not-all-of-it-on-azure)) |

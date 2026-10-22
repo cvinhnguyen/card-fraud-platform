@@ -1,0 +1,51 @@
+# The fraud model server on AKS: the same image as the kind InferenceService (infra/k8s/kserve-card-fraud.yaml), pulled
+# from ACR with the kubelet identity (no image pull secret).
+#   ACR=$(terraform -chdir=infra/terraform/envs/dev output -raw acr_login_server)
+#   sed -e "s#ACR#$ACR#; s#MODEL_VERSION#1#" infra/k8s/aks/predictor.yaml | kubectl --kubeconfig infra/.secrets/aks-kubeconfig apply -f -
+#   kubectl --kubeconfig infra/.secrets/aks-kubeconfig -n serving port-forward svc/card-fraud 8080:80
+# ponytail: plain Deployment, no KServe on AKS; one B2s_v2 node has no room for KServe + cert-manager.
+# ClusterIP: the subscription allows 3 public IPs per region, the VM, the AKS outbound load balancer and another VM
+# hold them, so a LoadBalancer Service gets no IP.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: serving
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: card-fraud
+  namespace: serving
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: card-fraud}
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: card-fraud}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000}
+      containers:
+        - name: predictor
+          image: ACR/fraud/predictor:MODEL_VERSION
+          args: ["--model_name", "card-fraud", "--http_port", "8080"]
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /v1/models/card-fraud, port: 8080}
+          livenessProbe:
+            httpGet: {path: /, port: 8080}
+            initialDelaySeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: card-fraud
+  namespace: serving
+spec:
+  selector: {app: card-fraud}
+  ports: [{port: 80, targetPort: 8080}]

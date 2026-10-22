@@ -138,14 +138,18 @@ Every Layer 3 arrow, one line each: [docs/architecture.md](docs/architecture.md#
 
 ### Deployment
 
-![Deployment: host tools and model servers, compose profiles in the Docker Desktop VM, the kind cluster's namespaces, and the internet services](docs/images/platform-deployment.png)
+![Deployment: host tools and model servers, compose profiles in the Docker Desktop VM, the kind cluster's namespaces, the Azure resources of the IaC runs, and the SaaS on the internet](docs/images/platform-deployment.png)
 
-Everything runs on one machine. The compose profiles start what a phase needs; the kind cluster (joined to the compose
-network) holds Kubeflow Pipelines and KServe for Layer 2 and the whole Layer 3 platform, one namespace per part. The
-two model servers run on the Windows host next to the GPU, which the cluster reaches through `host.docker.internal`.
-The internet services are GitHub (Jenkins polls it), Langfuse Cloud (agent prompts, eval experiments), Groq (side B
-of the LLM A/B test), Let's Encrypt with DuckDNS (the HTTPS certificate) and Azure, where Terraform and Ansible
-created a VM and an AKS cluster for the IaC run and destroyed them afterwards. Diagram sources:
+| Where | What runs there | Docs |
+|---|---|---|
+| The Windows PC (16 GB RAM, GTX 1070) | all of Layers 1-3. The compose profiles start what a phase needs; the kind cluster (joined to the compose network) holds Kubeflow Pipelines and KServe for Layer 2 and the whole Layer 3 platform, one namespace per part. The two llama.cpp model servers run on the host next to the GPU, which the cluster reaches through `host.docker.internal` | this README |
+| Azure (`rg-cardfraud-dev`, Poland Central) | during an IaC run only: Terraform creates the network, a VM, AKS and a container registry; Ansible deploys the fraud model server and node_exporter to the VM; AKS runs the same model image from the registry. `terraform destroy` removes all of it | [iac.md](docs/iac.md) |
+| SaaS | GitHub (Jenkins polls it), Langfuse Cloud EU (agent prompts, eval experiments), Groq (side B of the LLM A/B test), Let's Encrypt with DuckDNS (the HTTPS certificate) | [cicd.md](docs/cicd.md), [ab_testing.md](docs/ab_testing.md), [edge_security.md](docs/edge_security.md) |
+
+The rest of the platform is containers and Helm charts that could run on Azure too. The Azure for Students
+subscription keeps it on the PC: 6 vCPU and 3 public IPs per region, a quota of 0 for the T4, A10, A100 and H100 GPU
+families, and $100 of credit, which a 16 GB VM would use up in about 18 days
+([what would move where, and the numbers](docs/iac.md#why-not-all-of-it-on-azure)). Diagram sources:
 `python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG next to each PNG).
 
 ## Repo structure
@@ -177,9 +181,10 @@ generator/            synthetic source systems: data with injected problems, Kaf
 infra/                docker-compose (profiles), secrets bootstrap (make_env.py, .env.example), bucket/topic init
   spark/ flink/ airflow/ hive/ ml/ mlflow/   the images built here (multi-stage, see docs/docker_optimization.md)
   k8s/                kind cluster, KFP + KServe, the Layer 3 platform (llm-platform.sh, agentgateway.yaml, llm-d-router.yaml),
-                      observability, edge/ (NGINX routes), vault.sh + secrets.sh, tls.sh, supply-chain/ (cosign + Kyverno), dashboards/
+                      observability, edge/ (NGINX routes), vault.sh + secrets.sh, tls.sh, supply-chain/ (cosign + Kyverno), dashboards/,
+                      aks/ (the model server on Azure AKS)
   jenkins/            Jenkins image, configuration as code (credentials, the 5 jobs), deploy ServiceAccount
-  terraform/          Azure: modules network / vm / aks, envs/dev
+  terraform/          Azure: modules network / vm / aks / acr, envs/dev
   ansible/            roles that configure the VM and deploy the model server on it
   benchmark/          inference-perf load test of the model server, results
   conf/               service configs (Spark, Hive, Trino, SeaweedFS, DataHub, notebook)
@@ -274,7 +279,7 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - Layer 3: [Testing](docs/testing.md#layer-3-the-card-support-mcp-server): MCP server 97 tests at 97.84% coverage, EP/BVA, hypothesis with crosshair, mutmut 243/245, locust load tests of the Web API and the agents.
 - Layer 3: [Edge and secrets](docs/edge_security.md): NGINX Ingress for every UI and the Web API, HTTPS with a Let's Encrypt wildcard, basic auth and rate limits, HashiCorp Vault + External Secrets.
 - Layer 3: [Observability](docs/observability.md): Web API, compute, LLM and agent dashboards in Grafana, logs in VictoriaLogs, traces in Jaeger.
-- Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS on Azure) and Ansible roles that deploy the model server to the VM.
+- Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS, ACR on Azure), Ansible roles that deploy the model server to the VM, the same model image on AKS, and why the rest of the platform stays on the PC.
 - Layer 3: [A/B testing](docs/ab_testing.md): an agent's model config and two LLM versions split at the gateway, a Grafana dashboard per side, evaluations, the decisions.
 - Layer 3 novel idea 1: [Eval gate in the agents' CD](docs/novel_eval_gate.md): every deploy answers an eval dataset as a Langfuse experiment; below 0.6 accuracy the release rolls back.
 - Layer 3 novel idea 2: [Only signed images run](docs/novel_supply_chain.md): CI signs the MCP image with cosign; Kyverno admits only signed images of the platform registry in card-support.

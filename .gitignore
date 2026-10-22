@@ -1,5 +1,7 @@
 # secrets — never commit
 .env
+.env.*
+!.env.example
 .secrets/
 infra/conf/seaweedfs/s3.json
 infra/conf/datahub/user.props
@@ -9,6 +11,8 @@ infra/conf/datahub/user.props
 *.tfstate
 *.tfstate.*
 tfplan
+*.tfvars
+crash*.log
 infra/ansible/inventory/hosts.ini
 
 # generated data
@@ -37,3 +41,7 @@ logs/
 # notebook outputs
 ml/notebooks/models/
 infra/.certs/
+
+# Windows thumbnails / folder settings
+Thumbs.db
+desktop.ini

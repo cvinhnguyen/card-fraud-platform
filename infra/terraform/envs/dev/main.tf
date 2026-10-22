@@ -1,6 +1,6 @@
 # dev environment of the platform on Azure: a resource group, the network, the model-serving VM that Ansible
-# configures (infra/ansible) and an AKS cluster. Sized for an Azure for Students subscription (6 vCPU per region,
-# regions limited by policy): 2 vCPU for the VM + 2 for the AKS node.
+# configures (infra/ansible), an AKS cluster and the container registry it pulls from. Sized for an Azure for Students
+# subscription (6 vCPU per region, regions limited by policy): 2 vCPU for the VM + 2 for the AKS node.
 #
 #   az login && export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 #   terraform init
@@ -50,6 +50,22 @@ module "aks" {
   kubernetes_version  = var.kubernetes_version
   node_size           = var.aks_node_size
   tags                = local.tags
+}
+
+module "acr" {
+  source              = "../../modules/acr"
+  name                = "cr${replace(local.name, "-", "")}"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.this.name
+  tags                = local.tags
+}
+
+# AKS pulls from the registry with its kubelet identity: no image pull secret in the cluster
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  scope                            = module.acr.id
+  role_definition_name             = "AcrPull"
+  principal_id                     = module.aks.kubelet_object_id
+  skip_service_principal_aad_check = true
 }
 
 # Ansible's inventory (gitignored: it holds the VM's public IP)

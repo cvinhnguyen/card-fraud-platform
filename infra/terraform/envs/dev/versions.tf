@@ -15,6 +15,8 @@ terraform {
 
 provider "azurerm" {
   # subscription from ARM_SUBSCRIPTION_ID; azurerm 5 registers no resource providers unless listed
-  resource_providers_to_register = ["Microsoft.Compute", "Microsoft.Network", "Microsoft.ContainerService"]
+  resource_providers_to_register = [
+    "Microsoft.Compute", "Microsoft.Network", "Microsoft.ContainerService", "Microsoft.ContainerRegistry",
+  ]
   features {}
 }

@@ -642,15 +642,15 @@ def net(pts, label, lx, ly, anchor="start", halo=PANEL) -> str:
 
 def deployment():
     """Host -> Docker Desktop VM -> compose profiles above the kind cluster's namespaces; internet services right."""
-    W, H = 2166, 1780
+    W, H = 2240, 1780
     body = [t(28, 46, "CARD FRAUD PLATFORM · LAYERS 1-3", 12, INK2, "start", 600, mono=True, spacing=0.14),
-            t(28, 76, "Deployment: one Windows host, one Docker Desktop VM, compose profiles + a kind cluster",
-              22, INK, "start", 400)]
+            t(28, 76, "Deployment: one Windows host (Docker Desktop VM: compose profiles + a kind cluster), Azure for "
+                      "the IaC runs, SaaS on the internet", 22, INK, "start", 400)]
     # host tools and model servers
     body.append(panel(14, 96, 1876, 128, "HOST · Windows 11 · GTX 1070 · repo .venv + CLIs", "none", LINE, True))
     hosts = {"py": Box(250, 124, 292, 84, "Python scripts", ("generator, producer.py, locust,", "replay_scoring, KFP client"), "host", "python"),
              "docker": Box(560, 124, 210, 84, "docker CLI", ("build fraud/* images,", "push localhost:5001"), "host", "docker"),
-             "iac": Box(788, 124, 230, 84, "terraform · ansible", ("Azure VNet, VM, AKS;", "ansible in a container"), "host", ""),
+             "iac": Box(788, 124, 230, 84, "terraform · ansible", ("Azure: VNet, VM, AKS, ACR;", "ansible in a container"), "host", ""),
              "chat": Box(1036, 124, 250, 84, "llama.cpp chat", ("Qwen3-8B Q4_K_M on the GPU", ":8085, 2 slots, -cram 1024"), "host", ""),
              "embed": Box(1304, 124, 228, 84, "llama.cpp embed", ("Qwen3-Embedding-0.6B", ":8086, 1024-dim"), "host", ""),
              "browser": Box(1550, 124, 150, 84, "Browser", ("UIs on 127.0.0.1,", "https://*.<domain>"), "host", ""),
@@ -658,15 +658,37 @@ def deployment():
     body += [box_svg(b) for b in hosts.values()]
 
     # internet services (right column, outside the VM)
-    ix, iw = 1918, 220
-    body.append(panel(ix - 14, 96, iw + 28, 610, "INTERNET", "none", LINE, True))
-    inet = [("GitHub", ("cvinhnguyen/card-fraud-", "platform, branch main"), "Jenkins polls it"),
-            ("Langfuse Cloud EU", ("agent prompts, eval", "datasets + experiments"), "Jenkins"),
-            ("Groq", ("LLM B side of the A/B", "test (weight 0 now)"), "agentgateway"),
-            ("Let's Encrypt + DuckDNS", ("*.cvinhnguyen.duckdns.org", "DNS-01, lego in tls.sh"), "tls.sh"),
-            ("Azure (polandcentral)", ("IaC run: VNet, VM, AKS", "destroyed after the run"), "terraform")]
-    for i, (name, lines, _) in enumerate(inet):
+    ix, iw = 1918, 294
+    body.append(panel(ix - 14, 96, iw + 28, 498, "INTERNET · SaaS", "none", LINE, True))
+    inet = [("GitHub", ("cvinhnguyen/card-fraud-platform,", "branch main: Jenkins polls it")),
+            ("Langfuse Cloud EU", ("agent prompts, eval datasets", "+ experiments (Jenkins, agents)")),
+            ("Groq", ("LLM B side of the A/B test", "(weight 0 now), via agentgateway")),
+            ("Let's Encrypt + DuckDNS", ("*.cvinhnguyen.duckdns.org", "DNS-01, lego in tls.sh"))]
+    for i, (name, lines) in enumerate(inet):
         body.append(box_svg(Box(ix, 136 + i * 112, iw, 92, name, lines, "internet", "")))
+
+    # Azure: what Terraform, Ansible and kubectl create for an IaC run (docs/iac.md), destroyed after it
+    ay, gw = 614, iw + 8
+    az = [t(ix, ay + 50 + 16 * i, ln, 11, INK2, "start", mono=True) for i, ln in enumerate(
+        ("rg-cardfraud-dev · Azure for Students", "created per IaC run, then destroyed:", "terraform apply / destroy,",
+         "ansible over SSH, docker push, kubectl"))]
+    g, z1 = group(ix - 4, ay + 122, "vm", "B2s_v2 · Ubuntu 24.04", [
+        ("predictor", "built on the VM by Ansible", ":8080", "python"),
+        ("node_exporter", "host metrics", ":9100", "")], w=gw)
+    az.append(g)
+    g, z2 = group(ix - 4, z1 + 14, "aks", "Free tier · 1 node B2s_v2", [
+        ("card-fraud", "2 pods from ACR, ClusterIP", ":80", "kubernetes")], w=gw)
+    az.append(g)
+    g, z3 = group(ix - 4, z2 + 14, "acr", "Basic", [
+        ("crcardfrauddev", "fraud/predictor:<v>", "", "docker")], w=gw)
+    az.append(g)
+    g, z4 = group(ix - 4, z3 + 14, "network", "", [
+        ("vnet + subnet", "the VM's subnet", "", ""),
+        ("nsg", "22, 8080, 9100: admin IP only", "", ""),
+        ("public IP + NIC", "the VM's address", "", "")], w=gw)
+    az.append(g)
+    body.append(panel(ix - 14, ay, iw + 28, z4 + 16 - ay, "AZURE · polandcentral", "#f4f7fc", "#b5c0d6", True))
+    body += az
 
     vy = 282
     body.append(panel(14, vy, 1876, H - vy - 104, "DOCKER DESKTOP · WSL2 VM · 8 GB RAM + 4 GB swap (.wslconfig)", PANEL, LINE))
@@ -827,17 +849,21 @@ def deployment():
         net([(1020, cb), (1020, ky)], "scoring-api -> :31080 KServe · Airflow -> :31888 KFP\n"
             "Jenkins -> kind API (helm), :31508 (eval)", 1032, cb + 30),
         net([(1400, cb), (1400, ky)], "images pulled from\nregistry:5000\n(host: localhost:5001)", 1412, cb + 24),
+        # host -> Azure: along the top of the host panel, down the gap right of the VM panel
+        net([hosts["iac"].top(), (hosts["iac"].x + 115, 106), (1897, 106), (1897, ay + 18), (ix - 6, ay + 18)], "", 0, 0),
     ]
     notes = ["8 GB does not hold every profile: run stream alone; keep trino and dbt off while orch + gov run; "
              "Layer 3 runs with core + ml + CI/CD (profile cicd) and the kind cluster.",
              "seaweedfs has the alias lakehouse-s3: inside kind, KFP's own seaweedfs Service shadows the short name.",
              "The model servers run on the host GPU (GTX 1070, Pascal: no vLLM); llm-d's InferencePool selects thin "
              "bridge pods that forward to them.",
-             "Azure resources (Terraform + Ansible, docs/iac.md) were created for the IaC run and destroyed after it."]
+             "Azure (docs/iac.md) exists only during an IaC run: created, checked, destroyed. Its quotas (6 vCPU and 3 "
+             "public IPs per region, 0 for GPUs) keep the rest of the platform on the PC."]
     body += [t(34, H - 82 + 18 * i, n, 12, INK2, "start") for i, n in enumerate(notes)]
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: deployment",
                    "Host tools and model servers, the Docker Desktop VM with the compose profiles above the kind "
-                   "cluster and its namespaces, and the internet services the platform uses.")
+                   "cluster and its namespaces, the Azure resources of the IaC runs, and the internet services the "
+                   "platform uses.")
 
 
 # ---------------------------------------------------------------- overview
@@ -846,7 +872,7 @@ NOVEL1, NOVEL2 = "#bf4520", "#6b7a3a"
 
 def overview():
     """The README steps: Layer 1 writes the features, Feast hands them over, Layer 2 uses them, Layer 3 builds on both."""
-    W, H, CWD = 2166, 1488, 286
+    W, H, CWD = 2166, 1574, 286
     x = [40 + i * 352 for i in range(6)]
 
     def card(i, y, tag, title, lines, ico, accent=""):
@@ -898,7 +924,11 @@ def overview():
                 ("CI/CD of the MCP server, agents (prompts from Langfuse, eval gate: L3 novel 1), RAG pipeline, stream "
                  "jobs; signed images (L3 novel 2)",
                  "metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
-                 "call  ·  secrets in Vault"), "26 · OPERATIONS", "")]
+                 "call  ·  secrets in Vault"), "26 · OPERATIONS", ""),
+            Box(x[0], 1480, x[5] + CWD - x[0], 76, "Where it runs: one Windows PC  ·  Azure for the IaC runs  ·  SaaS",
+                ("PC (16 GB RAM, GTX 1070): every box above, as compose profiles in Docker Desktop and a kind cluster",
+                 "Azure, created per IaC run then destroyed: a VM (Ansible) and AKS serve the model image of 13, pulled "
+                 "from ACR  ·  SaaS: GitHub, Langfuse Cloud EU, Groq, Let's Encrypt + DuckDNS"), "27 · CLOUD", "")]
 
     mid1, mid1b, mid2 = r1a + 50, r1b + 50, r2 + 50
     arrows = [net([(x[i] + CWD, y), (x[i + 1], y)], "", 0, 0) for y, n in ((mid1, 5), (mid1b, 1), (mid2, 5))

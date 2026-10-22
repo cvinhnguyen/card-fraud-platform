@@ -41,6 +41,11 @@ not show up in the process list or the build log.
 | `ml-db-password`, `redis-password`, `s3-access-key`, `s3-secret-key` | stream jobs deploy and smoke test |
 | `airflow-admin` | RAG pipeline: release and run through the Airflow REST API |
 
+The same credentials in Jenkins (Manage Jenkins, Credentials, global domain). The page shows ids and descriptions;
+the values stay hidden, the username/password one only shows `admin/******`:
+
+![Jenkins global credentials: kubeconfig, Langfuse keys, A2A keys, edge password, database, Redis and S3 secrets, cosign key and password, Airflow login](images/cicd_jenkins_credentials.png)
+
 Jenkins deploys with its own ServiceAccount ([`infra/jenkins/rbac.yaml`](../infra/jenkins/rbac.yaml)), not with the
 cluster admin. The role is bound only in `card-support`, `kagent` and `agentgateway-system`, the namespaces the MCP
 and agents charts write to, so a pipeline cannot touch Vault, the monitoring stack or kube-system. `setup.sh` writes
