@@ -49,104 +49,49 @@ Columns: `snake_case`; timestamps end in `_ts` (`txn_ts`, `valid_from_ts`); surr
 | `gold.label_transaction` | one transaction (settled or reversed) as labelled on `label_as_of` | `transaction_id` | `event_month` | `MERGE` per `--as-of` run |
 | `gold.feat_card_txn_stats_daily` | one card after one day with activity (a settled transaction or a reported dispute) | `card_id`, `event_timestamp` | | overwrite |
 
+## Zone flow
+
+Which job reads each table and what it writes (`pipelines/spark/*.py` and the dbt `source()` / `ref()` calls):
+
+| Table | Read by | Writes |
+|---|---|---|
+| `bronze.raw_transactions` | `build_silver.py` (DP2) | `silver.stg_transactions` |
+| `bronze.raw_customers` | `build_silver.py` (DP2) | `silver.stg_customers` |
+| `bronze.raw_ref_province_mapping` | `build_silver.py` (DP2), as a lookup | the 34-unit columns of both silver tables |
+| `bronze.raw_cards`, `bronze.raw_accounts` | dbt, `build_labels.py` | `gold.dim_card`, `gold.label_transaction` |
+| `bronze.raw_merchants` | dbt | `gold.dim_merchant` (its city is already one of the 34 units) |
+| `bronze.raw_disputes` | `build_labels.py`, `build_features.py` (DP3) | `gold.label_transaction`, `gold.feat_card_txn_stats_daily` |
+| `bronze.raw_card_authorizations` | none | the raw stream, kept for replay and audit; the realtime features come from the Flink jobs through the push jobs ([feature_store.md](feature_store.md)) |
+| `silver.stg_transactions` | dbt, `build_labels.py` | `gold.dim_date`, `gold.fact_transaction`, `gold.label_transaction` |
+| `silver.stg_customers` | dbt | `gold.dim_customer` (SCD2) |
+| `gold.fact_transaction` | `build_features.py` (DP3) | `gold.feat_card_txn_stats_daily` |
+
+The three ER diagrams below are drawn by `python docs/diagrams/er.py` from the column lists in that script. A line
+ends in a bar on the "one" side and a crow's foot on the "many" side; a dashed line is a name lookup.
+
+## Bronze ER diagram
+
+Bronze tables are copies of the sources, so the lines are the source's keys, not constraints: bronze keeps what the
+source sent, including the 2% duplicate `transaction_id`s in `raw_transactions` and every version of a customer in
+`raw_customers`. Every bronze table also has `_ingested_at` and `_source` (the Postgres table or the file path).
+
+![Bronze ER diagram: raw_transactions and raw_card_authorizations in the middle, the core banking tables around them](images/er-bronze.png)
+
+## Silver ER diagram
+
+DP2 cleans two tables; the other bronze tables are already clean and gold reads them as they are. The badges mark the
+columns DP2 adds or changes. `raw_cards` and `raw_accounts` are drawn because they link a transaction to its customer,
+and `raw_ref_province_mapping` because DP2 looks the 34 units up in it.
+
+![Silver ER diagram: stg_transactions and stg_customers with their new and renamed columns, linked through raw_cards and raw_accounts](images/er-silver.png)
+
+The before / after numbers of each fix (rows, distinct ids, settled spend, NULL `auth_method`) are in
+[spark_jobs.md](spark_jobs.md#before--after-full-build-146-s) and
+[spark_optimization.md](spark_optimization.md#duplicates).
+
 ## Gold ER diagram
 
-```mermaid
-erDiagram
-    dim_card ||--o{ feat_card_txn_stats_daily : card_id
-    dim_card ||--o{ fact_transaction : card_id
-    dim_customer ||--o{ fact_transaction : "customer_sk (version valid at txn_ts)"
-    dim_merchant ||--o{ fact_transaction : merchant_id
-    dim_date ||--o{ fact_transaction : date_key
-    label_transaction ||--o| fact_transaction : "transaction_id (reversed txns have no fact row)"
-
-    fact_transaction {
-        string transaction_id PK
-        int date_key FK
-        timestamp txn_ts
-        string card_id FK
-        string customer_sk FK
-        string merchant_id FK
-        string terminal_id
-        string txn_unit "one of 34 units"
-        string txn_city_raw "name as sent by the source"
-        string channel "ecom, pos, atm"
-        string auth_method
-        string three_ds_version
-        bigint amount_vnd
-        string currency "VND, or USD for foreign merchants"
-        date export_date
-        string txn_month
-    }
-    dim_customer {
-        string customer_sk PK
-        string customer_id
-        string full_name
-        date dob
-        string customer_unit
-        string city_raw
-        string income_band
-        string risk_tier
-        int kyc_level
-        timestamp valid_from_ts
-        timestamp valid_to_ts "exclusive, 9999-12-31 if current"
-        boolean is_current
-    }
-    dim_card {
-        string card_id PK
-        string account_id
-        string customer_id
-        string card_type
-        string network
-        string account_type
-        bigint credit_limit
-        timestamp issue_ts
-        string expiry_month
-        string status
-    }
-    dim_merchant {
-        string merchant_id PK
-        string merchant_name
-        int mcc
-        boolean is_online
-        string merchant_unit "NULL for foreign merchants"
-        string country
-    }
-    dim_date {
-        int date_key PK
-        date full_date
-        int year
-        int month
-        string year_month
-        int day_of_week
-        boolean is_weekend
-        boolean is_after_reorg
-    }
-    label_transaction {
-        string transaction_id PK
-        string card_id
-        string customer_id
-        timestamp event_timestamp
-        bigint amount_vnd
-        boolean is_fraud
-        timestamp fraud_reported_ts
-        date label_as_of
-        string event_month
-    }
-    feat_card_txn_stats_daily {
-        string card_id PK
-        timestamp event_timestamp PK "active day L + 1, 00:00"
-        int txn_count_30d
-        int distinct_merchants_30d
-        double avg_amount_90d
-        double std_amount_90d
-        double ecom_ratio_90d
-        double foreign_txn_ratio_90d
-        int dispute_count_180d
-        timestamp stats_ts "copy of event_timestamp, served as a feature"
-        timestamp created
-    }
-```
+![Gold ER diagram: fact_transaction with dim_customer (SCD2), dim_date, dim_card, dim_merchant; label_transaction and feat_card_txn_stats_daily](images/er-gold.png)
 
 The platform's tools record the same relations. dbt's docs site draws `fact_transaction` from its
 sources and the dimensions it joins ([novel_dbt.md](novel_dbt.md)):

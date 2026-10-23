@@ -266,9 +266,9 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 ## Docs
 - [Architecture](docs/architecture.md): overview, system diagrams with every numbered arrow (Layers 1-2 and Layer 3), deployment.
 - [Data characteristics](docs/data_characteristics.md): datasets, injected problems, measured numbers.
-- [Schema design](docs/schema_design.md): zones, naming, grain of every table, gold ER diagram.
-- [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest (schema evolution demos), DP2 silver (dedup, unit normalization, HCMC chart), dbt gold star schema, labels with label delay, DP3 features.
-- [Spark optimization](docs/spark_optimization.md): merchant join skew, baseline vs salting vs AQE vs broadcast, skew level sweep.
+- [Schema design](docs/schema_design.md): zones, naming, grain of every table, which job reads and writes each table, ER diagrams of bronze, silver and gold.
+- [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest, DP2 silver (dedup, unit normalization, HCMC chart), dbt gold star schema, labels with label delay, DP3 features.
+- [Spark optimization](docs/spark_optimization.md): the three offline data problems from baseline to fix: merchant join skew (baseline vs salting vs AQE vs broadcast, skew level sweep), schema evolution (`mergeSchema`), duplicates (dedup + MERGE).
 - [Flink jobs](docs/flink_jobs.md): late events, duplicates, realtime features, out-of-order sessions, raw events to bronze; each checked against the Parquet truth.
 - [Storage optimization](docs/storage_optimization.md): small files, partitioning, `OPTIMIZE` + Z-order on Delta; B-tree and BRIN indexes on the Postgres serving table.
 - [Airflow](docs/airflow.md): DP1 / DP2 / DP3 DAGs, connections and variables in Airflow, validate stages (GE on Spark), backfill.

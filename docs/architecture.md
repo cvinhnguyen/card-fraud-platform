@@ -38,9 +38,14 @@ check.
 Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
 see the same 20 features (`fraud_model_v1`,
 [`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/feature_repo/fraud_features.py#L123-L128)).
-The loop inside Layer 2 is the retraining path: the drift check starts a
-pipeline run with the newest labels
-([`drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L39-L51)).
+Drift is checked twice. The Drift API is a service that runs all the time: the drift forwarder reads every decision
+from the Kafka topic `fraud_predictions` and posts it, and the API keeps per-minute counts in Redis and returns the
+PSI of each input over the last 15 minutes (no labels needed). The loop inside Layer 2 is the retraining path: the
+Airflow DAG `drift_monitoring` runs every day (`schedule="@daily"`), scores the last 7 days with ground truth and
+point-in-time features from the offline store, and when a PSI is above 0.25 or the PR-AUC fell more than 0.05 it
+starts a Kubeflow pipeline run with the newest labels
+([`drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
+[drift.md](drift.md)).
 
 Layer 3 (bottom band) reads from both layers above it. The MCP server
 ([`services/card_support_mcp/app/main.py` L73-L99](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L73-L99),
@@ -50,8 +55,12 @@ online store and a fraud score from the Layer 2 Scoring API; the RAG pipeline
 writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
 NGINX; every agent call (A2A, MCP, LLM) then goes through agentgateway, which sends the LLM calls to llama.cpp via the
-llm-d router. Airflow, the lakehouse, DataHub and the operations tools (metrics, logs, traces, Vault) run under
-everything.
+llm-d router. Agent Substrate runs the same three agents a second time as sandboxes: each conversation gets its own
+gVisor sandbox restored from a warm snapshot, on a worker pool shared by all agents (one worker here), and the
+sandboxes call the same gateway ([agents.md](agents.md#sandboxed-agents-on-agent-substrate-warm-up)). agentregistry
+is the catalog for people, not on the request path: which agents exist, their version and image, and which MCP
+server each uses, published from `agents/registry/catalog.yaml` ([agents.md](agents.md#agent-registry)).
+Airflow, the lakehouse, DataHub and the operations tools (metrics, logs, traces, Vault) run under everything.
 
 The CI/CD row is the path of a change: Jenkins polls GitHub, tests and builds, pushes signed images to the registry,
 then deploys and checks against the running platform (Helm into kind with the eval gate, a new RAG image in Airflow,

@@ -25,6 +25,22 @@ result from the Parquet files with pandas. The numbers below are those compariso
 | `hot_key.py --mode hot\|two_phase` (parallelism 4) | `card_auth_replay` | `unit_counts_<mode>` |
 | `raw_landing.py` (Flink SQL) | `card_authorizations` | `s3://lakehouse/landing/card_authorizations/auth_date=*/` |
 
+## What each optimization changed (before → after)
+
+| Problem | Job | Metric | Before (baseline) | After (fix) |
+|---|---|---|---|---|
+| Late events: offline POS terminals send 5 to 30 min late | `auth_windows.py` | late events dropped from their window; card windows exact | 483 dropped; 96.08% | `allowed_lateness(30 min)` + side output: 0 dropped; 98.47%; replay 305 s → 348 s |
+| Duplicates: network retries resend the same `auth_id` | `auth_windows.py` | card windows overcounted; exact | 301 overcounted; 98.47% (`lateness` mode) | dedup on `auth_id` before the window: 0; **100.00%** |
+| Out-of-order app events within a session | `ato_sequence.py` | account takeovers caught | 461 / 658 (70.1%) in arrival order | 658 / 658 (**100%**) in event-time order, +30 s per alert |
+| Hot key: Ho Chi Minh is 60% of the authorizations | `hot_key.py`, parallelism 4 | job time; records on the busiest counting subtask; Flink UI data skew and backpressure | 71.4 s; 84%; skew 100%, upstream backpressured 88% | two-phase salting: **50.7 s** (about 14,000 → 19,700 records/s); 33%; skew 28%, upstream 48% |
+
+Backpressure and busy time measure throughput, so they are the before / after of the hot key, a load problem
+([Flink UI before and after](#flink-ui-before-and-after)). Late events, duplicates and out-of-order events are
+correctness problems: their before / after is the comparison with the pandas recomputation, and in the Flink UI it
+shows as the `late events` sink metric (443 → 0 late events at the same point of the replay,
+[screenshots](#in-the-flink-ui-late-events-before-and-after)) and as records per operator (20,000 in, 19,699 after
+dedup, 19,696 card windows).
+
 ## Event time
 
 The producer sets each Kafka message timestamp to the event time (`auth_ts`, `event_ts`), as a card network or app
@@ -53,6 +69,28 @@ modes add one fix each. Replay: 20,000 authorizations from 2026-06-01, of which 
   instead would hold every result back by 30 minutes.
 - Dedup keeps a flag per `auth_id` for 1 hour (retries come 1 to 10 s later) and passes only the first copy.
   It runs before any count.
+
+### In the Flink UI: late events before and after
+
+The window vertex chains two Kafka sinks: `counts` for the window results and `late events` for the side output. Its
+Metrics tab shows `late_events__Writer.numRecordsIn`, the number of events that reached their window after the
+watermark had already closed it. Flink shows these metrics only while a job runs, so both screenshots were taken
+with about 18,700 and 19,300 of the 20,000 events through the window vertex (Records Received in the bottom table);
+at the end the check script counts 483 and 0.
+
+Before, `baseline` (watermark 5 s only): 443 late events after 18,726 events.
+
+![auth_windows baseline, Metrics tab of the window vertex: late_events__Writer.numRecordsIn = 443 after 18,726 events](images/flink_auth_windows_baseline_late.png)
+
+After, `lateness` (`allowed_lateness(30 min)`): 0 late events after 19,334 events; the same events now update their
+windows instead.
+
+![auth_windows lateness, Metrics tab of the window vertex: late_events__Writer.numRecordsIn = 0 after 19,334 events](images/flink_auth_windows_lateness_late.png)
+
+Allowed lateness has a cost: the whole replay took 348 s against 305 s for the baseline (re-run on 2026-10-22,
+same results as the table above), because each window keeps its state 30 minutes longer and fires again for each
+late event. In both runs the window vertex is busy 100% and backpressured 0%: the replay runs with a Python bundle
+size of 1 (see below), so these runs measure correctness, not throughput.
 
 In the job, the three modes are a few lines around the window
 ([`pipelines/flink/auth_windows.py` L117-L130](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/auth_windows.py#L117-L130)):
@@ -167,12 +205,32 @@ after the job ends.
 | `two_phase`, 8 salts on Ho Chi Minh only | **50.7 s** | 247,514 / 318,138 / 107,782 / 326,566 | 33% of records; three subtasks busy 94-100% |
 | `two_phase`, 8 salts on every unit (`--salt-all`) | 112.5 s | 192,699 / 176,333 / 149,634 / 481,334 | 48%, and slower than no fix |
 
-While the hot job runs, the UI colours the counting vertex red (busy 99%, data skew 100%) and shows the operators in
-front of it backpressured (88% and 100%): they could go faster, but the one hot subtask cannot take more.
+### Flink UI before and after
+
+The job graph values while each job runs (screenshots below), per vertex:
+
+| Vertex (parallelism) | Flink UI metric | `hot` (before) | `two_phase` (after) |
+|---|---|---:|---:|
+| Kafka source (1) | backpressured (max) | 100% | 100% |
+| `to unit`, map before `key_by` (4) | backpressured (max) | **88%** | **48%** |
+| | busy (max) | 24% | 51% |
+| `count per key` (4) | busy (max) | 99% | 99% |
+| | data skew | **100%** | **28%** |
+| `add partial counts` (4, two-phase only) | busy (max) / data skew | none | 34% / 33% |
+
+In `hot`, one counting subtask gets 84% of the records and is busy 100% while the other three are
+69-84% idle; the UI colours the vertex red and the operator in front of it is backpressured 88%: it could go faster,
+but the one hot subtask cannot take more. With two phases the records spread over the four subtasks, three of them
+busy 94-100%: the skew drops to 28%, the operator in front waits less (backpressure 48%) and does more (busy 24% →
+51%), and the job finishes in 50.7 s instead of 71.4 s.
+
+Before, `hot`: the counting vertex busy 99% with data skew 100%, upstream backpressured 88-100%:
 
 ![hot: the counting vertex busy 99% with data skew 100%; upstream backpressured 88-100%](images/flink_hot_key_hot.png)
 
 ![Data Skew tab: 100% on the counting vertex](images/flink_hot_key_skew.png)
+
+### How two-phase aggregation works
 
 The two modes differ in the key and in a second window that adds the partial counts
 ([`pipelines/flink/hot_key.py` L113-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/hot_key.py#L113-L124)):
@@ -195,8 +253,9 @@ The two modes differ in the key and in a second window that adds the partial cou
 In two-phase aggregation, Ho Chi Minh's key gets a salt from `auth_id` (`Ho Chi Minh#0` .. `#7`), so its records
 spread over all subtasks; each counts its share per day, then `key_by(unit)` adds the at most 8 partial counts of a
 unit-day. Phase 2 receives 5,165 records instead of 1,000,000. The salt comes from `auth_id`, so a network retry
-lands in the same partial count as its original. With two phases the skew of the counting vertex drops to 28% and
-backpressure on the operator before it to 48%:
+lands in the same partial count as its original.
+
+After, `two_phase`: data skew 28% on the counting vertex, upstream backpressure 48%:
 
 ![two_phase: data skew 28%, upstream backpressure 48%](images/flink_hot_key_two_phase.png)
 

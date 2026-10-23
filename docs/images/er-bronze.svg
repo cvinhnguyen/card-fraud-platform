@@ -1,0 +1,303 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1782" height="1108" viewBox="0 0 1782 1108" role="img">
+<title>bronze zone ER diagram</title><desc>Bronze: the sources copied as they are (DP1). Lines are the source's keys, not constraints: bronze keeps duplicate ids and every customer version.</desc>
+<defs><marker id="ah-S" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#e8590c"/></marker><marker id="ah-R" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#1971c2"/></marker><marker id="ah-B" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#2f9e44"/></marker><marker id="ah-T" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#9c36b5"/></marker><marker id="ah-M" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#8d5524"/></marker><marker id="ah-A" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#e8590c"/></marker><marker id="ah-K" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#2f9e44"/></marker><marker id="ah-C" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#9c36b5"/></marker><marker id="ah-O" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#8d5524"/></marker><marker id="ah-net" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4 L0,8 z" fill="#4f5d75"/></marker></defs>
+<rect width="1782" height="1108" fill="#f5f5f5"/>
+<text x="70.0" y="42.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="700" letter-spacing="0.08em">BRONZE ZONE · ENTITY-RELATIONSHIP</text>
+<text x="70.0" y="66.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#2d3142" text-anchor="start" font-weight="400">Bronze: the sources copied as they are (DP1). Lines are the source's keys, not constraints: bronze keeps duplicate ids and every customer version.</text>
+<path d="M70.0,139.0 L49.0,139.0 Q42.0,139.0 42.0,146.0 L42.0,430.0 Q42.0,437.0 49.0,437.0 L70.0,437.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M70.0,415.0 L37.0,415.0 Q30.0,415.0 30.0,422.0 L30.0,662.0 Q30.0,669.0 37.0,669.0 L70.0,669.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M438.5,647.0 L537.9,647.0 Q544.9,647.0 544.9,640.0 L544.9,168.0 Q544.9,161.0 551.9,161.0 L642.4,161.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M438.5,647.0 L602.9,647.0 Q609.9,647.0 609.9,640.0 L609.9,576.0 Q609.9,569.0 616.9,569.0 L642.4,569.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1233.4,349.0 L1175.4,349.0 Q1168.4,349.0 1168.4,342.0 L1168.4,190.0 Q1168.4,183.0 1161.4,183.0 L1103.4,183.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1233.4,349.0 L1207.9,349.0 Q1200.9,349.0 1200.9,356.0 L1200.9,584.0 Q1200.9,591.0 1193.9,591.0 L1091.0,591.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1103.4,139.0 L1128.9,139.0 Q1135.9,139.0 1135.9,146.0 L1135.9,154.0 Q1135.9,161.0 1142.9,161.0 L1233.4,161.0" fill="none" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M443.4,923.0 L570.4,923.0 Q577.4,923.0 577.4,916.0 L577.4,256.0 Q577.4,249.0 584.4,249.0 L642.4,249.0" fill="none" stroke="#8a91a3" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M70.0,923.0 L25.0,923.0 Q18.0,923.0 18.0,916.0 L18.0,234.0 Q18.0,227.0 25.0,227.0 L70.0,227.0" fill="none" stroke="#8a91a3" stroke-width="1.4" stroke-dasharray="5 4"/>
+<rect x="70" y="96" width="442" height="236" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M70,128 V104 a8,8 0 0 1 8,-8 H504.4 a8,8 0 0 1 8,8 V128 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="82.0" y="117.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_customers</text>
+<text x="500.4" y="116.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="80" y="132" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="92.0" y="141.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="110.0" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">customer_id</text>
+<text x="275.2" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="150" width="440" height="22" fill="#f7f8fa"/>
+<rect x="80" y="154" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="92.0" y="163.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="110.0" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">updated_ts</text>
+<text x="275.2" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="348.6" y="165.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">one row per version</text>
+<text x="110.0" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">full_name</text>
+<text x="275.2" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="194" width="440" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">dob</text>
+<text x="275.2" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">date</text>
+<text x="110.0" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">city</text>
+<text x="275.2" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="348.6" y="231.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">old or new province name</text>
+<rect x="71" y="238" width="440" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">income_band</text>
+<text x="275.2" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="110.0" y="275.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">risk_tier</text>
+<text x="275.2" y="275.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="282" width="440" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="297.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">kyc_level</text>
+<text x="275.2" y="297.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">int</text>
+<text x="110.0" y="319.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="275.2" y="319.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="348.6" y="319.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="70" y="372" width="369" height="192" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M70,404 V380 a8,8 0 0 1 8,-8 H430.5 a8,8 0 0 1 8,8 V404 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="82.0" y="393.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_accounts</text>
+<text x="426.5" y="392.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="80" y="408" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="92.0" y="417.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="110.0" y="419.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">account_id</text>
+<text x="275.2" y="419.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="426" width="367" height="22" fill="#f7f8fa"/>
+<rect x="80" y="430" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="92.0" y="439.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="110.0" y="441.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">customer_id</text>
+<text x="275.2" y="441.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="110.0" y="463.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">account_type</text>
+<text x="275.2" y="463.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="470" width="367" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="485.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">open_ts</text>
+<text x="275.2" y="485.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="110.0" y="507.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">status</text>
+<text x="275.2" y="507.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="514" width="367" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="529.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">credit_limit</text>
+<text x="275.2" y="529.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">bigint</text>
+<text x="110.0" y="551.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="275.2" y="551.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="348.6" y="551.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="70" y="604" width="369" height="214" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M70,636 V612 a8,8 0 0 1 8,-8 H430.5 a8,8 0 0 1 8,8 V636 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="82.0" y="625.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_cards</text>
+<text x="426.5" y="624.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="80" y="640" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="92.0" y="649.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="110.0" y="651.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">card_id</text>
+<text x="275.2" y="651.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="658" width="367" height="22" fill="#f7f8fa"/>
+<rect x="80" y="662" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="92.0" y="671.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="110.0" y="673.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">account_id</text>
+<text x="275.2" y="673.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="110.0" y="695.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">card_type</text>
+<text x="275.2" y="695.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="702" width="367" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="717.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">network</text>
+<text x="275.2" y="717.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="110.0" y="739.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">issue_ts</text>
+<text x="275.2" y="739.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<rect x="71" y="746" width="367" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="761.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">status</text>
+<text x="275.2" y="761.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="110.0" y="783.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">expiry_month</text>
+<text x="275.2" y="783.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="790" width="367" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="805.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="275.2" y="805.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="348.6" y="805.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="70" y="858" width="373" height="170" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M70,890 V866 a8,8 0 0 1 8,-8 H435.4 a8,8 0 0 1 8,8 V890 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="82.0" y="879.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_ref_province_mapping</text>
+<text x="431.4" y="878.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="80" y="894" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="92.0" y="903.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="110.0" y="905.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">old_province_code</text>
+<text x="275.2" y="905.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="912" width="371" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="927.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">old_province_name</text>
+<text x="275.2" y="927.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="328.8" y="927.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">63 old provinces</text>
+<text x="110.0" y="949.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">new_unit_code</text>
+<text x="275.2" y="949.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="71" y="956" width="371" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="971.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">new_unit_name</text>
+<text x="275.2" y="971.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="328.8" y="971.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">34 new units</text>
+<text x="110.0" y="993.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">effective_from</text>
+<text x="275.2" y="993.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">date</text>
+<rect x="71" y="1000" width="371" height="22" fill="#f7f8fa"/>
+<text x="110.0" y="1015.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="275.2" y="1015.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="328.8" y="1015.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="642.4399999999999" y="96" width="461" height="368" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M642.4399999999999,128 V104 a8,8 0 0 1 8,-8 H1095.4 a8,8 0 0 1 8,8 V128 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="654.4" y="117.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_transactions</text>
+<text x="1091.4" y="116.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<text x="682.4" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">transaction_id</text>
+<text x="847.6" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="143.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">not unique: 2% duplicates</text>
+<rect x="643.4399999999999" y="150" width="459" height="22" fill="#f7f8fa"/>
+<rect x="652.4399999999999" y="154" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="664.4" y="163.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="682.4" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">card_id</text>
+<text x="847.6" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="652.4399999999999" y="176" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="664.4" y="185.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="682.4" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">merchant_id</text>
+<text x="847.6" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="643.4399999999999" y="194" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">terminal_id</text>
+<text x="847.6" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="209.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">NULL for ecom</text>
+<text x="682.4" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">txn_ts</text>
+<text x="847.6" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<rect x="643.4399999999999" y="238" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">txn_city</text>
+<text x="847.6" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="253.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">old or new province name</text>
+<text x="682.4" y="275.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">amount_vnd</text>
+<text x="847.6" y="275.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">bigint</text>
+<rect x="643.4399999999999" y="282" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="297.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">currency</text>
+<text x="847.6" y="297.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="297.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">VND, or USD abroad</text>
+<text x="682.4" y="319.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">channel</text>
+<text x="847.6" y="319.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="319.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">ecom, pos, atm</text>
+<rect x="643.4399999999999" y="326" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="341.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">status</text>
+<text x="847.6" y="341.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="341.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">settled, reversed</text>
+<text x="682.4" y="363.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">created_ts</text>
+<text x="847.6" y="363.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="921.0" y="363.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">later on a re-exported copy</text>
+<rect x="643.4399999999999" y="370" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="385.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">auth_method</text>
+<text x="847.6" y="385.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="385.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">only from 2024-07-01</text>
+<text x="682.4" y="407.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">three_ds_version</text>
+<text x="847.6" y="407.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="407.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">only from 2024-07-01</text>
+<rect x="643.4399999999999" y="414" width="459" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="429.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">export_date</text>
+<text x="847.6" y="429.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">date</text>
+<text x="921.0" y="429.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">partition</text>
+<text x="682.4" y="451.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="847.6" y="451.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="921.0" y="451.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="642.4399999999999" y="504" width="449" height="346" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M642.4399999999999,536 V512 a8,8 0 0 1 8,-8 H1083.0 a8,8 0 0 1 8,8 V536 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="654.4" y="525.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_card_authorizations</text>
+<text x="1079.0" y="524.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<text x="682.4" y="551.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">auth_id</text>
+<text x="847.6" y="551.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="551.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">network retries repeat it</text>
+<rect x="643.4399999999999" y="558" width="447" height="22" fill="#f7f8fa"/>
+<rect x="652.4399999999999" y="562" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="664.4" y="571.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="682.4" y="573.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">card_id</text>
+<text x="847.6" y="573.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="652.4399999999999" y="584" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="664.4" y="593.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="682.4" y="595.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">merchant_id</text>
+<text x="847.6" y="595.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="643.4399999999999" y="602" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="617.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">amount_vnd</text>
+<text x="847.6" y="617.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">bigint</text>
+<text x="682.4" y="639.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">channel</text>
+<text x="847.6" y="639.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="643.4399999999999" y="646" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="661.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">terminal_id</text>
+<text x="847.6" y="661.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="682.4" y="683.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">device_id</text>
+<text x="847.6" y="683.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="643.4399999999999" y="690" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="705.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">geo_city</text>
+<text x="847.6" y="705.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="682.4" y="727.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">auth_ts</text>
+<text x="847.6" y="727.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="921.0" y="727.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">event time</text>
+<rect x="643.4399999999999" y="734" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="749.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">received_ts</text>
+<text x="847.6" y="749.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="921.0" y="749.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">arrival time</text>
+<text x="682.4" y="771.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">kafka_partition</text>
+<text x="847.6" y="771.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">int</text>
+<rect x="643.4399999999999" y="778" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="793.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">kafka_offset</text>
+<text x="847.6" y="793.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">bigint</text>
+<text x="682.4" y="815.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">auth_date</text>
+<text x="847.6" y="815.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="921.0" y="815.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">partition, from auth_ts</text>
+<rect x="643.4399999999999" y="822" width="447" height="22" fill="#f7f8fa"/>
+<text x="682.4" y="837.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="847.6" y="837.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="921.0" y="837.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="1233.36" y="96" width="479" height="170" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M1233.36,128 V104 a8,8 0 0 1 8,-8 H1704.8 a8,8 0 0 1 8,8 V128 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="1245.4" y="117.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_disputes</text>
+<text x="1700.8" y="116.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="1243.36" y="132" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="1255.4" y="141.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="1273.4" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">dispute_id</text>
+<text x="1438.6" y="143.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="1234.36" y="150" width="477" height="22" fill="#f7f8fa"/>
+<rect x="1243.36" y="154" width="24" height="14" rx="3" fill="none" stroke="#4f5d75"/>
+<text x="1255.4" y="163.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="middle" font-weight="700">FK</text>
+<text x="1273.4" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">transaction_id</text>
+<text x="1438.6" y="165.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="1273.4" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">reported_ts</text>
+<text x="1438.6" y="187.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">timestamp</text>
+<text x="1512.0" y="187.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">1 to 60 days after the payment</text>
+<rect x="1234.36" y="194" width="477" height="22" fill="#f7f8fa"/>
+<text x="1273.4" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">reason_code</text>
+<text x="1438.6" y="209.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="1273.4" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">is_confirmed_fraud</text>
+<text x="1438.6" y="231.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">boolean</text>
+<rect x="1234.36" y="238" width="477" height="22" fill="#f7f8fa"/>
+<text x="1273.4" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="1438.6" y="253.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="1512.0" y="253.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<rect x="1233.36" y="306" width="454" height="192" rx="8" fill="#ffffff" stroke="#a8754a" stroke-width="1.3"/>
+<path d="M1233.36,338 V314 a8,8 0 0 1 8,-8 H1679.2 a8,8 0 0 1 8,8 V338 Z" fill="#f1e4d8" stroke="#a8754a" stroke-width="1.3"/>
+<text x="1245.4" y="327.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="13" fill="#2d3142" text-anchor="start" font-weight="700">raw_merchants</text>
+<text x="1675.2" y="326.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10" fill="#a8754a" text-anchor="end" font-weight="700" letter-spacing="0.08em">BRONZE</text>
+<rect x="1243.36" y="342" width="24" height="14" rx="3" fill="none" stroke="#2d3142"/>
+<text x="1255.4" y="351.5" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#2d3142" text-anchor="middle" font-weight="700">PK</text>
+<text x="1273.4" y="353.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="600">merchant_id</text>
+<text x="1438.6" y="353.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<rect x="1234.36" y="360" width="452" height="22" fill="#f7f8fa"/>
+<text x="1273.4" y="375.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">merchant_name</text>
+<text x="1438.6" y="375.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="1273.4" y="397.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">mcc</text>
+<text x="1438.6" y="397.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">int</text>
+<rect x="1234.36" y="404" width="452" height="22" fill="#f7f8fa"/>
+<text x="1273.4" y="419.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">is_online</text>
+<text x="1438.6" y="419.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">boolean</text>
+<text x="1273.4" y="441.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">city</text>
+<text x="1438.6" y="441.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="1498.8" y="441.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">one of 34 units, NULL abroad</text>
+<rect x="1234.36" y="448" width="452" height="22" fill="#f7f8fa"/>
+<text x="1273.4" y="463.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#2d3142" text-anchor="start" font-weight="400">country</text>
+<text x="1438.6" y="463.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400">string</text>
+<text x="1273.4" y="485.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#8a91a3" text-anchor="start" font-weight="400">_ingested_at, _source</text>
+<text x="1438.6" y="485.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#8a91a3" text-anchor="start" font-weight="400"></text>
+<text x="1498.8" y="485.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">added by DP1</text>
+<path d="M62,132.0 V146.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M56,437.0 L70,430.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M56,437.0 L70,437.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M56,437.0 L70,444.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M62,408.0 V422.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M56,669.0 L70,662.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M56,669.0 L70,669.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M56,669.0 L70,676.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M446.52,640.0 V654.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M628.4399999999999,161.0 L642.4399999999999,154.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M628.4399999999999,161.0 L642.4399999999999,161.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M628.4399999999999,161.0 L642.4399999999999,168.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M446.52,640.0 V654.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M628.4399999999999,569.0 L642.4399999999999,562.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M628.4399999999999,569.0 L642.4399999999999,569.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M628.4399999999999,569.0 L642.4399999999999,576.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M1225.36,342.0 V356.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1117.36,183.0 L1103.36,176.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1117.36,183.0 L1103.36,183.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1117.36,183.0 L1103.36,190.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M1225.36,342.0 V356.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1105.04,591.0 L1091.04,584.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1105.04,591.0 L1091.04,591.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1105.04,591.0 L1091.04,598.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M1111.36,132.0 V146.0" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M1219.36,161.0 L1233.36,154.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1219.36,161.0 L1233.36,161.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M1219.36,161.0 L1233.36,168.0" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<path d="M92,1067 V1081" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M100,1074 H160" stroke="#4f5d75" stroke-width="1.4"/>
+<path d="M174,1074 L160,1067" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M174,1074 L160,1074" stroke="#4f5d75" stroke-width="1.4" fill="none"/><path d="M174,1074 L160,1081" stroke="#4f5d75" stroke-width="1.4" fill="none"/>
+<text x="182.0" y="1078.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">one to many (bar: one, crow's foot: many)</text>
+<path d="M474.56000000000006,1074 H534.5600000000001" stroke="#8a91a3" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="544.6" y="1078.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">name lookup through the province mapping</text>
+<text x="831.0" y="1078.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">PK primary key  ·  FK foreign key</text>
+</svg>

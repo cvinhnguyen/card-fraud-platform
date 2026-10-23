@@ -75,7 +75,7 @@
 <text x="1660.0" y="712.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">online features</text>
 <path d="M2000.0,630.0 L2000.0,734.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M2000.0,630.0 L2000.0,734.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
-<text x="2012.0" y="712.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">offline features</text>
+<text x="2012.0" y="712.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">offline features (DAG)</text>
 <path d="M326.0,784.0 L392.0,784.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M326.0,784.0 L392.0,784.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
 <path d="M678.0,784.0 L744.0,784.0" fill="none" stroke="#eceef1" stroke-width="7"/>
@@ -92,9 +92,10 @@
 <path d="M1684.0,834.0 L1684.0,870.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
 <path d="M1850.0,870.0 L1850.0,834.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1850.0,870.0 L1850.0,834.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
+<text x="1862.0" y="858.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">forwarder</text>
 <path d="M2030.0,834.0 L2030.0,967.0 Q2030.0,974.0 2023.0,974.0 L427.0,974.0 Q420.0,974.0 420.0,967.0 L420.0,834.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M2030.0,834.0 L2030.0,967.0 Q2030.0,974.0 2023.0,974.0 L427.0,974.0 Q420.0,974.0 420.0,967.0 L420.0,834.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
-<text x="1225.0" y="966.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">drift: retraining run with the newest labels</text>
+<text x="1225.0" y="966.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">DAG drift_monitoring (Airflow, daily): a KFP run when PSI &gt; 0.25 or PR-AUC drops &gt; 0.05</text>
 <path d="M326.0,1320.0 L392.0,1320.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M326.0,1320.0 L392.0,1320.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
 <path d="M678.0,1320.0 L744.0,1320.0" fill="none" stroke="#eceef1" stroke-width="7"/>
@@ -109,7 +110,10 @@
 <path d="M1382.0,1120.0 L1448.0,1120.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
 <path d="M1239.0,1270.0 L1239.0,1170.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1239.0,1270.0 L1239.0,1170.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
-<text x="1251.0" y="1220.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">every A2A, MCP and LLM call</text>
+<text x="1251.0" y="1236.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">every A2A, MCP and LLM call</text>
+<path d="M1508.0,1270.0 L1508.0,1203.0 Q1508.0,1196.0 1501.0,1196.0 L1349.0,1196.0 Q1342.0,1196.0 1342.0,1189.0 L1342.0,1170.0" fill="none" stroke="#eceef1" stroke-width="7"/>
+<path d="M1508.0,1270.0 L1508.0,1203.0 Q1508.0,1196.0 1501.0,1196.0 L1349.0,1196.0 Q1342.0,1196.0 1342.0,1189.0 L1342.0,1170.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
+<text x="1520.0" y="1246.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">the sandboxes too</text>
 <path d="M326.0,1094.0 L352.0,1094.0 Q359.0,1094.0 359.0,1087.0 L359.0,630.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M326.0,1094.0 L352.0,1094.0 Q359.0,1094.0 359.0,1087.0 L359.0,630.0" fill="none" stroke="#4f5d75" stroke-width="1.8" marker-end="url(#ah-net)"/>
 <text x="371.0" y="1012.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">chunks + vectors</text>
@@ -264,9 +268,10 @@
 <rect x="1808" y="742" width="69" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="1813.0" y="753.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">15 · DRIFT</text>
 <svg x="2058" y="741" width="20" height="20" viewBox="0 0 24 24"><path d="M12 .0387C5.3729.0384.0003 5.3931 0 11.9988c-.001 6.6066 5.372 11.9628 12 11.9625 6.628.0003 12.001-5.3559 12-11.9625-.0003-6.6057-5.3729-11.9604-12-11.96m-.829 5.4153h7.55l-7.5805 5.3284h5.1828L5.279 18.5436q2.9466-6.5444 5.892-13.0896" fill="#2d3142"/></svg>
-<text x="1943.0" y="781.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">Drift API + DAG</text>
-<text x="1943.0" y="797.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">PSI per feature, live (Redis)</text>
-<text x="1943.0" y="810.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">PR-AUC on labels, daily</text>
+<text x="1943.0" y="775.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">Drift API + DAG</text>
+<text x="1943.0" y="791.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">API: live PSI, fed by the forwarder</text>
+<text x="1943.0" y="804.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">Airflow DAG @daily: PR-AUC on labels</text>
+<text x="1943.0" y="817.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">drift -&gt; it starts a KFP run</text>
 <rect x="452" y="870" width="226" height="80" rx="8" fill="#eaf0f8" stroke="#7d8fb3"/>
 <rect x="460" y="878" width="105" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="465.0" y="889.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">S3 lakehouse/ml/</text>
@@ -348,15 +353,17 @@
 <rect x="1448" y="1270" width="286" height="100" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="1456" y="1278" width="93" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="1461.0" y="1289.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">24 · WARM POOL</text>
-<text x="1591.0" y="1317.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">Agent Substrate</text>
-<text x="1591.0" y="1333.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">sandboxed agents restored</text>
-<text x="1591.0" y="1346.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">from snapshots, 1 worker</text>
+<text x="1591.0" y="1311.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">Agent Substrate</text>
+<text x="1591.0" y="1327.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">the 3 agents again, sandboxed:</text>
+<text x="1591.0" y="1340.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">one gVisor sandbox per chat,</text>
+<text x="1591.0" y="1353.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">warm snapshot, 1 shared worker</text>
 <rect x="1800" y="1270" width="286" height="100" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="1808" y="1278" width="87" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="1813.0" y="1289.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">25 · REGISTRY</text>
-<text x="1943.0" y="1317.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">agentregistry</text>
-<text x="1943.0" y="1333.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog of the 3 agents</text>
-<text x="1943.0" y="1346.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">and the MCP server</text>
+<text x="1943.0" y="1311.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">agentregistry</text>
+<text x="1943.0" y="1327.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog: 3 agents + MCP server,</text>
+<text x="1943.0" y="1340.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">version, image, tools used;</text>
+<text x="1943.0" y="1353.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog.yaml, UI for people</text>
 <rect x="40" y="1420" width="2046" height="56" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="48" y="1428" width="117" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="53.0" y="1439.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">07 · ORCHESTRATION</text>

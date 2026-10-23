@@ -60,39 +60,12 @@ def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool) -
     print(f"{table}: +{len(new)} export dates ({new[0]} .. {new[-1]}), {spark.table(table).count():,} rows total")
 ```
 
-### Schema evolution demo
+### Schema evolution
 
-Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns; later files have both.
-
-The first demo reads: `pipelines/spark/schema_evolution_read.py` reads every export file at once, without and with
-`mergeSchema`
-([`pipelines/spark/schema_evolution_read.py` L18-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/schema_evolution_read.py#L18-L23)),
-in 33 s:
-
-| Read | Columns | Rows | Rows with `auth_method` |
-|---|---:|---:|---:|
-| without `mergeSchema` | 12 (auth columns missing) | 8,159,516 | 0 |
-| with `mergeSchema` | 14 | 8,159,516 | 6,704,100 |
-
-Without `mergeSchema` Spark takes the schema of one file (the oldest), so the two columns vanish for all rows, with no
-error. `ingest_bronze.py` reads with `mergeSchema`.
-
-The second demo appends to the bronze Delta table in three steps:
-
-| Step | Command | Result |
-|---|---|---|
-| 1 | `--until 2024-07-01` | +182 export dates, 1,455,416 rows, table without the auth columns (82 s) |
-| 2 | `--until 2024-07-02 --no-merge-schema` | fails: `[DELTA_METADATA_MISMATCH] A schema mismatch detected when writing to the Delta table`, nothing written |
-| 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows (132 s; 510 s on a run where the machine was short of RAM) |
-
-After step 3, Trino shows the auth columns filled for every row exported after the cutoff and NULL before it:
-
-| Export date | Rows | With `auth_method` |
-|---|---:|---:|
-| up to 2024-07-01 | 1,455,416 | 0 |
-| after 2024-07-01 | 6,704,100 | 6,704,100 |
-
-Silver (P4) maps the NULLs to `unknown_pre_regulation` instead of guessing a method.
+Export files up to 2024-07-01 have no `auth_method` / `three_ds_version` columns; later files have both, so the
+append above sets `mergeSchema` on the read and on the write. The baseline (columns lost on read, append refused
+with `DELTA_METADATA_MISMATCH`), the fix and the numbers are in
+[spark_optimization.md](spark_optimization.md#schema-evolution).
 
 ### Notes
 

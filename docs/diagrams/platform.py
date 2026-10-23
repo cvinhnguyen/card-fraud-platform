@@ -948,23 +948,25 @@ def overview():
                "kubernetes"),
           card(4, r2, "14 · API", "Fraud Scoring API", ("authorization -> features", "-> approve/step_up/decline"),
                "fastapi"),
-          card(5, r2, "15 · DRIFT", "Drift API + DAG", ("PSI per feature, live (Redis)", "PR-AUC on labels, daily"),
-               "fastapi"),
+          card(5, r2, "15 · DRIFT", "Drift API + DAG", ("API: live PSI, fed by the forwarder",
+                                                    "Airflow DAG @daily: PR-AUC on labels",
+                                                    "drift -> it starts a KFP run"), "fastapi"),
           Box(x[1] + 60, s2, CWD - 60, 80, "training sets", ("Delta, one version per run", "+ step files runs/<id>/"),
               "S3 lakehouse/ml/", "", store=True),
           Box(x[2] + 9, s2, SW, 80, "MLflow store", ("runs, registry: PostgreSQL", "model files: S3 mlflow"),
               "POSTGRES + S3", "", store=True),
           store(4, s2, "KAFKA TOPIC", "fraud_predictions", ("every decision, read by", "the drift forwarder"), "kafka",
                 h=80)]
-    reads = [(0, "point-in-time"), (1, "point-in-time"), (4, "online features"), (5, "offline features")]
+    reads = [(0, "point-in-time"), (1, "point-in-time"), (4, "online features"), (5, "offline features (DAG)")]
     arrows += [net([(x[i] + 200, fy + 76), (x[i] + 200, r2)], lab, x[i] + 212, r2 - 22) for i, lab in reads]
     arrows += [net([(x[i] + CWD, r2 + 50), (x[i + 1], r2 + 50)], "", 0, 0) for i in range(4)]
     arrows += [net([(x[1] + 173, r2 + 100), (x[1] + 173, s2)], "", 0, 0),                   # KFP -> training sets
                net([(x[2] + 143, r2 + 100), (x[2] + 143, s2)], "", 0, 0),                   # MLflow -> its store
                net([(x[4] + 236, r2 + 100), (x[4] + 236, s2)], "", 0, 0),                   # API -> fraud_predictions
-               net([(x[4] + 402, s2), (x[4] + 402, r2 + 100)], "", 0, 0)]                   # -> drift
+               net([(x[4] + 402, s2), (x[4] + 402, r2 + 100)], "forwarder", x[4] + 414, s2 - 12)]   # -> drift
     arrows.append(net([(x[5] + 230, r2 + 100), (x[5] + 230, loop), (x[1] + 28, loop), (x[1] + 28, r2 + 100)],
-                      "drift: retraining run with the newest labels", (x[1] + x[5]) / 2 + 129, loop - 8, "middle"))
+                      "DAG drift_monitoring (Airflow, daily): a KFP run when PSI > 0.25 or PR-AUC drops > 0.05",
+                      (x[1] + x[5]) / 2 + 129, loop - 8, "middle"))
 
     # Layer 3: the agents' path (bottom row), the gateway's backends (top row), what it reads from Layers 1-2
     l3 = loop + 50
@@ -980,14 +982,20 @@ def overview():
           card(1, r3b, "21 · EDGE", "NGINX Ingress", ("HTTPS *.<domain>", "basic auth, rate limits"), ""),
           card(2, r3b, "22 · COORDINATOR", "Coordinator agent", ("plans the answer, asks", "the two agents (A2A)"), ""),
           card(3, r3b, "23 · AGENTS", "Card-data + risk agents", ("kagent, MCP tools", "KEDA: 2-4 replicas each"), ""),
-          card(4, r3b, "24 · WARM POOL", "Agent Substrate", ("sandboxed agents restored", "from snapshots, 1 worker"), ""),
-          card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog of the 3 agents", "and the MCP server"), "")]
+          card(4, r3b, "24 · WARM POOL", "Agent Substrate", ("the 3 agents again, sandboxed:",
+                                                             "one gVisor sandbox per chat,",
+                                                             "warm snapshot, 1 shared worker"), ""),
+          card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog: 3 agents + MCP server,",
+                                                         "version, image, tools used;",
+                                                         "catalog.yaml, UI for people"), "")]
     mid3a, mid3b = r3a + 50, r3b + 50
     arrows += [net([(x[i] + CWD, mid3b), (x[i + 1], mid3b)], "", 0, 0) for i in range(3)]
     arrows += [net([(x[3], mid3a), (x[2] + CWD, mid3a)], "", 0, 0), net([(x[2], mid3a), (x[1] + CWD, mid3a)], "", 0, 0),
                net([(x[3] + CWD, mid3a), (x[4], mid3a)], "", 0, 0)]
     arrows.append(net([(x[3] + 143, r3b), (x[3] + 143, r3a + 100)], "every A2A, MCP and LLM call",
-                      x[3] + 155, r3a + 150))
+                      x[3] + 155, r3a + 166))
+    arrows.append(net([(x[4] + 60, r3b), (x[4] + 60, r3a + 126), (x[3] + CWD - 40, r3a + 126),
+                       (x[3] + CWD - 40, r3a + 100)], "the sandboxes too", x[4] + 72, r3b - 24))   # Substrate -> gateway
     arrows.append(net([(x[0] + CWD, r3a + 24), (x[0] + CWD + 33, r3a + 24), (x[0] + CWD + 33, fy + 76)],
                       "chunks + vectors", x[0] + CWD + 45, l3 - 12))
     arrows.append(net([(x[4] + 143, r2 + 100), (x[4] + 143, r3a)], "fraud score", x[4] + 155, l3 - 12))
@@ -1089,9 +1097,9 @@ def overview():
 
 
 # ---------------------------------------------------------------- output
-def render(name: str, svg: str) -> None:
+def render(name: str, svg: str, prefix: str = "platform-") -> None:
     """Write the SVG and, when Chrome or Edge is installed, a 2x PNG screenshot of it next to it."""
-    path = OUT / f"platform-{name}.svg"
+    path = OUT / f"{prefix}{name}.svg"
     path.write_text(svg, encoding="utf-8")
     chrome = next((p for p in (shutil.which("chrome"), shutil.which("google-chrome"), shutil.which("chromium"),
                                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
