@@ -1,1 +1,2 @@
-"""Card support MCP server (Layer 3): live card data, bank policy chunks, policy search and fraud score as tools."""
+"""Card support MCP servers (Layer 3), one code base: card-data (live card data, policy chunks by id), fraud-score
+(fraud model verdict on a payment) and policy-rag (policy search), each deployed as its own server."""

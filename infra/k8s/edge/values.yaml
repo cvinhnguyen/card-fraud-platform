@@ -43,13 +43,15 @@ routes:
     auth: true
     rate: 20r/s
     burst: 60
-  - name: web-api             # card support Web API: card data and chunks by id, policy search, fraud score
+  - name: web-api             # Web API that pulls data by id: card data and policy chunks (MCP server card-data)
     namespace: card-support
     host: api
-    service: {name: card-support-mcp, port: 8000}
+    service: {name: card-data-mcp, port: 8000}
     auth: true
     rate: 5r/s
     burst: 10
     paths:                     # REST only: /mcp is reachable only through agentgateway, /metrics only by Prometheus
       - {path: /v1, type: Prefix}
       - {path: /healthz, type: Exact}
+      - {path: /docs, type: Exact}           # OpenAPI page (FastAPI) and the spec it loads
+      - {path: /openapi.json, type: Exact}

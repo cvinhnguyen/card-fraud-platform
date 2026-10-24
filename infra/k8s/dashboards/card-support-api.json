@@ -40,7 +40,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (job, handler) (rate(http_requests_total{job=~\"card-support-mcp|scoring-api\"}[$__rate_interval]))",
+     "expr": "sum by (job, handler) (rate(http_requests_total{job=~\"card-data-mcp|fraud-score-mcp|policy-rag-mcp|scoring-api\"}[$__rate_interval]))",
      "legendFormat": "{{job}} {{handler}}",
      "refId": "A"
     }
@@ -80,7 +80,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (job, handler, status) (rate(http_requests_total{job=~\"card-support-mcp|scoring-api\", status=~\"4..|5..\"}[$__rate_interval]))",
+     "expr": "sum by (job, handler, status) (rate(http_requests_total{job=~\"card-data-mcp|fraud-score-mcp|policy-rag-mcp|scoring-api\", status=~\"4..|5..\"}[$__rate_interval]))",
      "legendFormat": "{{job}} {{handler}} {{status}}",
      "refId": "A"
     }
@@ -120,7 +120,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-support-mcp|scoring-api\"}[$__range]))",
+     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-data-mcp|fraud-score-mcp|policy-rag-mcp|scoring-api\"}[$__range]))",
      "legendFormat": "{{job}}",
      "refId": "A",
      "instant": true
@@ -163,7 +163,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-support-mcp|scoring-api\", status=~\"4..|5..\"}[$__range]))",
+     "expr": "sum by (job) (increase(http_requests_total{job=~\"card-data-mcp|fraud-score-mcp|policy-rag-mcp|scoring-api\", status=~\"4..|5..\"}[$__range]))",
      "legendFormat": "{{job}}",
      "refId": "A",
      "instant": true
@@ -206,7 +206,7 @@
       "type": "prometheus",
       "uid": "prometheus"
      },
-     "expr": "histogram_quantile(0.95, sum by (job, handler, le) (rate(http_request_duration_seconds_bucket{job=~\"card-support-mcp|scoring-api\"}[$__rate_interval])))",
+     "expr": "histogram_quantile(0.95, sum by (job, handler, le) (rate(http_request_duration_seconds_bucket{job=~\"card-data-mcp|fraud-score-mcp|policy-rag-mcp|scoring-api\"}[$__rate_interval])))",
      "legendFormat": "{{job}} {{handler}}",
      "refId": "A"
     }

@@ -1,0 +1,8 @@
+# Release policy-rag-mcp: tool search_policy, RAG retrieval over the chunks the RAG pipeline wrote (question embedded
+# by llama.cpp, nearest chunks in Feast card_support_kb on pgvector, re-ranked by cosine). Used by risk-agent.
+server: policy-rag
+description: "Policy search tool for risk-agent: search_policy (sections of the bank's card documents that answer a question)"
+agent: risk-agent
+secretName: policy-rag-mcp   # ML_DB_PASSWORD (Feast registry), VECTOR_DB_PASSWORD, LLM_API_KEY (embedder)
+env:
+  EMBEDDINGS_URL: http://host.docker.internal:8086   # llama.cpp embedding server on the host

@@ -8,7 +8,7 @@
 #                        version B of the A/B test, only when GROQ_API_KEY is set)
 #   kagent               agentgateway-key (agents' LLM key, ModelConfig), mcp-key-<agent> (RemoteMCPServer headers),
 #                        a2a-key-coordinator (headers of its agent tools)
-#   card-support         card-support-mcp (store passwords + embedder key)
+#   card-support         card-data-mcp (store passwords), policy-rag-mcp (pgvector password + embedder key)
 #   monitoring           grafana-admin (Grafana login)
 #   agentregistry        agentregistry-db (catalog database URL on ml-db)
 #   kagent, agentregistry, monitoring, card-support   edge-basic-auth (htpasswd of NGINX user admin)
@@ -60,7 +60,10 @@ secret kagent agentgateway-key Opaque key="$(val AGW_API_KEY)"
 secret kagent mcp-key-card-data-agent Opaque Authorization="Bearer $(val MCP_KEY_CARD_DATA_AGENT)"
 secret kagent mcp-key-risk-agent Opaque Authorization="Bearer $(val MCP_KEY_RISK_AGENT)"
 secret kagent a2a-key-coordinator Opaque Authorization="Bearer $(val A2A_KEY_COORDINATOR)"
-secret card-support card-support-mcp Opaque ML_DB_PASSWORD="$(val ML_DB_PASSWORD)" REDIS_PASSWORD="$(val REDIS_PASSWORD)" \
+# each MCP server gets only what its tools read (fraud-score reads no store: no secret)
+secret card-support card-data-mcp Opaque ML_DB_PASSWORD="$(val ML_DB_PASSWORD)" REDIS_PASSWORD="$(val REDIS_PASSWORD)" \
+  VECTOR_DB_PASSWORD="$(val VECTOR_DB_PASSWORD)"
+secret card-support policy-rag-mcp Opaque ML_DB_PASSWORD="$(val ML_DB_PASSWORD)" \
   VECTOR_DB_PASSWORD="$(val VECTOR_DB_PASSWORD)" LLM_API_KEY="$(val LLM_API_KEY)"
 secret monitoring grafana-admin Opaque admin-user=admin admin-password="$(val GRAFANA_ADMIN_PASSWORD)"
 secret agentregistry agentregistry-db Opaque \

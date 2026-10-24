@@ -1,28 +1,60 @@
 # The agent registry's catalog of the card support system (agentregistry 0.4, ar.dev/v1alpha1): which agents exist,
-# which version, which runtime image, where their definition lives, and which MCP server they use.
-# The agents themselves run as kagent declarative Agents (agents/chart); this is the governance record.
+# which version, which runtime image, where their definition lives, and which MCP servers they use.
+# The agents run as kagent declarative Agents (agents/chart), the MCP servers as one Helm release each
+# (services/card_support_mcp/chart); this is the governance record.
 # Publish (registry UI/API on :12121):
 #   kubectl -n agentregistry port-forward svc/agentregistry 12121:12121
 #   arctl apply -f agents/registry/catalog.yaml && arctl get agents && arctl get mcps
 apiVersion: ar.dev/v1alpha1
 kind: MCPServer
 metadata:
-  name: card-support-mcp
-  tag: "0.1.3"
+  name: card-data-mcp
+  tag: "0.2.0"
 spec:
-  title: Card support tools
+  title: Card data tools
   description: >-
-    get_card_data, get_policy_chunk, search_policy (RAG), score_payment (fraud model). Reached only through
-    agentgateway; each agent's API key sees only its own tools.
+    get_card_data (live card features, Feast online store on Redis) and get_policy_chunk (bank document section by
+    id, Feast online store on pgvector). FastAPI + pydantic, /healthz and /readyz probes. Reached only through
+    agentgateway /mcp/card-data, with card-data-agent's API key.
   remote:
     type: streamable-http
-    url: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/mcp
+    url: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/mcp/card-data
+---
+apiVersion: ar.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fraud-score-mcp
+  tag: "0.2.0"
+spec:
+  title: Fraud model tool
+  description: >-
+    score_payment: approve / step_up / decline for a payment the customer describes, from the Fraud Scoring API
+    (XGBoost on KServe, rule fallback). FastAPI + pydantic, /healthz and /readyz probes. Reached only through
+    agentgateway /mcp/fraud-score, with risk-agent's API key.
+  remote:
+    type: streamable-http
+    url: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/mcp/fraud-score
+---
+apiVersion: ar.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: policy-rag-mcp
+  tag: "0.2.0"
+spec:
+  title: Policy search tool (RAG)
+  description: >-
+    search_policy: the sections of the bank's card documents that answer a question (question embedded by
+    Qwen3-Embedding, nearest chunks in pgvector). FastAPI + pydantic, /healthz and /readyz probes. Reached only
+    through agentgateway /mcp/policy-rag, with risk-agent's API key.
+  remote:
+    type: streamable-http
+    url: http://agentgateway-proxy.agentgateway-system.svc.cluster.local/mcp/policy-rag
 ---
 apiVersion: ar.dev/v1alpha1
 kind: Agent
 metadata:
   name: card-data-agent
-  tag: "0.1.0"
+  tag: "0.2.0"
 spec:
   title: Card data agent
   description: Live data of the customer's card (profile, recent activity, history) and sections of the bank's card documents by id. Tools get_card_data, get_policy_chunk.
@@ -31,13 +63,13 @@ spec:
     repository:
       url: https://github.com/cvinhnguyen/card-fraud-platform
   mcpServers:
-    - {kind: MCPServer, name: card-support-mcp, tag: "0.1.3"}
+    - {kind: MCPServer, name: card-data-mcp, tag: "0.2.0"}
 ---
 apiVersion: ar.dev/v1alpha1
 kind: Agent
 metadata:
   name: risk-agent
-  tag: "0.1.0"
+  tag: "0.2.0"
 spec:
   title: Risk agent
   description: Fraud check of a payment the customer describes (the bank's fraud model) and answers from the bank's card policies (RAG). Tools score_payment, search_policy.
@@ -46,7 +78,8 @@ spec:
     repository:
       url: https://github.com/cvinhnguyen/card-fraud-platform
   mcpServers:
-    - {kind: MCPServer, name: card-support-mcp, tag: "0.1.3"}
+    - {kind: MCPServer, name: fraud-score-mcp, tag: "0.2.0"}
+    - {kind: MCPServer, name: policy-rag-mcp, tag: "0.2.0"}
 ---
 apiVersion: ar.dev/v1alpha1
 kind: Agent

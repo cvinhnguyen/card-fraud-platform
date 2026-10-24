@@ -16,9 +16,9 @@ modelConfig: {{ .a.modelConfig | default .root.Values.modelConfig }}
 stream: true
 systemMessageFrom: {type: ConfigMap, name: {{ .root.Release.Name }}-prompts, key: {{ .a.promptOf | default .name }}}
 tools:
-  {{- if .a.mcpServer }}
+  {{- range $server, $tools := .a.mcpServers }}
   - type: McpServer
-    mcpServer: {apiGroup: kagent.dev, kind: RemoteMCPServer, name: {{ .a.mcpServer }}, toolNames: {{ toJson .a.tools }}}
+    mcpServer: {apiGroup: kagent.dev, kind: RemoteMCPServer, name: {{ $server }}, toolNames: {{ toJson $tools }}}
   {{- end }}
   {{- range .a.subAgents }}
   - type: Agent

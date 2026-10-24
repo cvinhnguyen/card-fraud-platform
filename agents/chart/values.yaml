@@ -1,5 +1,6 @@
 # Two releases of this chart, one per CD pipeline (agents/Jenkinsfile.*); the agents themselves are in the values file
-# of each release. MCP servers from services/card_support_mcp/chart, keys from infra/k8s/secrets.sh (Vault):
+# of each release. MCP servers from services/card_support_mcp/chart (one release per server), keys from
+# infra/k8s/secrets.sh (Vault):
 #   helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml
 #   helm upgrade --install card-support-coordinator agents/chart -n kagent -f agents/chart/values-coordinator.yaml
 # System prompts: prompts/<agent>.md, replaced by the pipeline with the Langfuse prompt card-support/<agent> labelled
@@ -38,9 +39,10 @@ sandbox:
     - agentgateway-proxy.agentgateway-system.svc.cluster.local
     - kagent-controller.kagent.svc.cluster.local
 
-# One entry per agent (set in values-*.yaml). mcpServer + tools: its tools on the MCP gateway (the key of that
-# RemoteMCPServer allows only these). subAgents: agents it calls over A2A through the gateway, with its key
-# a2a-key-<name>. public: reachable by A2A clients at /a2a/<name> on the gateway (key user support-app).
+# One entry per agent (set in values-*.yaml). mcpServers: RemoteMCPServer -> the tools the agent uses from it (each
+# MCP server's gateway route lets only its agent's key see its tools). subAgents: agents it calls over A2A through
+# the gateway, with its key a2a-key-<name>. public: reachable by A2A clients at /a2a/<name> on the gateway (key user
+# support-app).
 agents: {}
 # gateway key users allowed to call this release's agents agent-to-agent (route <release>-internal)
 a2aCallers: []

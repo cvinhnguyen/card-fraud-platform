@@ -1,5 +1,5 @@
 """Fixtures: fake stores / embedder / scoring API (each can be made to fail), a service wired with them at a fixed
-clock, and a test client of the real app (REST + MCP) with its own metrics registry."""
+clock, and a test client of one server of the real app (REST + MCP) with its own metrics registry."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -73,6 +73,11 @@ class FakeEmbedder:
             raise self.error
         return list(self.vector)
 
+    async def ready(self):
+        if self.error:
+            raise self.error
+        return True
+
 
 class FakeScoring:
     """Records the bodies it gets; answers a fixed response."""
@@ -87,6 +92,11 @@ class FakeScoring:
         if self.error:
             raise self.error
         return dict(self.response)
+
+    async def ready(self):
+        if self.error:
+            raise self.error
+        return True
 
 
 def make_service(**over) -> CardSupportService:
@@ -104,11 +114,12 @@ def service():
 
 @pytest.fixture
 def make_client():
-    """Factory: a TestClient of the real app over a given service (lifespan runs: MCP session manager starts)."""
+    """Factory: a TestClient of one server of the real app over a given service (lifespan runs: MCP session manager
+    starts)."""
     clients = []
 
-    def _make(svc=None):
-        app = create_app(lambda s: svc or make_service(), Settings(), registry=CollectorRegistry())
+    def _make(svc=None, server="card-data"):
+        app = create_app(server, lambda s: svc or make_service(), Settings(), registry=CollectorRegistry())
         c = TestClient(app)
         c.__enter__()
         clients.append(c)

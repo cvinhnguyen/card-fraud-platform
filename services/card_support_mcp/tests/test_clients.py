@@ -39,6 +39,14 @@ async def test_scoring_client():
         await ScoringClient(SCORE_URL, 1.0).score({})
 
 
+@respx.mock
+async def test_scoring_client_health_is_the_apis_liveness():
+    route = respx.get("http://scoring-api:8000/healthz").respond(200)
+    assert await ScoringClient(SCORE_URL, 1.0).ready() is True
+    route.respond(500)
+    assert await ScoringClient(SCORE_URL, 1.0).ready() is False
+
+
 class Online:
     """Stand-in for Feast's OnlineResponse."""
 

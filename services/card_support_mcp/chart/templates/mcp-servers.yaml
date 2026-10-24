@@ -1,18 +1,15 @@
-# One kagent tool server per agent: the same gateway URL, each with that agent's key (Secret mcp-key-<agent>), so the
-# gateway shows each agent only its own tools.
-{{- range $agent, $tools := .Values.agents.access }}
----
+# The agents' handle on this server's tools in kagent: the gateway route of this server, called with the key of its
+# agent (Secret mcp-key-<agent>), so the gateway lets the agent see and call these tools and nothing else.
 apiVersion: kagent.dev/v1alpha2
 kind: RemoteMCPServer
 metadata:
-  name: card-support-{{ $agent }}
-  namespace: {{ $.Values.agents.namespace }}
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.kagentNamespace }}
 spec:
-  description: "Card support tools for {{ $agent }}: {{ join ", " $tools }}"
-  url: http://{{ $.Values.gateway.name }}.{{ $.Values.gateway.namespace }}.svc.cluster.local{{ $.Values.gateway.path }}
+  description: {{ .Values.description | quote }}
+  url: http://{{ .Values.gateway.name }}.{{ .Values.gateway.namespace }}.svc.cluster.local/mcp/{{ .Values.server }}
   protocol: STREAMABLE_HTTP
   timeout: 30s
   headersFrom:
     - name: Authorization
-      valueFrom: {type: Secret, name: mcp-key-{{ $agent }}, key: Authorization}
-{{- end }}
+      valueFrom: {type: Secret, name: mcp-key-{{ .Values.agent }}, key: Authorization}

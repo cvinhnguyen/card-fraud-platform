@@ -1,0 +1,9 @@
+# Release card-data-mcp: the Web API that pulls data by id from the online feature stores (rubric A16).
+# Tools get_card_data (card features, Feast card_fraud on Redis) and get_policy_chunk (chunk by id, Feast
+# card_support_kb on pgvector). Used by card-data-agent; also the public REST API behind NGINX (api.<domain>).
+server: card-data
+description: "Card data tools for card-data-agent: get_card_data (live card features), get_policy_chunk (bank document section by id)"
+agent: card-data-agent
+secretName: card-data-mcp   # ML_DB_PASSWORD (Feast registry), REDIS_PASSWORD, VECTOR_DB_PASSWORD
+networkPolicy:
+  public: true

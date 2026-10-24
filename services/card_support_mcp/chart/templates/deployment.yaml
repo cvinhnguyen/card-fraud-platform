@@ -1,9 +1,9 @@
-{{/* The MCP server: replicas, rolling update without downtime, probes on /healthz and /readyz, settings from values. */}}
+{{/* One MCP server: replicas, rolling update without downtime, probes on /healthz and /readyz, settings from values. */}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}
-  labels: {app: {{ .Release.Name }}}
+  labels: {app: {{ .Release.Name }}, app.kubernetes.io/part-of: card-support-mcp}
 spec:
   replicas: {{ .Values.replicas }}
   # Rolling update: a new pod must be Ready before an old one stops, so the tools never go below
@@ -17,7 +17,7 @@ spec:
     matchLabels: {app: {{ .Release.Name }}}
   template:
     metadata:
-      labels: {app: {{ .Release.Name }}}
+      labels: {app: {{ .Release.Name }}, app.kubernetes.io/part-of: card-support-mcp}
     spec:
       securityContext: {runAsNonRoot: true, runAsUser: 1000}
       containers:
@@ -26,12 +26,15 @@ spec:
           imagePullPolicy: IfNotPresent
           ports: [{containerPort: 8000, name: http}]
           env:
+            - {name: MCP_SERVER, value: {{ required "server: card-data | fraud-score | policy-rag" .Values.server | quote }}}
             {{- range $k, $v := .Values.env }}
             - {name: {{ $k }}, value: {{ $v | quote }}}
             {{- end }}
-          envFrom: [{secretRef: {name: {{ .Values.secretName }}}}]
-          # startup: imports + the two Feast registries load; liveness: the process answers;
-          # readiness: both online stores answer (/readyz), else the pod gets no traffic
+          {{- with .Values.secretName }}
+          envFrom: [{secretRef: {name: {{ . }}}}]
+          {{- end }}
+          # startup: imports (+ the Feast registries of the servers that read Feast) load; liveness: the process
+          # answers; readiness: every dependency of this server's tools answers (/readyz), else no traffic
           startupProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 2

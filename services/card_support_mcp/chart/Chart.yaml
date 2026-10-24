@@ -1,8 +1,9 @@
 apiVersion: v2
 name: card-support-mcp
 description: >-
-  Card support MCP server (4 tools), its MCP route on agentgateway (API key per agent, rate limit, tool access per
-  agent) and one kagent RemoteMCPServer per agent.
+  One card support MCP server per release (card-data, fraud-score or policy-rag, values-<server>.yaml): its
+  Deployment with rolling update and probes, its MCP route on agentgateway (/mcp/<server>, API key of its agent, rate
+  limit) and the kagent RemoteMCPServer its agent uses.
 type: application
-version: 0.1.5
-appVersion: "0.1.3"
+version: 0.2.0
+appVersion: "0.2.0"

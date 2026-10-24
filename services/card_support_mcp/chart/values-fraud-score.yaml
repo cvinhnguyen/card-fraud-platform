@@ -1,0 +1,11 @@
+# Release fraud-score-mcp: tool score_payment, the fraud model's verdict on a payment the customer describes,
+# through the Layer 2 Fraud Scoring API (features from Feast + XGBoost on KServe, rule fallback). Used by risk-agent.
+# It reads no store itself: no Feast, no password.
+server: fraud-score
+description: "Fraud model tool for risk-agent: score_payment (approve / step_up / decline for a described payment)"
+agent: risk-agent
+env:
+  SCORING_URL: http://scoring-api:8000/v1/score   # compose service, reached over the kind node's network
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {memory: 256Mi}

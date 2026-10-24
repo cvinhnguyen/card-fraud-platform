@@ -1,9 +1,10 @@
-"""The four tools as one service class, shared by the REST API and the MCP server.
+"""The logic of the four tools as one service class, shared by the REST API and MCP of the three servers. Each server
+wires only the adapters its tools use (app/main.py SERVERS); the others stay None.
 
-  card_data   live card data from the fraud model's online store (profile, daily history, recent activity)
-  chunk       one bank document chunk by id
-  search      the policy chunks most similar to a question (RAG retrieval)
-  score       fraud score of a payment the customer describes, from the Fraud Scoring API (ML inference)
+  card_data   live card data from the fraud model's online store (profile, daily history, recent activity)  card-data
+  chunk       one bank document chunk by id                                                                card-data
+  search      the policy chunks most similar to a question (RAG retrieval)                                 policy-rag
+  score       fraud score of a payment the customer describes, from the Fraud Scoring API (ML inference)   fraud-score
 """
 import uuid
 from datetime import datetime, timezone

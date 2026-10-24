@@ -1,5 +1,7 @@
 """Configuration from the environment (Helm values / compose). Secrets (store passwords, model key) come from a
 Kubernetes Secret as environment variables; the Feast repos read theirs as ${...} in feature_store.yaml."""
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,6 +11,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="")
 
+    mcp_server: Literal["card-data", "fraud-score", "policy-rag"] = "card-data"   # which of the 3 servers this is
     fraud_repo: str = "/app/feature_repo_fraud"   # Feast project card_fraud (Redis): card features
     kb_repo: str = "/app/feature_repo_kb"         # Feast project card_support_kb (pgvector): policy chunks
     embeddings_url: str = "http://host.docker.internal:8086"

@@ -1,9 +1,8 @@
-"""Load test of the card support tools, in the mix a support conversation calls them (report: --html <file>).
-
-REST for the four tools plus the same card lookup over MCP (JSON-RPC tools/call), so the MCP layer's overhead
-shows up next to the plain REST call. Card ids come from CARDS_FILE (one per line, real cards so Redis lookups hit)
-or are random.
-Usage: locust -f services/card_support_mcp/locustfile.py --host http://127.0.0.1:8000 --headless -u 10 -r 5 -t 2m
+"""Load test of the Web API that pulls data by id (MCP server card-data), in the mix an agent working a chat calls
+it: card lookups and policy chunks over REST, plus the same card lookup over MCP (JSON-RPC tools/call), so the MCP
+layer's overhead shows up next to the plain REST call (report: --html <file>). Card ids come from CARDS_FILE (one per
+line, real cards so Redis lookups hit) or are random.
+Usage: locust -f services/card_support_mcp/locustfile.py --host http://card-data-mcp:8000 --headless -u 10 -r 5 -t 2m
 """
 import os
 import random
@@ -11,8 +10,6 @@ import random
 from locust import HttpUser, between, task
 
 CARDS = open(os.environ["CARDS_FILE"]).read().split() if os.environ.get("CARDS_FILE") else []
-QUESTIONS = ["Someone used my card abroad, am I liable?", "What is the foreign transaction fee?",
-             "How do I dispute a payment?", "Why was my online payment asked for an OTP?", "How do I lock my card?"]
 CHUNKS = ["card_terms%234.2", "faq%233", "fee_schedule%232", "dispute_policy%231.1", "authentication_rules%232.1"]
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
@@ -23,7 +20,7 @@ def card():
 
 
 class SupportAgent(HttpUser):
-    """One agent working a chat: reads the card, searches the policy, scores the payment asked about."""
+    """One agent working a chat: reads the card and the policy sections it needs by id."""
 
     wait_time = between(0.05, 0.3)
 
@@ -34,22 +31,10 @@ class SupportAgent(HttpUser):
             if r.status_code == 404:   # random ids: an unknown card is a valid answer
                 r.success()
 
-    @task(3)
-    def search(self):
-        """Policy search for one of the sample questions."""
-        self.client.post("/v1/search", json={"question": random.choice(QUESTIONS), "k": 4})
-
-    @task(1)
+    @task(2)
     def chunk(self):
         """GET one known policy chunk by id."""
         self.client.get(f"/v1/chunks/{random.choice(CHUNKS)}", name="/v1/chunks/{id}")
-
-    @task(2)
-    def score(self):
-        """Score a random payment on a card."""
-        self.client.post("/v1/score", json={"card_id": card(), "customer_id": "cus_load",
-                                            "amount_vnd": random.choice([250_000, 1_200_000, 6_000_000]),
-                                            "channel": random.choice(["ecom", "pos", "atm"])})
 
     @task(2)
     def mcp_card_data(self):

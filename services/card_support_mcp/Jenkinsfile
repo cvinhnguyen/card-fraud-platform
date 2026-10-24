@@ -1,6 +1,7 @@
-// CI/CD of the card support MCP server: test -> mutation test -> build + push -> helm --atomic -> smoke test, then
-// the data agents' pipeline redeploys the agents that use these tools. Runs when services/card_support_mcp changed
-// (Jenkins polls main), or by hand. Secrets are Jenkins credentials (infra/jenkins/casc.yaml), never in this file.
+// CI/CD of the three card support MCP servers (card-data, fraud-score, policy-rag: one code base, one image):
+// test -> mutation test -> build + push -> sign -> helm --atomic, one release per server -> smoke test, then the data
+// agents' pipeline redeploys the agents that use these tools. Runs when services/card_support_mcp changed (Jenkins
+// polls main), or by hand. Secrets are Jenkins credentials (infra/jenkins/casc.yaml), never in this file.
 pipeline {
   agent any
   options {
@@ -12,6 +13,7 @@ pipeline {
   environment {
     SVC = 'services/card_support_mcp'
     IMAGE = 'localhost:5001/card-support-mcp'   // pushed to the compose registry; the cluster pulls it as registry:5000/...
+    SERVERS = 'card-data fraud-score policy-rag'   // one Helm release <server>-mcp each (chart/values-<server>.yaml)
   }
   stages {
     stage('MCP server') {
@@ -60,11 +62,17 @@ pipeline {
           }
         }
         stage('Deploy (helm --atomic)') {
-          // rolling update with maxUnavailable 0; a release whose pods never get Ready is rolled back by --atomic
+          // one release per server, one after the other; rolling update with maxUnavailable 0; a release whose pods
+          // never get Ready is rolled back by --atomic and stops the pipeline before the next server
           steps {
             withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-              sh 'helm upgrade --install card-support-mcp $SVC/chart -n card-support --atomic --timeout 4m --set image.tag=$TAG'
-              sh 'kubectl -n card-support rollout status deploy/card-support-mcp --timeout=60s'
+              sh '''
+                for s in $SERVERS; do
+                  helm upgrade --install $s-mcp $SVC/chart -f $SVC/chart/values-$s.yaml -n card-support \
+                    --atomic --timeout 4m --set image.tag=$TAG
+                  kubectl -n card-support rollout status deploy/$s-mcp --timeout=60s
+                done
+              '''
             }
           }
         }
@@ -73,17 +81,17 @@ pipeline {
             withCredentials([string(credentialsId: 'edge-admin-password', variable: 'EDGE_PW'),
                              file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
               sh '''
-                # Web API over HTTPS through NGINX (the domain points at 127.0.0.1: reach NGINX on the kind node)
+                # Web API (card-data) over HTTPS through NGINX (the domain points at 127.0.0.1: reach NGINX on the kind node)
                 node=$(getent hosts fraud-control-plane | awk '{print $1}')
                 api="https://api.$DUCKDNS_DOMAIN"
                 curl -fsS --resolve "api.$DUCKDNS_DOMAIN:443:$node" -u "admin:$EDGE_PW" "$api/healthz"
                 curl -fsS --resolve "api.$DUCKDNS_DOMAIN:443:$node" -u "admin:$EDGE_PW" "$api/v1/cards/card_00006087" \
                   | jq -e '.found == true' >/dev/null
                 echo "Web API: card data OK over HTTPS"
-                # the agents' tool servers still accept the new release (tools/list through the gateway)
+                # each server's tool server in kagent accepts the new release (tools/list through the gateway)
                 kubectl -n kagent annotate remotemcpserver -l app.kubernetes.io/managed-by=Helm reconcile="$(date +%s)" --overwrite >/dev/null || true
-                for s in card-support-card-data-agent card-support-risk-agent; do
-                  kubectl -n kagent wait --for=condition=Accepted remotemcpserver/$s --timeout=90s
+                for s in $SERVERS; do
+                  kubectl -n kagent wait --for=condition=Accepted remotemcpserver/$s-mcp --timeout=90s
                 done
               '''
             }

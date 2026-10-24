@@ -1,10 +1,11 @@
-"""Adapters to the outside world, each small enough to be replaced by a fake in tests:
+"""Adapters to the outside world, each small enough to be replaced by a fake in tests. Each has ready(), which the
+server whose tools need it calls from /readyz:
 
-  FeatureReader   Feast project card_fraud, online store Redis: one card's features (async)
-  KnowledgeBase   Feast project card_support_kb, online store Postgres/pgvector: chunks by id, candidate ids by
-                  vector (Feast's postgres store has no async read: run in a worker thread)
-  Embedder        OpenAI-compatible /v1/embeddings (llama.cpp, Qwen3-Embedding-0.6B)
-  ScoringClient   Fraud Scoring API (Layer 2) POST /v1/score
+  FeatureReader   Feast project card_fraud, online store Redis: one card's features (async)          card-data
+  KnowledgeBase   Feast project card_support_kb, online store Postgres/pgvector: chunks by id,        card-data,
+                  candidate ids by vector (Feast's postgres store has no async read: worker thread)   policy-rag
+  Embedder        OpenAI-compatible /v1/embeddings (llama.cpp, Qwen3-Embedding-0.6B)                   policy-rag
+  ScoringClient   Fraud Scoring API (Layer 2) POST /v1/score                                          fraud-score
 """
 import asyncio
 
@@ -109,3 +110,8 @@ class ScoringClient:
         r = await self.client.post(self.url, json=body)
         r.raise_for_status()
         return r.json()
+
+    async def ready(self) -> bool:
+        """The API answers its liveness endpoint (a missing model is its own business: it falls back to rules)."""
+        r = await self.client.get(str(httpx.URL(self.url).copy_with(path="/healthz")))
+        return r.status_code == 200

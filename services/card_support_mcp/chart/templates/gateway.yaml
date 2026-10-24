@@ -1,4 +1,4 @@
-# The MCP entry point on agentgateway: agents call the gateway, never the server directly.
+# This server's MCP entry point on agentgateway, /mcp/<server>: agents call the gateway, never the server directly.
 {{- $ns := .Values.gateway.namespace }}
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayBackend
@@ -9,7 +9,7 @@ spec:
   mcp:
     sessionRouting: Stateless   # the server keeps no MCP session: any replica answers any call
     targets:
-      - name: card-support
+      - name: {{ .Values.server }}
         static:
           host: {{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local
           port: 8000
@@ -24,15 +24,12 @@ metadata:
 spec:
   parentRefs: [{name: {{ .Values.gateway.name }}}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: {{ .Values.gateway.path }}}}]
+    - matches: [{path: {type: PathPrefix, value: /mcp/{{ .Values.server }}}}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: {{ .Release.Name }}}]
 ---
-# Who: an API key from agentgateway-api-keys. How much: a request rate limit. What: per agent, only its tools, both in
-# tools/list (the rule runs once per listed tool) and in tools/call.
-{{- $rules := list }}
-{{- range $agent, $tools := .Values.agents.access }}
-{{- $rules = append $rules (printf "(apiKey.user_id == %q && mcp.tool.name in %s)" $agent (toJson $tools)) }}
-{{- end }}
+# Who: an API key from agentgateway-api-keys. How much: a request rate limit. What: only the key of this server's
+# agent sees its tools (the rule runs once per tool, in tools/list and in tools/call); any other key, even a valid
+# one, sees no tool here.
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -53,4 +50,4 @@ spec:
         action: Allow
         policy:
           matchExpressions:
-            - {{ join " || " $rules | quote }}
+            - {{ printf "apiKey.user_id == %q" (required "agent: the gateway key user allowed to use these tools" .Values.agent) | quote }}
