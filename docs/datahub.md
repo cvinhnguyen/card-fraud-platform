@@ -9,7 +9,7 @@ What reaches DataHub, and from where:
 
 | What | Sent by | How |
 |---|---|---|
-| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in [`spark-defaults.conf` L28-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/conf/spark/spark-defaults.conf#L28-L35) -> GMS `/openapi/openlineage/api/v1/lineage` (novel idea 2) |
+| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in [`spark-defaults.conf` L28-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/conf/spark/spark-defaults.conf#L28-L35) -> GMS `/openapi/openlineage/api/v1/lineage` ([openlineage.md](openlineage.md)) |
 | DAGs, tasks, task runs | Airflow | DataHub's Airflow listener (`acryl-datahub-airflow-plugin`) |
 | Validation results (GE) | `publish_results` task of every validate stage ([`common.py` L57-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/common.py#L57-L112)) | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
 | Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in `pipelines/airflow/dags/datahub_recipes/` |
@@ -111,12 +111,12 @@ assertion id is a hash of table, expectation and column, so every run lands on t
 
 ### A job nobody declared
 
-`pipelines/spark/build_gold_pyspark.py` (the comparison job of novel idea 1, never run by Airflow) appears with its inputs and
+`pipelines/spark/build_gold_pyspark.py` (the hand-written comparison for the dbt gold layer, never run by Airflow) appears with its inputs and
 outputs after its first run:
 
 ![lineage of gold_pyspark.fact_transaction, created by the listener alone](images/datahub_new_job_lineage.png)
 
-Column-level lineage is stored on each job (16 column mappings for that fact, see docs/novel_openlineage.md) and
+Column-level lineage is stored on each job (16 column mappings for that fact, see docs/openlineage.md) and
 readable through the API; the lineage canvas draws column edges only when the target table has a schema in DataHub,
 which the tables written by path do not get from the listener.
 

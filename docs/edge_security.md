@@ -202,7 +202,9 @@ The secrets in Vault (names only, `vault kv list` never prints values) and every
 
 ![Git Bash: vault kv list of secret/card-fraud and its kagent folder, the ClusterSecretStore vault Valid, 16 ExternalSecrets SecretSynced](images/vault_eso.png)
 
-16 secrets in 7 namespaces, from the agents' gateway keys to the TLS certificate, all `SecretSynced`. Jenkins is
+16 secrets in 7 namespaces, from the agents' gateway keys to the TLS certificate, all `SecretSynced`. The screenshot
+predates the MCP split (2026-10-24): `card-data-mcp` and `policy-rag-mcp` now have a Secret each in place of
+`card-support-mcp`'s, so `infra/k8s/secrets.sh` writes 17 (with the optional Groq key). Jenkins is
 outside the cluster and keeps its own credentials, filled from Docker secrets by configuration as code
 ([cicd.md](cicd.md#jenkins-setup)); the cosign signing key is one of them.
 

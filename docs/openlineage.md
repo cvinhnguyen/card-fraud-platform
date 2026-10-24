@@ -1,6 +1,6 @@
-# Novel idea 2: automatic lineage with OpenLineage
+# Automatic lineage with OpenLineage
 
-OpenLineage was not taught in the course. It is an open standard for lineage events (a job run read these datasets
+OpenLineage is an open standard for lineage events (a job run read these datasets
 and wrote those, with column-level detail) plus integrations that emit them without code changes. Here a Spark
 listener reads each query plan and posts the events to DataHub's OpenLineage endpoint; DataHub turns them into
 datasets, jobs and lineage edges.
@@ -82,7 +82,7 @@ example the plan asked for. The course's `inlets`/`outlets` are table-level, so 
 
 ## Proof 3: a new job needs nothing
 
-`pipelines/spark/build_gold_pyspark.py` (written for novel idea 1, never run by Airflow, no DataHub code: its entry
+`pipelines/spark/build_gold_pyspark.py` (written to compare with dbt, never run by Airflow, no DataHub code: its entry
 point is plain Spark,
 [`build_gold_pyspark.py` L123-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_gold_pyspark.py#L123-L136)) appeared in DataHub
 with its 5 output tables and 17 job-dataset edges on its first run, column lineage included. With the course's

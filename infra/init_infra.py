@@ -8,7 +8,8 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from make_env import read_env
 
 BUCKETS = ["core-banking-export", "lakehouse", "mlflow",   # another department's exports | our lake | MLflow artifacts
-           "bank-documents"]                            # Layer 3: the bank's card documents (RAG source)
+           "bank-documents",                            # Layer 3: the bank's card documents (RAG source)
+           "lakefs-data"]                               # objects lakeFS writes (repository bronze)
 TOPICS = {"card_authorizations": 6, "app_events": 6,   # name -> partitions
           "card_features_rt": 6, "card_device_seen": 6,   # Layer 2: Flink features -> Feast push jobs
           "fraud_predictions": 6}                         # Layer 2: prediction log of the scoring API

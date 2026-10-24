@@ -9,6 +9,7 @@ docker compose -f infra/docker-compose.yaml --profile core --profile stream up -
 python pipelines/flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000     # late events + duplicates
 python pipelines/flink/check_features.py --replay-from "2025-03-01 00:00" --limit 100000   # realtime features
 python pipelines/flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000        # out-of-order sessions
+python pipelines/flink/check_ato_cep.py --replay-from "2026-03-01 00:00" --limit 300000    # takeover patterns, Flink CEP
 python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000   # hot key, parallelism 4
 docker exec flink-jobmanager flink run -py /opt/flink/jobs/raw_landing.py         # raw events -> S3 landing
 ```
@@ -22,6 +23,7 @@ result from the Parquet files with pandas. The numbers below are those compariso
 | `auth_windows.py --mode baseline\|lateness\|dedup` | `card_auth_replay` | `auth_counts_<mode>`, late events `auth_late_<mode>` |
 | `rt_features.py` | `card_auth_replay` | `card_features_rt` (feature view `card_auth_realtime`) |
 | `ato_sequence.py --order arrival\|event` | `app_events_replay` | `ato_alerts_<order>` |
+| `ato_cep.py` (Flink SQL, MATCH_RECOGNIZE; [novel idea](novel_flink_cep.md)) | `app_events_replay` | `ato_alerts_cep` |
 | `hot_key.py --mode hot\|two_phase` (parallelism 4) | `card_auth_replay` | `unit_counts_<mode>` |
 | `raw_landing.py` (Flink SQL) | `card_authorizations` | `s3://lakehouse/landing/card_authorizations/auth_date=*/` |
 

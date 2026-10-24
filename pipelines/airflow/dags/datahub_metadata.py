@@ -1,6 +1,6 @@
 """Metadata ingestion into DataHub (gov profile): the sources OpenLineage does not describe.
 
-Lineage of the lakehouse tables arrives on its own (the OpenLineage listener in every Spark job, novel idea 2) and so
+Lineage of the lakehouse tables arrives on its own (the OpenLineage listener in every Spark job, docs/openlineage.md) and so
 do the DAG / task entities (DataHub's Airflow listener). This DAG adds what no job run reports:
 
 | Task | Recipe (`datahub_recipes/`) | What appears in DataHub |

@@ -11,6 +11,7 @@ driver Python of /opt/venvs/ge in the Airflow image.
 
 Usage (inside Airflow; by hand from the scheduler container):
   spark-submit --conf spark.pyspark.driver.python=/opt/venvs/ge/bin/python /opt/jobs/validate.py --suite dp1 --ds 2026-10-15
+  ... validate.py --suite dp1 --ds 2026-10-15 --txn-root s3a://bronze/dp1_20261015   # the export on a lakeFS branch
 """
 import argparse
 import datetime as dt
@@ -21,18 +22,26 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 OUT = "s3a://lakehouse/_validation"
+TXN_ROOT = None   # --txn-root: read bronze.raw_transactions from this lakeFS branch instead of main (DP1 before merging)
 RAW_TXN = ["transaction_id", "card_id", "merchant_id", "terminal_id", "txn_ts", "txn_city", "amount_vnd", "currency",
            "channel", "status", "created_ts", "auth_method", "three_ds_version", "export_date", "_ingested_at", "_source"]
 
 
+def table(spark, name: str):
+    """The table to check: the export from the run's lakeFS branch when --txn-root is given, else the metastore table."""
+    if TXN_ROOT and name == "bronze.raw_transactions":
+        return spark.read.format("delta").load(f"{TXN_ROOT}/raw_transactions")
+    return spark.table(name)
+
+
 def units(spark, _p):
     """The 34 provincial-level units, from the mapping table the source delivered."""
-    return sorted(r[0] for r in spark.table("bronze.raw_ref_province_mapping").select("new_unit_name").distinct().collect())
+    return sorted(r[0] for r in table(spark, "bronze.raw_ref_province_mapping").select("new_unit_name").distinct().collect())
 
 
 def distinct_ids(spark, p):
     """Unique transaction ids in the bronze slice: what silver must hold after dedup."""
-    return (spark.table("bronze.raw_transactions").where(F.col("export_date") == p["next_ds"])
+    return (table(spark, "bronze.raw_transactions").where(F.col("export_date") == p["next_ds"])
             .select("transaction_id").distinct().count())
 
 
@@ -118,18 +127,18 @@ def run(spark: SparkSession, suite: str, ds: dt.date) -> dict:
     """Run every check of the suite; one result row per expectation."""
     p = {"ds": ds.isoformat(), "next_ds": (ds + dt.timedelta(days=1)).isoformat()}
     rows = []
-    for table, where, expectations in SUITES[suite]:
-        df = spark.table(table)
+    for table_name, where, expectations in SUITES[suite]:
+        df = table(spark, table_name)
         df = df.where(where.format(**p)) if where else df
         gdf = SparkDFDataset(df)
-        for name, kwargs in expectations:
+        for expectation, kwargs in expectations:
             kwargs = {k: v(spark, p) if callable(v) else v for k, v in kwargs.items()}
-            r = getattr(gdf, name)(**kwargs).to_json_dict()
+            r = getattr(gdf, expectation)(**kwargs).to_json_dict()
             res = r.get("result", {})
-            rows.append({"table": table, "filter": where.format(**p) if where else None, "expectation": name,
+            rows.append({"table": table_name, "filter": where.format(**p) if where else None, "expectation": expectation,
                          "kwargs": kwargs, "success": r["success"], "observed_value": res.get("observed_value"),
                          "element_count": res.get("element_count"), "unexpected_count": res.get("unexpected_count")})
-            print(f"{'ok  ' if r['success'] else 'FAIL'} {table} {name} {json.dumps(kwargs, default=str)[:90]}")
+            print(f"{'ok  ' if r['success'] else 'FAIL'} {table_name} {expectation} {json.dumps(kwargs, default=str)[:90]}")
     return {"suite": suite, "ds": p["ds"], "success": all(r["success"] for r in rows), "results": rows}
 
 
@@ -145,7 +154,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--suite", choices=SUITES, required=True)
     ap.add_argument("--ds", type=dt.date.fromisoformat, required=True, help="business date of the run (Airflow ds)")
+    ap.add_argument("--txn-root", help="lakeFS branch to read bronze.raw_transactions from, s3a://bronze/<branch> (DP1)")
     args = ap.parse_args()
+    TXN_ROOT = args.txn_root.rstrip("/") if args.txn_root else None
 
     spark = SparkSession.builder.appName(f"validate_{args.suite}").getOrCreate()
     report = run(spark, args.suite, args.ds)

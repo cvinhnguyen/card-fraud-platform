@@ -8,7 +8,7 @@ so Spark, dbt (through the Spark Thrift Server) and Trino (`delta.<zone>.<table>
 
 | Zone | Location | Written by | What it holds |
 |---|---|---|---|
-| bronze | `s3a://lakehouse/bronze/` | `pipelines/spark/ingest_bronze.py` (DP1) | Faithful copies of the sources: duplicates, old province names and missing columns are kept |
+| bronze | `s3a://lakehouse/bronze/`; `raw_transactions` in the lakeFS repository `bronze` (`s3a://bronze/main/raw_transactions`, [novel_lakefs_wap.md](novel_lakefs_wap.md)) | `pipelines/spark/ingest_bronze.py` (DP1) | Faithful copies of the sources: duplicates, old province names and missing columns are kept |
 | silver | `s3a://lakehouse/silver/` | `pipelines/spark/build_silver.py` (DP2) | Cleaned rows: deduplicated, locations mapped to the 34 units, `auth_method` filled |
 | gold | `s3a://lakehouse/gold/` | dbt models, `pipelines/spark/build_labels.py`, `pipelines/spark/build_features.py` (DP3) | Star schema for analysis, the label table and the feature table for Layer 2 |
 
@@ -94,7 +94,7 @@ The before / after numbers of each fix (rows, distinct ids, settled spend, NULL 
 ![Gold ER diagram: fact_transaction with dim_customer (SCD2), dim_date, dim_card, dim_merchant; label_transaction and feat_card_txn_stats_daily](images/er-gold.png)
 
 The platform's tools record the same relations. dbt's docs site draws `fact_transaction` from its
-sources and the dimensions it joins ([novel_dbt.md](novel_dbt.md)):
+sources and the dimensions it joins ([dbt_gold.md](dbt_gold.md)):
 
 ![dbt docs: fact_transaction built from silver.stg_transactions, dim_card and dim_customer (SCD2); sources in green](images/dbt_docs_lineage.png)
 

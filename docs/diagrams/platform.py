@@ -292,13 +292,13 @@ def architecture():
         "redis": Box(c(3), r(2), BW, BH, "Redis", ("Feast online store", "+ drift counts (db 1)"), "ml", "redis"),
         "pushon": Box(c(2), r(3), BW, BH, "push-online", ("push job A", "Kafka -> Feast push"), "ml", "python"),
         "fwd": Box(c(3), r(3), BW, BH, "drift-forwarder", ("Kafka -> Drift API", "batches of 1,000"), "ml", "python"),
-        "drift": Box(c(4), r(3), BW, BH, "Drift API", ("FastAPI, PSI per", "feature, :8001"), "ml", "fastapi"),
+        "drift": Box(c(4), r(3), BW, BH, "Drift API", ("FastAPI, PSI per", "feature, :8002"), "ml", "fastapi"),
         "registry": Box(c(5), r(3), BW, BH, "Docker registry", ("registry:3 :5001", "ml-train, predictor"), "ml", "docker"),
         "kafka": Box(c(1), r(4), c(3) + BW - c(1), BH, "Kafka",
-                     ("card_authorizations · card_features_rt", "card_device_seen · fraud_predictions"), "core", "kafka"),
+                     ("card_authorizations · card_features_rt", "card_device_seen · fraud_predictions · app_events"), "core", "kafka"),
         "pg": Box(c(4), r(4), BW, BH, "PostgreSQL", ("core_banking", "(source) :5433"), "core", "postgres"),
         "mlflow": Box(c(5), r(4), BW, BH, "MLflow", ("tracking + registry", "card_fraud_xgb"), "ml", "mlflow"),
-        "flink": Box(c(1), r(5), BW, BH, "Flink", ("rt_features", "device_seen, raw_landing"), "stream", "flink"),
+        "flink": Box(c(1), r(5), BW, BH, "Flink", ("rt_features, device_seen", "raw_landing, ato_cep"), "stream", "flink"),
         "pushoff": Box(c(2), r(5), BW, BH, "push-offline", ("push job B", "Kafka -> Delta"), "ml", "python"),
         "trino": Box(c(3), r(5), BW, BH, "Trino", ("SQL on every zone", "of the lake :8090"), "batch", "trino"),
         "spark": Box(c(4), r(5), BW, BH, "Spark", ("master + worker", "DP1 · DP2 · DP3"), "batch", "spark"),
@@ -306,7 +306,7 @@ def architecture():
         "jupyter": Box(c(6), r(5), BW, BH, "Jupyter", ("fraud_model.ipynb", ":8899"), "ml", "jupyter"),
         "s3": Box(c(1), r(5) + BH + GY, c(6) + BW - c(1), 76, "SeaweedFS (S3) + Delta Lake",
                   ("s3://lakehouse: bronze · silver · gold · feat_* · ml (training sets, ground truth)   "
-                   "s3://core-banking-export   s3://mlflow (model artifacts)",), "core", "bucket"),
+                   "s3://core-banking-export   s3://lakefs-data (lakeFS)   s3://mlflow (model artifacts)",), "core", "bucket"),
         "kserve": Box(KX, r(1), 300, BH, "KServe predictor",
                       ("InferenceService card-fraud", "fraud/predictor:<v> NodePort 31080"), "ns serving", "kubernetes"),
         "kfp": Box(KX, r(4), 300, r(5) + BH + GY + 76 - r(4), "Kubeflow Pipelines",
@@ -315,7 +315,8 @@ def architecture():
                     "(distributed XGBoost)", "API :31888 · UI :31880"), "ns kubeflow", "kubernetes"),
     }
     sy = B["s3"].y + B["s3"].h + 26
-    B["hive"] = Box(c(1), sy, 2 * BW + GX, 58, "Hive Metastore", ("table catalog for Spark and Trino",), "batch", "hive", True)
+    B["hive"] = Box(c(1), sy, 230, 58, "Hive Metastore", ("Spark + Trino catalog",), "batch", "hive", True)
+    B["lakefs"] = Box(c(1) + 242, sy, 2 * BW + GX - 242, 58, "lakeFS", ("bronze export: branch",), "batch", "bucket", True)
     B["mldb"] = Box(c(3), sy, 2 * BW + GX, 58, "ml-db (PostgreSQL)", ("MLflow backend, Feast registry",), "ml", "postgres", True)
     B["datahub"] = Box(c(5), sy, c(6) + BW - c(5), 58, "DataHub", ("lineage (OpenLineage) + GE results",), "gov", "lineage", True)
 
@@ -337,7 +338,8 @@ def architecture():
         Arrow("R", 1, "authorizations", [B["card"].bottom(), (B["card"].x + 86, kafka.y + 42), kafka.left()], 0.45,
               desc="Every authorization (retries included) to Kafka topic card_authorizations"),
         Arrow("R", 2, "auths", [kafka.bottom(55 / kafka.w), B["flink"].top(55 / BW)], side="l",
-              desc="Flink reads card_authorizations (watermarks, dedup of network retries)"),
+              desc="Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events "
+                   "(account takeover patterns -> ato_alerts_cep)"),
         Arrow("R", 3, "rt features", [B["flink"].top(115 / BW), kafka.bottom(115 / kafka.w)],
               desc="Realtime features to card_features_rt, first (card, device) pairs to card_device_seen"),
         Arrow("R", 4, "raw events -> landing", [B["flink"].bottom(), (B["flink"].x + 85, s3y)],
@@ -358,10 +360,11 @@ def architecture():
         Arrow("B", 3, "export files", [(c(4) + 32, s3y), B["spark"].bottom(32 / BW)], side="l",
               desc="DP1 loads the new daily export folders from s3://core-banking-export"),
         Arrow("B", 4, "bronze -> feat_*", [B["spark"].bottom(138 / BW), (c(4) + 138, s3y)],
-              desc="Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse"),
+              desc="Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse; bronze.raw_transactions through "
+                   "lakeFS: a branch per DP1 run, merged into main after the checks"),
         Arrow("B", 5, "Delta tables", [(c(3) + 85, s3y), B["trino"].bottom()],
               desc="Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table "
-                   "lives"),
+                   "lives (bronze.raw_transactions: catalog lakefs, branch main)"),
         Arrow("B", 6, "daily stats", [(c(5) + 40, s3y), B["airflow"].bottom(40 / BW)], side="r",
               desc="DAG feast_materialize (after DP3) reads feat_card_txn_stats_daily through the Feast offline store"),
         Arrow("B", 7, "latest stats", [B["airflow"].left(0.22), (c(4) + BW + 14, B["airflow"].y + BH * 0.22),
@@ -736,7 +739,8 @@ def deployment():
         ("spark-history", "fraud/spark:4.1.3", ":18080", "spark"),
         ("hive-metastore", "fraud/hive-metastore:3.1.3", "", "hive"),
         ("metastore-db", "postgres:16-alpine", "", "postgres"),
-        ("trino", "trinodb/trino:484, 2 GB", ":8090", "trino")])
+        ("trino", "trinodb/trino:484, 2 GB", ":8090", "trino"),
+        ("lakefs", "treeverse/lakefs:1.88.0", ":8001", "bucket")])
     body.append(g)
     g, y3 = group(gx[2], gy, "orch", "P7, RAG", [
         ("airflow-webserver", "fraud/airflow:2.10.5", ":8082", "airflow"),
@@ -761,7 +765,7 @@ def deployment():
         ("push-online", "fraud/ml-train", "", "python"),
         ("push-offline", "fraud/ml-train", "", "python"),
         ("drift-forwarder", "fraud/ml-train", "", "python"),
-        ("drift-api", "fraud/drift-api", ":8001", "fastapi"),
+        ("drift-api", "fraud/drift-api", ":8002", "fastapi"),
         ("scoring-api", "fraud/scoring-api", ":8000", "fastapi"),
         ("registry", "registry:3", ":5001", "docker")])
     body.append(g)
@@ -904,9 +908,9 @@ def overview():
         """A step card in column i."""
         return Box(x[i], y, CWD, 100, title, lines, tag, ico, accent=accent)
 
-    def store(i, y, tag, title, lines, ico="", h=86):
+    def store(i, y, tag, title, lines, ico="", h=86, accent=""):
         """A store under the gap between columns i and i + 1: column i writes it, column i + 1 reads it."""
-        return Box(x[i] + 185, y, SW, h, title, lines, tag, ico, store=True)
+        return Box(x[i] + 185, y, SW, h, title, lines, tag, ico, store=True, accent=accent)
 
     # Layer 1: steps (top row), the lakehouse zones between them, the stream (bottom row)
     rA, lk, zy, rC, fy = 136, 262, 276, 404, 554
@@ -915,12 +919,12 @@ def overview():
                "postgres"),
           card(1, rA, "01 · DP1", "Spark ingest", ("JDBC snapshot + new exports", "+ landing files, mergeSchema"), "spark"),
           card(2, rA, "02 · DP2", "Spark silver", ("dedup · 63 -> 34 units", "auth_method for old rows"), "spark"),
-          card(3, rA, "03 · NOVEL L1 #1", "dbt-spark gold", ("dim_* · fact_* · SCD2 customer", "22 dbt tests"), "dbt",
-               NOVEL),
+          card(3, rA, "03 · DP2", "dbt-spark gold", ("dim_* · fact_* · SCD2 customer", "22 dbt tests"), "dbt"),
           card(4, rA, "04 · DP3", "Spark features", ("30 / 90 / 180-day windows", "event_timestamp (PIT ready)"), "spark"),
           card(5, rA, "05 · SQL", "Trino", ("analysts' SQL on any zone,", "tables found in the catalog"), "trino"),
           store(0, zy, "S3 lakehouse/landing/", "landing", ("raw authorizations, JSON", "a folder per auth_date")),
-          store(1, zy, "S3 lakehouse/bronze/", "bronze", ("raw_* Delta tables", "sources copied as they are")),
+          store(1, zy, "NOVEL L1 #2 · lakeFS", "bronze", ("raw_* Delta, S3 lakehouse/bronze/", "export: branch, checks, merge"),
+                accent=NOVEL),
           store(2, zy, "S3 lakehouse/silver/", "silver", ("stg_* Delta tables", "clean, one row per id")),
           store(3, zy, "S3 lakehouse/gold/", "gold", ("dim_* · fact_* (dbt)", "label_transaction (Spark)")),
           store(4, zy, "S3 lakehouse/gold/feat_*", "features", ("feat_* Delta tables", "= Feast offline store")),
@@ -929,7 +933,9 @@ def overview():
           Box(x[0], rC, CWD, 100, "Kafka", ("card_authorizations (card network)", "card_features_rt · card_device_seen"),
               "SOURCE · TOPICS", "kafka", store=True),
           card(1, rC, "06 · STREAM", "Flink", ("watermarks · dedup · windows", "raw -> landing, features -> Kafka"),
-               "flink")]
+               "flink"),
+          card(2, rC, "NOVEL L1 #1 · CEP", "Flink SQL CEP", ("MATCH_RECOGNIZE: 3 ATO patterns",
+                                                              "app_events -> ato_alerts_cep"), "flink", NOVEL)]
     lake = [f'<rect x="30" y="{lk}" width="{W - 60}" height="114" rx="10" fill="#f6f8fc" stroke="#b5c0d6" '
             f'stroke-dasharray="6 4"/>',
             t(44, lk + 30, "LAKEHOUSE", 11, INK2, "start", 700, mono=True, spacing=0.08),
@@ -1026,13 +1032,13 @@ def overview():
                  "rag_ingest (16)  ·  validate stages (Great Expectations)",), "07 · ORCHESTRATION", "airflow"),
             Box(x[0], by + 66, full, 66, "Storage servers",
                 ("SeaweedFS (S3): lakehouse (landing, bronze, silver, gold, ml, kb, Flink checkpoints)  ·  "
-                 "core-banking-export  ·  mlflow  ·  bank-documents",
+                 "core-banking-export  ·  mlflow  ·  bank-documents  ·  lakefs-data (lakeFS)",
                  "PostgreSQL: core_banking + serving  ·  metastore-db  ·  ml-db (MLflow, Feast registry, agentregistry)  ·  "
                  "vector-db (pgvector)  ·  Airflow, DataHub  |  Redis: online features, drift counts  |  "
                  "Kafka: authorizations, features, predictions"), "STORAGE", "", store=True),
             Box(x[0], by + 142, full, 56, "DataHub + OpenLineage",
                 ("lineage sent by every Spark job and by Airflow  ·  validation results as assertions (RAG chunks "
-                 "included)",), "08 · NOVEL L1 #2", "lineage", accent=NOVEL),
+                 "included)",), "08 · LINEAGE", "lineage"),
             Box(x[0], by + 208, full, 56, "Prometheus, Grafana, VictoriaLogs, Jaeger + Vault",
                 ("metrics of the Web API, compute, LLM and agents  ·  logs of every pod  ·  traces of every agent "
                  "call  ·  secrets in Vault",), "26 · OPERATIONS", "")]

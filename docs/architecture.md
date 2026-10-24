@@ -96,7 +96,7 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 | S5 | Payment scoring | Decision by the two thresholds; rule fallback when the model is late or down |
 | S6 | Payment scoring | Every decision is logged to Kafka topic fraud_predictions (scoring never waits on monitoring) |
 | R1 | Streaming features | Every authorization (retries included) to Kafka topic card_authorizations |
-| R2 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries) |
+| R2 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events (account takeover patterns -> ato_alerts_cep) |
 | R3 | Streaming features | Realtime features to card_features_rt, first (card, device) pairs to card_device_seen |
 | R4 | Streaming features | raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1's Spark task loads them into bronze.raw_card_authorizations (Delta) |
 | R5 | Streaming features | push job A consumes card_features_rt and card_device_seen |
@@ -106,8 +106,8 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 | B1 | Batch data | Airflow runs DP1 -> DP2 -> DP3 on the Spark cluster (call, no data); dbt and GE validate stages |
 | B2 | Batch data | DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes) |
 | B3 | Batch data | DP1 loads the new daily export folders from s3://core-banking-export |
-| B4 | Batch data | Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse |
-| B5 | Batch data | Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table lives |
+| B4 | Batch data | Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse; bronze.raw_transactions through lakeFS: a branch per DP1 run, merged into main after the checks |
+| B5 | Batch data | Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table lives (bronze.raw_transactions: catalog lakefs, branch main) |
 | B6 | Batch data | DAG feast_materialize (after DP3) reads feat_card_txn_stats_daily through the Feast offline store |
 | B7 | Batch data | ... and loads the newest row per card into Redis (feast materialize-incremental) |
 | T1 | Training and deploy | The notebook builds the training set: labels + Feast point-in-time features |
@@ -156,12 +156,13 @@ server (C4) are there for that reason.
 | A7 | Agent conversation | card-data-agent's tool calls (MCP, its own API key) and LLM calls through the gateway |
 | A8 | Agent conversation | risk-agent's tool calls and LLM calls through the gateway |
 | A9 | Agent conversation | Routes /mcp/card-data, /mcp/fraud-score, /mcp/policy-rag: only the key of each server's agent sees its tools (300 calls/min per server) |
-| A10 | Agent conversation | get_card_data: the card's online features from Redis through Feast (project card_fraud) |
-| A11 | Agent conversation | get_policy_chunk / search_policy: policy chunks from pgvector (Feast project card_support_kb) |
-| A12 | Agent conversation | search_policy embeds the question with Qwen3-Embedding-0.6B, then searches the chunks by it |
-| A13 | Agent conversation | score_payment: the Layer 2 Scoring API answers with the fraud score and its decision |
+| A10 | Agent conversation | card-data-mcp, get_card_data: the card's online features from Redis through Feast (project card_fraud) |
+| A11 | Agent conversation | card-data-mcp, get_policy_chunk: one policy chunk by id from pgvector (Feast project card_support_kb) |
+| A12 | Agent conversation | policy-rag-mcp, search_policy: the question's vector from Qwen3-Embedding-0.6B |
+| A13 | Agent conversation | fraud-score-mcp, score_payment: the Layer 2 Scoring API answers with the fraud score and its decision |
 | A14 | Agent conversation | Route /v1: key check, request and token limits, PII masked, then the InferencePool qwen3-8b |
 | A15 | Agent conversation | The endpoint picker chooses a pod; its bridge forwards the prompt to llama.cpp on the host GPU |
+| A16 | Agent conversation | policy-rag-mcp, search_policy: the chunks nearest to the question vector from pgvector, re-ranked by cosine |
 | K1 | Knowledge ingest | rag_ingest reads the 5 bank documents from s3://bank-documents |
 | K2 | Knowledge ingest | Steps chunk (57 chunks) and embed: one 1024-dim vector per chunk from the embedding server |
 | K3 | Knowledge ingest | Step write: chunks + vectors into the Feast online store (pgvector) |
@@ -170,17 +171,17 @@ server (C4) are there for that reason.
 | C1 | CI/CD | Jenkins polls GitHub main for its 5 pipelines (MCP servers, data agents, coordinator, RAG, stream jobs) |
 | C2 | CI/CD | Agent pipelines fetch the prompt labelled production for each agent |
 | C3 | CI/CD | MCP pipeline: tests (coverage gate 90 %), mutation test, image build, push, cosign signature |
-| C4 | CI/CD | helm upgrade --atomic; the node pulls the signed image (Kyverno verifies it whenever it is installed) |
+| C4 | CI/CD | helm upgrade --atomic of each MCP server; the node pulls the signed image (Kyverno verifies it whenever it is installed) |
 | C5 | CI/CD | Agent pipelines: helm upgrade --atomic of the agents, the Langfuse prompts in a ConfigMap |
 | C6 | CI/CD | Eval gate: the eval dataset asked to risk-agent through the gateway; below 0.6 accuracy, helm rollback |
 | C7 | CI/CD | Answers and their scores stored as a run of the Langfuse experiment |
 | C8 | CI/CD | RAG pipeline: sets Variable rag_image to the new image, triggers rag_ingest (Airflow REST API) |
 | O1 | Observability and scaling | Gateway metrics: requests per route and backend, LLM tokens, time to first token, PII guardrail hits |
-| O2 | Observability and scaling | MCP servers' metrics: calls, failures and latency per tool |
+| O2 | Observability and scaling | MCP servers' metrics (one ServiceMonitor each): calls, failures and latency per tool |
 | O3 | Observability and scaling | Grafana dashboards: Web API, compute, LLM telemetry, agent telemetry, A/B tests |
 | O4 | Observability and scaling | KEDA's trigger: A2A requests per second for each agent |
 | O5 | Observability and scaling | KEDA sets each agent's replicas between 2 and 4 |
-| O6 | Observability and scaling | Agents send spans over OTLP; the gateway's spans join the same traces (one conversation: 28 spans over 4 services) |
+| O6 | Observability and scaling | Agents send spans over OTLP; the gateway's spans join the same traces (one conversation: about 20) |
 
 ## Deployment
 

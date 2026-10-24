@@ -5,7 +5,7 @@ flowchart LR
     sw["authorization switch<br/>(ml/tools/replay_scoring.py)"] -->|POST /v1/score| api["Fraud Scoring API<br/>FastAPI, compose :8000"]
     api -->|get_online_features_async| feast["Feast feature service fraud_model_v1"] --> redis[("Redis")]
     api -->|V1 predict, NodePort 31080| ks["KServe InferenceService card-fraud<br/>kind, model inside image"]
-    api -->|every decision| kafka["Kafka fraud_predictions"] --> fwd["drift_forwarder"] --> drift["Drift API :8001"]
+    api -->|every decision| kafka["Kafka fraud_predictions"] --> fwd["drift_forwarder"] --> drift["Drift API :8002"]
 ```
 
 ## Model server (KServe)

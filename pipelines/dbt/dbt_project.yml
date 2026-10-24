@@ -1,4 +1,4 @@
-# dbt-spark project: gold layer (novel idea 1). Runs through the Spark Thrift Server (compose profile dbt).
+# dbt-spark project: gold layer (docs/dbt_gold.md). Runs through the Spark Thrift Server (compose profile dbt).
 # Usage (repo root): .venv/Scripts/dbt build --project-dir pipelines/dbt --profiles-dir pipelines/dbt
 name: card_fraud
 version: "1.0"

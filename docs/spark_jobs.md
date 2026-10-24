@@ -32,7 +32,9 @@ Result (2026-10-17, 1 GB data):
 | raw_merchants | 5,200 |
 | raw_ref_province_mapping | 63 |
 
-`SELECT count(*) FROM delta.bronze.raw_transactions` on Trino returns 8,159,516, the number of rows the generator wrote.
+`SELECT count(*) FROM delta.bronze.raw_transactions` on Trino returned 8,159,516, the number of rows the generator wrote.
+Since the table moved into lakeFS ([novel_lakefs_wap.md](novel_lakefs_wap.md)) Trino reads it as
+`lakefs.bronze.raw_transactions`.
 
 ### Incremental load
 
@@ -123,7 +125,7 @@ because only the labels changed.
 
 Redraw with `python docs/diagrams/hcmc_spend.py` (reads silver through Trino). The February dips are the short month.
 
-## Gold with dbt-spark (`pipelines/dbt/`, novel idea 1)
+## Gold with dbt-spark (`pipelines/dbt/`, [dbt_gold.md](dbt_gold.md))
 
 dbt runs SQL models through the Spark Thrift Server (compose profile `dbt`, port 10000), so the gold tables are Delta
 tables in `s3a://lakehouse/gold/`, registered in the same Hive Metastore and readable from Trino.

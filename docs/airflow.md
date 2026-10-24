@@ -89,15 +89,21 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
 `wait_for_export` (S3 sensor, reschedule mode) waits for `export_date = ds + 1`: the core banking system exports day
 `ds` the next night. Then three Spark tasks load the three sources, and the validate stage checks them
 ([`pipelines/airflow/dags/dp1_source_to_bronze.py` L28-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/dp1_source_to_bronze.py#L28-L39)).
+Since 2026-10-24 the export goes through a lakeFS branch (Write-Audit-Publish, [novel_lakefs_wap.md](novel_lakefs_wap.md)):
+the run appends it on `dp1_<ds>`, the checks read that branch, and only a run that passed merges it into `main`, which
+`bronze.raw_transactions` points at.
 
 | Task | What it does |
 |---|---|
+| `create_branch` | lakeFS branch `dp1_<ds>` from `main` (an older one of the same day is replaced) |
 | `wait_for_export` | waits for `s3://core-banking-export/transactions/export_date={{ macros.ds_add(ds, 1) }}/*.parquet`; frees its worker slot between checks |
 | `snapshot_core_banking` | `ingest_bronze.py --part core_banking`: JDBC snapshot of the 6 Postgres tables (overwrite; Delta keeps the old versions) |
-| `ingest_exports` | `ingest_bronze.py --part exports --until <ds+1>`: appends new export dates to `bronze.raw_transactions` (mergeSchema) |
+| `ingest_exports` | `ingest_bronze.py --part exports --until <ds+1> --txn-root s3a://bronze/dp1_<ds>`: appends new export dates to `raw_transactions` on the run's branch (mergeSchema) |
 | `ingest_stream_landing` | `ingest_bronze.py --part landing`: Flink's raw authorization files -> `bronze.raw_card_authorizations` |
-| `validate_dp1.run_expectations` | `validate.py --suite dp1`: 45 expectations on 8 tables |
+| `commit_branch` | lakeFS commit on the branch, with the Airflow run id |
+| `validate_dp1.run_expectations` | `validate.py --suite dp1 --txn-root s3a://bronze/dp1_<ds>`: 45 expectations on 8 tables, the export read from the branch |
 | `validate_dp1.publish_results` | reads the results, logs one line per expectation, fails the run if any failed |
+| `merge_to_main` | lakeFS merge of the branch into `main` (readers see the export in one step), then deletes the branch |
 | `trigger_dp2` | starts DP2 with the same logical date |
 
 ## DP2: bronze -> silver -> gold
@@ -173,6 +179,9 @@ In DP1 the sensor gates `ingest_exports` only; the Postgres snapshot and the lan
 export file. The three Spark tasks queue in the `spark` pool.
 
 ![dp1_source_to_bronze graph, 4 green runs](images/airflow_dp1_graph.png)
+
+That graph predates the lakeFS tasks; the current one, with `create_branch`, `commit_branch` and `merge_to_main`, is in
+[novel_lakefs_wap.md](novel_lakefs_wap.md#4-the-corrected-export-is-published).
 
 In DP2, silver is validated before dbt reads it, labels run next to dbt (they read silver, not gold), and the gold
 validation waits for both.

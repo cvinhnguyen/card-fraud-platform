@@ -30,7 +30,7 @@ DBT_ENV = {
     "PYTHONPATH": "/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip",
     "PYSPARK_PYTHON": "python3",   # executors' Python; the driver is the dbt venv's
     "PYSPARK_SUBMIT_ARGS": "--conf spark.executor.memory=1536m --conf spark.openlineage.appName=dp2_bronze_to_gold "
-                           "--name dbt_gold pyspark-shell",   # same settings as spark_job()
+                           "--conf spark.driver.bindAddress=0.0.0.0 --name dbt_gold pyspark-shell",   # as spark_job()
     "DBT_TARGET_PATH": "{{ var.value.dbt_artifacts_dir }}/target",
     "DBT_LOG_PATH": "{{ var.value.dbt_artifacts_dir }}/logs",
 }

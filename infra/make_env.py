@@ -43,6 +43,9 @@ NEW_VALUE = {   # key -> how to make its value; keys added later are appended to
     "VAULT_ROOT_TOKEN": lambda: secrets.token_urlsafe(24),        # Layer 3: Vault (dev mode) root token, infra/k8s/vault.sh
     "JENKINS_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(16),  # Layer 3: Jenkins user `admin`
     "COSIGN_PASSWORD": lambda: secrets.token_urlsafe(24),         # Layer 3: encrypts .secrets/cosign.key (image signing)
+    "LAKEFS_ACCESS_KEY_ID": lambda: f"AKIALAKEFS{secrets.token_hex(5).upper()}",  # lakeFS admin (API, S3 gateway)
+    "LAKEFS_SECRET_ACCESS_KEY": lambda: secrets.token_urlsafe(30),
+    "LAKEFS_ENCRYPT_KEY": lambda: secrets.token_hex(32),          # lakeFS auth.encrypt.secret_key
 }
 DATAHUB_USERS = INFRA / "conf" / "datahub" / "user.props"   # frontend login file, replaces the default datahub:datahub
 

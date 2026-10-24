@@ -128,4 +128,5 @@ Langfuse keys and the A2A key as credentials. The same dataset drives the A/B ev
 ([`agents/eval/run_eval.py`](../agents/eval/run_eval.py), [A/B testing](ab_testing.md)).
 
 Cost: with 12 questions once the gate added about 1.5 to 2.5 minutes to a deploy; with 20 questions twice it takes
-5 to 8 minutes (285 s in #40, 477 s in #32), all agent conversations on the one GPU.
+4 min 45 s to 8 min 23 s (285 s in #40, 477 s in #32, 503 s in #29), all agent conversations on the one
+GPU.

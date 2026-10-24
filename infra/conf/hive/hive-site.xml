@@ -11,4 +11,8 @@
   <property><name>fs.s3a.endpoint</name><value>http://seaweedfs:8333</value></property>
   <property><name>fs.s3a.path.style.access</name><value>true</value></property>
   <property><name>fs.s3a.connection.ssl.enabled</name><value>false</value></property>
+  <!-- bucket bronze is the lakeFS repository (bronze.raw_transactions at s3a://bronze/main/...): lakeFS S3 gateway -->
+  <property><name>fs.s3a.bucket.bronze.endpoint</name><value>http://lakefs:8000</value></property>
+  <property><name>fs.s3a.bucket.bronze.access.key</name><value>${env.LAKEFS_ACCESS_KEY_ID}</value></property>
+  <property><name>fs.s3a.bucket.bronze.secret.key</name><value>${env.LAKEFS_SECRET_ACCESS_KEY}</value></property>
 </configuration>

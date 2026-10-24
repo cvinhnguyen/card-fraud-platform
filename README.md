@@ -58,14 +58,14 @@ what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deplo
 
 | Step | Component | What it does |
 |---|---|---|
-| 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged |
+| 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged; the export lands on a lakeFS branch and is merged into `main` only after its checks pass (novel idea 2) |
 | 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in `skew_join.py`) |
-| 03 · DP2 | dbt-spark (novel idea 1) | Gold `dim_*` / `fact_*` on Spark (own session in Airflow, Thrift Server by hand), SCD2 `dim_customer` model, incremental fact, 22 dbt tests |
+| 03 · DP2 | dbt-spark | Gold `dim_*` / `fact_*` on Spark (own session in Airflow, Thrift Server by hand), SCD2 `dim_customer` model, incremental fact, 22 dbt tests |
 | 04 · DP3 | Spark features | `feat_*` tables with `event_timestamp` and `created` for the Layer 2 feature store |
-| 05 | Trino | SQL over every zone (`delta.<zone>.<table>`): finds a table's location in the Hive Metastore, reads its Delta files from S3 |
-| 06 | Flink | Watermarks, late events, dedup and windows on Kafka; raw events → `landing/` JSON files (DP1 loads them into bronze), realtime features → `card_features_rt` |
+| 05 | Trino | SQL over every zone (`delta.<zone>.<table>`, the export as `lakefs.bronze.raw_transactions`): finds a table's location in the Hive Metastore, reads its Delta files from S3 |
+| 06 | Flink | Watermarks, late events, dedup and windows on Kafka; raw events → `landing/` JSON files (DP1 loads them into bronze), realtime features → `card_features_rt`; account takeover patterns with `MATCH_RECOGNIZE` (novel idea 1) |
 | 07 | Airflow | Runs DP1 → DP2 → DP3 (each: ingest stage + Great Expectations validate stage); connections and variables in Airflow |
-| 08 | DataHub | Tables of every zone, lineage sent by every Spark job through OpenLineage (novel idea 2), validation results as assertions |
+| 08 | DataHub | Tables of every zone, lineage sent by every Spark job through OpenLineage, validation results as assertions |
 
 ### Layer 2: ML platform
 
@@ -213,10 +213,11 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 
 # P3: Spark + Hive Metastore + Trino, then DP1 (source -> bronze Delta tables)
 docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
-docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py --txn-root s3a://lakehouse/bronze
+.venv/Scripts/python infra/init_lakefs.py                     # the export table moves under lakeFS (zero-copy); later loads: DP1 branches
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_silver.py
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/build_labels.py
-docker exec -it trino trino --execute "SELECT count(*) FROM delta.bronze.raw_transactions"
+docker exec -it trino trino --execute "SELECT count(*) FROM lakefs.bronze.raw_transactions"
 
 # P4 gold: dbt-spark through the Spark Thrift Server
 docker compose -f infra/docker-compose.yaml --profile dbt up -d spark-thrift
@@ -261,7 +262,7 @@ push it, then for each server `s` in card-data, fraud-score, policy-rag:
 then `helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml` and
 the same with `card-support-coordinator` / `values-coordinator.yaml`.
 
-UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP UI http://127.0.0.1:31880 (port-forward, `infra/k8s/platform.sh`), Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8001/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
+UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, lakeFS http://127.0.0.1:8001, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP UI http://127.0.0.1:31880 (port-forward, `infra/k8s/platform.sh`), Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8002/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
 
 Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data_characteristics.md](docs/data_characteristics.md).
 
@@ -275,8 +276,10 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - [Storage optimization](docs/storage_optimization.md): small files, partitioning, `OPTIMIZE` + Z-order on Delta; B-tree and BRIN indexes on the Postgres serving table.
 - [Airflow](docs/airflow.md): DP1 / DP2 / DP3 DAGs, connections and variables in Airflow, validate stages (GE on Spark), backfill.
 - [DataHub](docs/datahub.md): tables of every zone, lineage from source to features, which DAG produced each table, validation results.
-- [Novel idea 1: dbt-spark](docs/novel_dbt.md): gold star schema in dbt, compared row by row with the same layer written by hand in PySpark.
-- [Novel idea 2: OpenLineage](docs/novel_openlineage.md): lineage from every Spark job without a line of lineage code.
+- [dbt-spark gold](docs/dbt_gold.md): gold star schema in dbt, compared row by row with the same layer written by hand in PySpark.
+- [OpenLineage](docs/openlineage.md): lineage from every Spark job without a line of lineage code.
+- Layer 1 novel idea 1: [Account takeover patterns with Flink CEP](docs/novel_flink_cep.md): three `MATCH_RECOGNIZE` patterns in event time, checked against their definitions and the takeover truth, 4 s against 14 to 26 minutes for the hand-written job.
+- Layer 1 novel idea 2: [Write-Audit-Publish with lakeFS](docs/novel_lakefs_wap.md): the nightly export lands on a branch, the checks read the branch, and only a passing run is merged into `main`; a broken export never reaches readers.
 - [Docker optimization](docs/docker_optimization.md) and the [100 GB run](docs/scale_100g.md).
 - Layer 2: [Feature store](docs/feature_store.md), [ML training](docs/ml_training.md), [Serving](docs/serving.md), [Drift](docs/drift.md), [Testing](docs/testing.md).
 - Layer 3: [LLM platform](docs/llm_platform.md): llama.cpp behind the llm-d InferencePool, agentgateway's LLM route (API keys, rate limits, PII masking), the agents' global model config.
