@@ -104,6 +104,7 @@ by hand (11) local time:
 | #35 | v2, started by MCP build #13 (three servers, image `7da43e5`) | 20, twice | 1.00 and 0.95, mean 0.97 | pass, coordinator triggered |
 | #37 | v2, started by MCP build #16 (same commit, image rebuilt) | 20, twice | 0.20 and 0.70, mean 0.45 | fail: no fraud-score pod Ready for 28 s, `helm rollback`, coordinator not triggered |
 | #40 | v2, the same deploy started by hand (#39 stopped when the PC crashed during its eval) | 20, twice | 0.90 and 0.95, mean 0.93 | pass, coordinator triggered |
+| #45 | v2, started by commit `e148f37` (agent Jenkinsfiles changed) | 20, twice | 0.95 and 0.95, mean 0.95 | pass, coordinator triggered |
 
 Build #20 is the gate doing its job on a problem it was not written for: the deploy itself was fine, but the platform
 under it (the LLM A/B canary, see [A/B testing](ab_testing.md)) made a quarter of the answers fail, and the release did

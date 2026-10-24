@@ -241,6 +241,8 @@ credentials block left out):
   every question asked in that window ([agents.md](agents.md#gotchas)). The gate rolled the release back. #39 was
   stopped by a crash of the PC during its eval; #40, started by hand, passed with 0.90 and 0.95 and started the
   coordinator.
+- #45 (started by the commit `e148f37` that changed both agent Jenkinsfiles): deploy, smoke test, eval 0.95 and 0.95,
+  pass, then coordinator #40.
 
 ### Coordinator
 
@@ -249,7 +251,7 @@ credentials block left out):
 does: the public A2A route `/a2a/coordinator` with the support-app key, and a question that needs both data agents
 ([`agents/Jenkinsfile.coordinator` L58-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/agents/Jenkinsfile.coordinator#L58-L77)).
 
-![Jenkins stage view of card-support-coordinator: #24, #25 and #26 deployed and passed the client smoke test; #26 had no new commit and was started by data agents #29](images/cicd_card-support-coordinator.png)
+![Jenkins stage view of card-support-coordinator: #39 (commit e148f37) and #40 (started by data agents #45) deployed and passed the client smoke test; #34 is red in the build list; the other rows are timer runs with nothing to deploy](images/cicd_card-support-coordinator.png)
 
 | Stage | What it does |
 |---|---|
@@ -268,8 +270,11 @@ canary was stopped ([ab_testing.md](ab_testing.md)).
 On 2026-10-24 builds #29 and #30 failed the smoke test with correct answers: one wrote the source as
 "(fee schedule#2)", the other gave the 2.5% fee without a source, and the check wanted the exact text `fee_schedule`.
 The check now accepts the citation in either spelling or the fee itself
-([`agents/Jenkinsfile.coordinator` L72-L74](../agents/Jenkinsfile.coordinator#L72-L74)); #32 passed with
-`(fee_schedule#2)` in the answer.
+([`agents/Jenkinsfile.coordinator` L72-L74](../agents/Jenkinsfile.coordinator#L72-L74)). #34 failed the same way
+after data agents #40 ("(fee schedule#2)"), because Jenkins builds what is on GitHub and the fix was not pushed yet.
+Once it was (commit `e148f37`), #39, started by hand, passed with an answer that gave the 2.5% fee without a source,
+which the old check would have refused, and the chain ran by itself: data agents #45 saw the commit, deployed, passed
+the eval gate with 0.95 and 0.95, and started coordinator #40, which passed with `(fee_schedule#2)` in the answer.
 
 ## Stream feature jobs
 
