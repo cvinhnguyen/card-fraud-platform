@@ -1,7 +1,7 @@
 # Tests
 
-Layer 2's two APIs (Scoring API, Drift API) first, then Layer 3's MCP server
-([below](#layer-3-the-card-support-mcp-server)). Both Layer 2 services test in their own Docker build stage
+Layer 2's two APIs (Scoring API, Drift API) first, then Layer 3's three MCP servers
+([below](#layer-3-the-card-support-mcp-servers)). Both Layer 2 services test in their own Docker build stage
 (`docker build --target test services/scoring_api`), so the tests run against the exact dependency pins of the image. Coverage gate: `--cov-fail-under=90` in `pytest.ini`.
 
 | Service | Tests | Coverage |
@@ -111,12 +111,14 @@ docker build --target test services/scoring_api          # pytest + coverage gat
 docker build --target test services/drift_api
 ```
 
-## Layer 3: the card support MCP server
+## Layer 3: the card support MCP servers
 
-`services/card_support_mcp` is the Web API the agents call: card data from the online feature store by `card_id`,
-policy chunks from the RAG knowledge base by `chunk_id`, a policy search and a payment score, served as REST and as
-MCP tools. Its tests follow the pattern of the two APIs above. They run in the image's `test` stage, and Jenkins runs
-them, the coverage gate and the mutation test on every change to the service ([cicd.md](cicd.md#mcp-server)).
+`services/card_support_mcp` is one code base that runs as the three MCP servers the agents call
+([agents.md](agents.md#the-three-mcp-servers)): card-data (the Web API that pulls a card's data from the online
+feature store by `card_id` and a policy chunk by `chunk_id`), fraud-score (the fraud model's verdict on a payment)
+and policy-rag (the policy search). The tests build each server with fakes of its adapters. They run in the image's
+`test` stage, and Jenkins runs them, the coverage gate and the mutation test on every change to the service
+([cicd.md](cicd.md#mcp-servers)).
 
 ```bash
 docker build --target test -t card-support-mcp:test services/card_support_mcp
@@ -125,50 +127,34 @@ docker run --rm card-support-mcp:test                      # pytest + coverage g
 
 | Service | Tests | Coverage |
 |---|---:|---:|
-| Card support MCP server | 97 | 97.84% |
+| Card support MCP servers (one code base) | 118 | 98.31% |
 
-The two commands run from Git Bash on 2026-10-21, on the current code:
+Stage "Unit tests + coverage gate" of Jenkins build #16 of `card-support-mcp` (2026-10-24, commit `7da43e5`):
 
-![Git Bash: docker build of the test stage, then 97 passed and total coverage 97.84% against the 90% gate](images/test_mcp_coverage.png)
+![Jenkins console of card-support-mcp: 118 passed, total coverage 98.31% against the 90% gate](images/test_mcp_jenkins_tests.png)
 
-From the console log of Jenkins build #10 of `card-support-mcp` (commit `a1d4e12`), stage "Unit tests + coverage gate":
-
-```text
-[2026-10-21T09:13:33.528Z] Name              Stmts   Miss  Cover   Missing
-[2026-10-21T09:13:33.528Z] -----------------------------------------------
-[2026-10-21T09:13:33.528Z] app/__init__.py       0      0   100%
-[2026-10-21T09:13:33.528Z] app/clients.py       54      5    91%   27-29, 48-49
-[2026-10-21T09:13:33.528Z] app/logic.py         25      0   100%
-[2026-10-21T09:13:33.528Z] app/main.py          97      1    99%   41
-[2026-10-21T09:13:33.528Z] app/schemas.py       58      0   100%
-[2026-10-21T09:13:33.528Z] app/service.py       33      0   100%
-[2026-10-21T09:13:33.528Z] app/settings.py      11      0   100%
-[2026-10-21T09:13:33.528Z] -----------------------------------------------
-[2026-10-21T09:13:33.528Z] TOTAL               278      6    98%
-[2026-10-21T09:13:33.528Z] Required test coverage of 90% reached. Total coverage: 97.84%
-[2026-10-21T09:13:33.528Z] ======================== 97 passed, 1 warning in 7.65s =========================
-```
-
-![Jenkins stage view of card-support-mcp: #9 failed at signing, #10 and #11 passed every stage, tests and mutation test included](images/cicd_card-support-mcp.png)
-
-The lines left uncovered are the constructors that
-open the real Feast repos (`clients.py` 27-29, 48-49) and `build_service` (`main.py` 41), which wires them. They need
-the registry database and Redis, so the pipeline's smoke test exercises them on the deployed release instead.
+The lines left uncovered are the constructors that open the real Feast repos (`clients.py` 28-30, 49-50). They need
+the registry database and the online stores, so the pipeline's smoke test exercises them on the deployed releases
+instead.
 
 ### Fixtures and mocks
 
 [`tests/conftest.py`](../services/card_support_mcp/tests/conftest.py) has fakes of the four adapters (feature store,
-knowledge base, embedder, scoring API), and each can be told to fail. The `service` fixture wires the service with
-them at a fixed clock. `make_client` builds the real FastAPI app (REST and MCP) on any service, with its own
-Prometheus registry so tests never share counters. On top of these,
-[`test_api.py`](../services/card_support_mcp/tests/test_api.py) checks the status codes (200, 404 for an unknown id,
-422 for a malformed one, 503 when a dependency fails), the `/healthz` and `/readyz` probes, the tool-call metrics and
-the MCP side: `tools/list` returns the four tools with their input schemas, `tools/call` returns their results, and
-bad arguments or a failing dependency come back as MCP tool errors.
+knowledge base, embedder, Scoring API), each with the `ready()` its server's `/readyz` calls, and each can be told to
+fail. The `service` fixture wires the service with them at a fixed clock. `make_client` builds the real FastAPI app of
+one server (REST and MCP) on any service, with its own Prometheus registry so tests never share counters. On top of
+these, [`test_api.py`](../services/card_support_mcp/tests/test_api.py) checks:
+
+- each server lists only its own tools over MCP and has no REST route of the others (404);
+- the status codes (200, 404 for an unknown id, 422 for a malformed one, 503 when a dependency fails);
+- `/healthz` never checks a dependency, and `/readyz` fails only for a dependency of that server (a broken Feast store
+  does not make fraud-score unready);
+- the tool-call metrics, the MCP calls, and bad arguments or a failing dependency coming back as MCP tool errors;
+- `build_service` builds only the adapters a server's tools use (fraud-score builds no Feast reader).
 
 The real adapters are tested in [`test_clients.py`](../services/card_support_mcp/tests/test_clients.py) against respx
-mocks of the HTTP services (the embedder must send the query instruction and the API key, a 500 must raise) and
-against a stand-in Feast store.
+mocks of the HTTP services (the embedder must send the query instruction and the API key, a 500 must raise, the
+Scoring API's health is its `/healthz`) and against a stand-in Feast store.
 
 ### Equivalence partitioning and boundary values
 
@@ -213,50 +199,33 @@ declarations, listed under `do_not_mutate`.
 docker run --rm card-support-mcp:test sh -c "mutmut run >/dev/null 2>&1; mutmut results --all true"
 ```
 
-Run from Git Bash on 2026-10-21 (results saved to a temp file, then counted per status):
+Stage "Mutation test" of the same build:
 
-![Git Bash: mutmut on the test image, 243 killed and 2 survived, and the two survivors](images/test_mcp_mutmut.png)
-
-The same mutation test in Jenkins build #10, stage "Mutation test":
-
-```text
-[2026-10-21T09:13:34.825Z] + docker run --rm card-support-mcp:test-a1d4e12 sh -c mutmut run >/dev/null 2>&1; mutmut results --all true
-[2026-10-21T09:13:52.789Z] + grep -c :  mutmut.txt
-[2026-10-21T09:13:52.789Z] + total=245
-[2026-10-21T09:13:52.789Z] + grep -c : killed mutmut.txt
-[2026-10-21T09:13:52.789Z] + killed=243
-[2026-10-21T09:13:52.789Z] + echo mutation score: 243 / 245 killed
-[2026-10-21T09:13:52.789Z] mutation score: 243 / 245 killed
-[2026-10-21T09:13:52.789Z] + grep -E : (survived|timeout|suspicious) mutmut.txt
-[2026-10-21T09:13:52.789Z]     app.logic.x_realtime_now__mutmut_11: survived
-[2026-10-21T09:13:52.789Z]     app.logic.x_rank__mutmut_15: survived
-[2026-10-21T09:13:52.789Z] + [ 245 -gt 0 ]
-[2026-10-21T09:13:52.789Z] + [ 99 -ge 80 ]
-```
+![Jenkins console of card-support-mcp: mutation score 243 / 245 killed, the two survivors, and the 80% check](images/test_mcp_jenkins_mutation.png)
 
 243 of 245 mutants are killed (99.2%). The two survivors, one in `realtime_now` and one in `rank`, were read by hand
 and are equivalent mutants: neither changes anything the tools return.
 
 ### Load test (locust)
 
-[`locustfile.py`](../services/card_support_mcp/locustfile.py) plays an agent working a chat: card lookups, chunk
-reads, policy searches and payment scores over REST, plus the same card lookup over MCP (`tools/call get_card_data`)
-so the cost of the MCP layer shows next to the REST call. Run 2026-10-20 inside the cluster against the service
-(`http://card-support-mcp:8000`), 10 users for 2 minutes, report in
-[`locust_card_support_mcp.html`](images/locust_card_support_mcp.html):
+The rubric's load test is on the Web API that pulls data: the card-data server.
+[`locustfile.py`](../services/card_support_mcp/locustfile.py) plays an agent working a chat: card lookups and chunk
+reads over REST, plus the same card lookup over MCP (`tools/call get_card_data`), so the cost of the MCP layer shows
+next to the REST call. Run 2026-10-24 inside the cluster (a locust pod in `card-support`, so the network policy lets
+it in) against the Service `http://card-data-mcp:8000`, 10 users for 2 minutes, 5,000 card ids from the live period
+so every lookup hits Redis. Report: [`locust_card_data_mcp.html`](images/locust_card_data_mcp.html).
 
 | Request | Requests | Median | p95 | p99 |
 |---|---:|---:|---:|---:|
-| `GET /v1/cards/{id}` | 1,594 | 7 ms | 22 ms | 39 ms |
-| `GET /v1/chunks/{id}` | 386 | 5 ms | 22 ms | 39 ms |
-| `POST /v1/score` | 777 | 37 ms | 88 ms | 160 ms |
-| `POST /v1/search` | 1,177 | 240 ms | 360 ms | 470 ms |
-| MCP `get_card_data` | 749 | 33 ms | 60 ms | 85 ms |
-| All | 4,683 | 30 ms | 300 ms | 370 ms |
+| `GET /v1/cards/{id}` | 3,089 | 5 ms | 20 ms | 33 ms |
+| `GET /v1/chunks/{id}` | 1,533 | 5 ms | 21 ms | 35 ms |
+| MCP `get_card_data` | 1,619 | 25 ms | 47 ms | 79 ms |
+| All | 6,241 | 7 ms | 36 ms | 59 ms |
 
-That is 39.1 requests per second with 0 failures. Search is the slow tool because it embeds the question on the
-llama.cpp embedding server, which runs on the CPU, before the vector lookup. The same card lookup takes 33 ms at the
-median over MCP and 7 ms over REST, so the JSON-RPC layer adds about 26 ms.
+That is 52.3 requests per second with 0 failures. The same card lookup takes 25 ms at the median over MCP and 5 ms
+over REST, so the JSON-RPC layer adds about 20 ms.
+
+![locust report in Chrome: 6,241 requests, 0 failures, 52.26 requests per second, response time percentiles](images/locust_card_data_sla.png)
 
 The agents were load-tested the same way, one customer chat per A2A `message/send` to the coordinator through the
 gateway ([`agents/locustfile.py`](../agents/locustfile.py)): 6 users for 4 min 51 s gave 37 conversations, 0 failures,

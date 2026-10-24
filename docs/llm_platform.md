@@ -29,7 +29,7 @@ sh infra/k8s/llm-platform.sh   # Gateway API + Inference Extension CRDs, agentga
 | Model | Qwen3-8B, Q4_K_M GGUF | Qwen3-Embedding-0.6B, Q8_0 GGUF |
 | Server | llama.cpp b11755 (CUDA 12.4), `127.0.0.1:8085` | llama.cpp, `127.0.0.1:8086` |
 | Hardware | GTX 1070, 8 GB, all layers on the GPU | CPU |
-| Used by | the agents, through the gateway | the RAG pipeline and the MCP server's policy search |
+| Used by | the agents, through the gateway | the RAG pipeline and the policy-rag MCP server's search |
 
 The GTX 1070 is a Pascal card (compute capability 6.1), which vLLM and llm-d's model server images do not support,
 so the model runs in llama.cpp on the Windows host, outside the Docker VM. Both servers require a bearer key
@@ -77,7 +77,7 @@ agentgateway 1.6.0 runs one Gateway, `agentgateway-proxy`, with three kinds of r
 | Route | Path | Backend | Defined in |
 |---|---|---|---|
 | `llm` | `/v1` | AgentgatewayBackend `qwen3-8b` (InferencePool) and `qwen3-8-27b-groq` (A/B version B, weight 0) | [`infra/k8s/agentgateway.yaml`](../infra/k8s/agentgateway.yaml) |
-| `card-support-mcp` | `/mcp` | the MCP server | [`services/card_support_mcp/chart/templates/gateway.yaml`](../services/card_support_mcp/chart/templates/gateway.yaml) |
+| `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp` | `/mcp/card-data`, `/mcp/fraud-score`, `/mcp/policy-rag` | the three MCP servers, one route each | [`services/card_support_mcp/chart/templates/gateway.yaml`](../services/card_support_mcp/chart/templates/gateway.yaml) |
 | `<release>-internal`, `a2a-coordinator` | `/`, `/a2a/coordinator` | the agents | [`agents/chart/templates/a2a-gateway.yaml`](../agents/chart/templates/a2a-gateway.yaml) |
 
 The MCP and A2A routes and their policies are described in [agents.md](agents.md#mcp-gateway). The LLM route has one

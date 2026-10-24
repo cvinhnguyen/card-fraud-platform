@@ -66,19 +66,21 @@ spec:
     - hosts: [{{ printf "%s.%s" $r.host $.Values.domain }}]   # no secretName: the controller's wildcard TLS secret
 ```
 
-[`infra/k8s/edge/values.yaml` L46-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/edge/values.yaml#L46-L55), the Web API route:
+[`infra/k8s/edge/values.yaml` L46-L57](../infra/k8s/edge/values.yaml#L46-L57), the Web API route, which sends the public paths to the card-data MCP server (the Web API that pulls data by id; the other two servers are reached only through agentgateway):
 
 ```yaml
-  - name: web-api             # card support Web API: card data and chunks by id, policy search, fraud score
+  - name: web-api             # Web API that pulls data by id: card data and policy chunks (MCP server card-data)
     namespace: card-support
     host: api
-    service: {name: card-support-mcp, port: 8000}
+    service: {name: card-data-mcp, port: 8000}
     auth: true
     rate: 5r/s
     burst: 10
     paths:                     # REST only: /mcp is reachable only through agentgateway, /metrics only by Prometheus
       - {path: /v1, type: Prefix}
       - {path: /healthz, type: Exact}
+      - {path: /docs, type: Exact}           # OpenAPI page (FastAPI) and the spec it loads
+      - {path: /openapi.json, type: Exact}
 ```
 
 The controller and the Ingresses in the cluster (the last line is KServe's own Istio ingress from
@@ -127,11 +129,12 @@ Without a login, Chrome shows its own sign-in dialog for the realm NGINX sends:
 ![Chrome's basic-auth dialog on agents.cvinhnguyen.duckdns.org](images/edge_basic_auth_prompt.png)
 
 Status codes per host without a login, with a wrong password and with the `admin` login (Grafana is not behind basic
-auth and redirects to its own login page), then the Web API paths, then the rate limit: the Web API allows 5 requests
-per second per client IP with a burst of 10, and 40 requests sent at once get 13 answers and 27 `429`. The password
-comes from the environment; only its variable name appears:
+auth and redirects to its own login page), then the Web API paths (the routes listed above answer, the server's MCP
+endpoint and its metrics are not published), then the rate limit: the Web API allows 5 requests per second per client
+IP with a burst of 10, and 40 requests sent at once get 12 answers and 28 `429`. The password comes from the
+environment; only its variable name appears:
 
-![Git Bash: 401 / 401 / 200 on the four protected hosts and 302 on Grafana; /v1 and /healthz answer, /mcp /metrics /docs are 404; 40 requests at once give 13 x 200 and 27 x 429](images/edge_auth.png)
+![Git Bash: 401 / 401 / 200 on the four protected hosts and 302 on Grafana; /v1, /healthz and /docs answer 200, /mcp and /metrics are 404; 40 requests at once give 12 x 200 and 28 x 429](images/edge_auth.png)
 
 The same limit in the browser, right after such a burst:
 

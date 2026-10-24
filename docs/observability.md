@@ -6,7 +6,7 @@ into the `monitoring` namespace and published by NGINX at `https://grafana|logs|
 
 | Signal | Tool | Where it comes from |
 |---|---|---|
-| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the MCP server's `/metrics` (ServiceMonitor in its chart, [`servicemonitor.yaml` L1-L13](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/chart/templates/servicemonitor.yaml#L1-L13)), agentgateway's proxy (PodMonitor in [`monitors.yaml`](../infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig; both in [`monitors.yaml` L5-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/monitors.yaml#L5-L26)) |
+| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the `/metrics` of the three MCP servers (one ServiceMonitor per release, [`servicemonitor.yaml`](../services/card_support_mcp/chart/templates/servicemonitor.yaml)), agentgateway's proxy (PodMonitor in [`monitors.yaml`](../infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig; both in [`monitors.yaml` L5-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/monitors.yaml#L5-L26)) |
 | Logs | VictoriaLogs v1.53 + its Vector agent | every pod's stdout, shipped by the Vector DaemonSet, kept 3 days ([`observability.sh` L26-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/observability.sh#L26-L30)) |
 | Traces | Jaeger 2.21 (OTLP) | agentgateway's tracing policy ([`tracing.yaml`](../infra/k8s/tracing.yaml)) for every LLM, MCP and A2A request, plus the spans the kagent agents export themselves ([`llm-platform.sh` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/k8s/llm-platform.sh#L50)); joined by the W3C `traceparent` header |
 
@@ -18,12 +18,15 @@ labelled `grafana_dashboard=1`, which Grafana's sidecar picks up
 ## Web API metrics
 
 Dashboard "Card Support - Web API" ([`card-support-api.json`](../infra/k8s/dashboards/card-support-api.json)), from
-`http_requests_total` and `http_request_duration_seconds` of the MCP server (prometheus-fastapi-instrumentator,
-[`services/card_support_mcp/app/main.py` L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L111)) and
-of the Scoring API: requests per second per handler, failed requests per second (4xx and 5xx), requests and failures
-in the time range, p95 latency per handler.
+`http_requests_total` and `http_request_duration_seconds` of the three MCP servers (prometheus-fastapi-instrumentator,
+[`services/card_support_mcp/app/main.py` L137](../services/card_support_mcp/app/main.py#L137); jobs `card-data-mcp`,
+`fraud-score-mcp`, `policy-rag-mcp`) and of the Scoring API: requests per second per handler, failed requests per
+second (4xx and 5xx), requests and failures in the time range, p95 latency per handler. The screenshot was taken before
+the split into three servers, when all handlers ran under one job, `card-support-mcp`; the dashboard's job filter
+matches the three new jobs. It was not retaken: with Grafana started on top of the rest of the platform, the 8 GB
+Docker VM ran out of memory and started killing pods on failed liveness probes (2026-10-24).
 
-![Web API dashboard: requests per second, failures, totals and p95 latency per handler](images/obs_web_api.png)
+![Web API dashboard before the split: requests per second, failures, totals and p95 latency per handler of the card-support-mcp job and the Scoring API](images/obs_web_api.png)
 
 The last half hour: 710 requests to the MCP server (agents' MCP calls on `/mcp` and REST calls through NGINX), 7 to
 the Scoring API, and 13 failures, the 404s and 422s a test script sent on purpose (unknown card and chunk ids, a
@@ -67,11 +70,11 @@ Dashboard "Card Support - Agent telemetry" ([`agent-telemetry.json`](../infra/k8
 |---|---|
 | calls per agent | `agentgateway_requests_total` on the agents' A2A backends (every agent call passes the gateway) |
 | calls per MCP tool | `agentgateway_mcp_requests_total` by tool name, at the gateway |
-| failures per tool call | `card_support_tool_calls_total{outcome="error"}`, counted by the MCP server per tool, plus non-2xx A2A responses per agent |
+| failures per tool call | `card_support_tool_calls_total{outcome="error"}`, counted per tool by the MCP server that serves it, plus non-2xx A2A responses per agent |
 | (extra) | tool calls per second by outcome, tool latency p95 (`card_support_tool_seconds`), agent replicas set by KEDA |
 
-The MCP server counts and times every tool call in one wrapper that all four tools go through
-([`services/card_support_mcp/app/main.py` L49-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L49-L71)):
+Each MCP server counts and times every tool call in one wrapper that all its tools go through, the same code in
+the three servers ([`services/card_support_mcp/app/main.py` L71-L93](../services/card_support_mcp/app/main.py#L71-L93)):
 
 ```python
     calls = Counter("card_support_tool_calls_total", "Tool calls by tool and outcome", ["tool", "outcome"],

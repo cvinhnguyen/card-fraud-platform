@@ -70,7 +70,8 @@ pipeline {
             answer=$(printf '%s' "$out" | jq -r '[.result.artifacts[]?.parts[]? | select(.kind == "text") | .text] | join(" ")')
             echo "coordinator: $(printf '%s' "$out" | jq -r .result.status.state) | $answer" | cut -c1-400
             printf '%s' "$out" | jq -e '.result.status.state == "completed"' >/dev/null
-            printf '%s' "$answer" | grep -q -i "fee_schedule"
+            # the fee came from the policy search: its citation (written fee_schedule#2 or "fee schedule") or the fact itself
+            printf '%s' "$answer" | grep -q -i -E 'fee[_ ]schedule|2[.,]5 ?%'
           '''
         }
       }

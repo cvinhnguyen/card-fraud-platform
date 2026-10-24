@@ -66,7 +66,7 @@ pipeline {
                          file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh '''
             gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
-            ask() {   # agent, question, text the answer must contain
+            ask() {   # agent, question, pattern (grep -E) the answer must match
               body=$(jq -n --arg q "$2" '{jsonrpc: "2.0", id: 1, method: "message/send",
                 params: {message: {role: "user", messageId: (now | tostring), parts: [{kind: "text", text: $q}]}}}')
               out=$(printf 'header = "Authorization: Bearer %s"\n' "$A2A_KEY" | curl -fsS -K - --max-time 240 \
@@ -74,10 +74,10 @@ pipeline {
               answer=$(printf '%s' "$out" | jq -r '[.result.artifacts[]?.parts[]? | select(.kind == "text") | .text] | join(" ")')
               echo "$1: $(printf '%s' "$out" | jq -r .result.status.state) | $answer" | cut -c1-300
               printf '%s' "$out" | jq -e '.result.status.state == "completed"' >/dev/null
-              printf '%s' "$answer" | grep -q -i -- "$3"
+              printf '%s' "$answer" | grep -q -i -E -- "$3"
             }
             ask card-data-agent "How many payments did card card_00006087 make in the last 30 days?" "30 days"
-            ask risk-agent "What is the foreign transaction fee?" "fee_schedule"
+            ask risk-agent "What is the foreign transaction fee?" 'fee[_ ]schedule|2[.,]5 ?%'   # its citation or the fact
           '''
         }
       }

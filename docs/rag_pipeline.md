@@ -2,8 +2,8 @@
 
 The risk agent answers policy questions from the bank's own card documents: terms and conditions, the fee schedule,
 the dispute policy, the authentication rules and the FAQ. The Airflow DAG `rag_ingest` turns those documents into
-chunks, embeds every chunk and stores chunks and vectors in a Feast feature view, which the MCP server's
-`search_policy` and `get_policy_chunk` tools read. This page covers rubric A9 (C9, C10); the CI/CD pipeline that
+chunks, embeds every chunk and stores chunks and vectors in a Feast feature view, which two MCP servers read:
+policy-rag's `search_policy` (RAG) and card-data's `get_policy_chunk` (a chunk by id). This page covers rubric A9 (C9, C10); the CI/CD pipeline that
 releases it is in [cicd.md](cicd.md#rag-data-pipeline).
 
 ```mermaid
@@ -61,9 +61,9 @@ def split_document(doc: str, text: str) -> list[dict]:
 The feature view `policy_chunks` (entity `chunk_id`) holds `document`, `section`, `text` and `embedding` (1024 floats,
 cosine distance, vector index on;
 [`ml/feature_repo_kb/kb_features.py` L26-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/feature_repo_kb/kb_features.py#L26-L41)).
-The MCP server embeds a question with Qwen3-Embedding's query instruction, asks the
+The policy-rag MCP server embeds a question with Qwen3-Embedding's query instruction, asks the
 online store for the nearest candidates, reads them by id and ranks them by its own cosine similarity
-([`services/card_support_mcp/app/service.py` L67-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/service.py#L67-L74)).
+([`services/card_support_mcp/app/service.py` L68-L75](../services/card_support_mcp/app/service.py#L68-L75)).
 
 ![Airflow: the run of rag_ingest, every task green](images/rag_airflow_graph.png)
 
@@ -128,7 +128,7 @@ DataHub is skipped. On this machine the kind cluster is stopped while Airflow an
 ## Gotchas
 
 - Feast 0.66's `retrieve_online_documents_v2(...).to_df()` can put the wrong text and vector next to a `chunk_id`
-  (the id column keeps the database's rank order, the feature columns another order). The MCP server uses it only for
+  (the id column keeps the database's rank order, the feature columns another order). The policy-rag server uses it only for
   candidate ids, reads the features by id and ranks them itself.
-- The embedding model is the one the MCP server uses for questions; changing it means re-running the pipeline, or the
+- The embedding model is the one the policy-rag server uses for questions; changing it means re-running the pipeline, or the
   question vectors and the stored vectors stop matching.

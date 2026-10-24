@@ -46,7 +46,7 @@ Layer 2's online features and model.
 Layer 1 turns the source systems into feature tables (batch) and realtime features (stream). Feast is the hand-over:
 the same 20 features for training (offline store, point-in-time joins) and for serving (online store). Layer 2 trains
 on them, serves the model behind the Scoring API and retrains when the drift check fails. Layer 3 reads the same
-online features and the Scoring API through its MCP server, adds the bank's documents as a second Feast project
+online features and the Scoring API through three MCP servers, adds the bank's documents as a second Feast project
 (chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below. Blue
 cards are where the data rests between two steps (lakehouse zones on SeaweedFS, Kafka topics, databases): a step
 writes a store and the next step reads it, so no arrow goes straight from one Spark job to the next. Orange cards are
@@ -97,12 +97,12 @@ Five classes carry the ML logic:
 | 17 | llama.cpp | Qwen3-8B Q4_K_M chat model on the host GPU (GTX 1070) and the Qwen3-Embedding-0.6B embedding server |
 | 18 | llm-d | InferencePool `qwen3-8b` and its endpoint picker in front of the model server |
 | 19 | agentgateway | One entry point for LLM (`/v1`), MCP (`/mcp`) and A2A calls: API keys, rate limits, PII masking, tool access per agent |
-| 20 | card-support-mcp | FastAPI Web API + MCP server with four tools: card data, policy chunk, policy search (RAG), fraud score |
+| 20 | card-data-mcp, fraud-score-mcp, policy-rag-mcp | Three MCP servers from one FastAPI code base (pydantic, `/healthz` + `/readyz` probes, async), one Helm release each: card data + policy chunk by id (the Web API), fraud score (ML inference), policy search (RAG) |
 | 21 | NGINX Ingress | Every UI and the Web API on `*.cvinhnguyen.duckdns.org`: Let's Encrypt HTTPS, basic auth, rate limits |
 | 22 | Coordinator agent | Talks to the customer, asks the two specialist agents over A2A |
 | 23 | Card-data + risk agents | kagent agents with MCP tools through the gateway; 2-4 replicas each (KEDA) |
 | 24 | Agent Substrate | Sandboxed copies of the agents in gVisor, restored from warm snapshots on a shared worker pool |
-| 25 | agentregistry | Catalog of the agents and the MCP server they use |
+| 25 | agentregistry | Catalog of the agents and the three MCP servers they use |
 | 26 | Operations | Prometheus + Grafana, VictoriaLogs, Jaeger, Vault |
 | 27 | CI/CD | Jenkins: five pipelines, prompts from Langfuse, signed images (Layer 3 novel idea 2), eval gate (Layer 3 novel idea 1) |
 
@@ -130,12 +130,13 @@ Every numbered arrow, one line each: [docs/architecture.md](docs/architecture.md
 
 Support staff reach the agents through NGINX over HTTPS. Every agent call (A2A, MCP, LLM) then passes agentgateway,
 which checks keys, limits requests and masks personal data before the llm-d router hands LLM calls to llama.cpp on
-the host GPU. The MCP server takes a card's features from the same Feast online store as Layer 2 and a fraud score
-from the Scoring API; the RAG pipeline writes policy chunks and their vectors into a second Feast project (pgvector).
+the host GPU. The card-data MCP server takes a card's features from the same Feast online store as Layer 2, the
+fraud-score server asks the Scoring API, and the policy-rag server searches the policy chunks and vectors the RAG
+pipeline writes into a second Feast project (pgvector).
 
 | Flow | Who / when | Path |
 |---|---|---|
-| **A** Agent conversation | support staff, every question | NGINX -> kagent -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP server (Redis, pgvector, embeddings, Scoring API); LLM calls -> gateway -> llm-d -> llama.cpp |
+| **A** Agent conversation | support staff, every question | NGINX -> kagent -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP servers card-data (Redis, pgvector), fraud-score (Scoring API), policy-rag (embeddings, pgvector); LLM calls -> gateway -> llm-d -> llama.cpp |
 | **K** Knowledge ingest | Airflow `rag_ingest`, per release | bank documents (S3) -> chunks -> embeddings -> pgvector online + Parquet offline -> DataHub checks and lineage |
 | **C** CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse) -> signed image in the registry -> helm --atomic -> eval gate through the gateway -> Langfuse experiment |
 | **O** Observability and scaling | continuous | gateway + MCP metrics -> Prometheus -> Grafana and KEDA (agent replicas 2-4); agent spans -> Jaeger |
@@ -180,7 +181,7 @@ ml/                   Layer 2 ML code (Dockerfile = the fraud/ml-train code imag
   tools/              run by hand: replay_scoring, check_online, drift_by_day, stream_smoke
   notebooks/          fraud_model.ipynb, executed with outputs (models/ = the saved models, gitignored)
 services/             scoring_api (FastAPI), drift_api (FastAPI), predictor (KServe custom model)
-  card_support_mcp/   Layer 3 Web API + MCP server: app, tests, Helm chart (gateway route, tool access), Jenkinsfile
+  card_support_mcp/   Layer 3: the three MCP servers (one code base, MCP_SERVER picks one): app, tests, Helm chart + values per server (gateway route, tool access), Jenkinsfile
 agents/               Layer 3 agents: Helm chart (agents, A2A routes, KEDA, sandbox, network policy), prompts, two Jenkinsfiles,
                       eval/ (dataset + Langfuse eval gate), registry/ (agentregistry catalog), locustfile
 generator/            synthetic source systems: data with injected problems, Kafka producer, checks; knowledge/ = the card documents
@@ -250,12 +251,13 @@ sh infra/k8s/llm-platform.sh           # Gateway API, agentgateway, llm-d router
 sh infra/k8s/observability.sh          # Prometheus + Grafana (dashboards), VictoriaLogs, Jaeger
 sh infra/k8s/tls.sh && sh infra/k8s/edge.sh   # HTTPS certificate (DuckDNS, Let's Encrypt), NGINX Ingress + routes
 .venv/Scripts/python generator/load_source.py --part documents && docker exec airflow-scheduler airflow dags trigger rag_ingest
-sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines build, test and deploy the MCP server and the agents
+sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines build, test and deploy the MCP servers and the agents
 arctl apply -f agents/registry/catalog.yaml   # the registry catalog (kubectl -n agentregistry port-forward svc/agentregistry 12121:12121)
 ```
 
 By hand instead of Jenkins: `docker build --target runtime -t localhost:5001/card-support-mcp:<tag> services/card_support_mcp`,
-push it, `helm upgrade --install card-support-mcp services/card_support_mcp/chart -n card-support --atomic --set image.tag=<tag>`,
+push it, then for each server `s` in card-data, fraud-score, policy-rag:
+`helm upgrade --install $s-mcp services/card_support_mcp/chart -f services/card_support_mcp/chart/values-$s.yaml -n card-support --atomic --set image.tag=<tag>`,
 then `helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml` and
 the same with `card-support-coordinator` / `values-coordinator.yaml`.
 
@@ -279,10 +281,10 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - Layer 2: [Feature store](docs/feature_store.md), [ML training](docs/ml_training.md), [Serving](docs/serving.md), [Drift](docs/drift.md), [Testing](docs/testing.md).
 - Layer 3: [LLM platform](docs/llm_platform.md): llama.cpp behind the llm-d InferencePool, agentgateway's LLM route (API keys, rate limits, PII masking), the agents' global model config.
 - Layer 3: [LLM benchmark](docs/llm_benchmark.md): inference-perf against the model server, three configurations, the prompt-cache cap kept, speculative decoding.
-- Layer 3: [Agents](docs/agents.md): the MCP server (FastAPI, pydantic, async, Helm rolling update with automatic rollback), the three agents (KEDA, network policies, Substrate sandbox), MCP and A2A gateway policies, chat in the kagent UI, the agent registry.
+- Layer 3: [Agents](docs/agents.md): the three MCP servers (FastAPI, pydantic, Kubernetes health checks, async, one Helm release each with rolling update and automatic rollback), the three agents (KEDA, network policies, Substrate sandbox), MCP and A2A gateway policies, chat in the kagent UI, the agent registry.
 - Layer 3: [RAG pipeline](docs/rag_pipeline.md): documents to chunks to vectors in Feast, run on Airflow, checks and lineage in DataHub.
 - Layer 3: [CI/CD](docs/cicd.md): five Jenkins pipelines (RAG data pipeline, MCP server, data agents, coordinator, stream feature jobs), configured as code, secrets as Jenkins credentials, the stage views and runs of each.
-- Layer 3: [Testing](docs/testing.md#layer-3-the-card-support-mcp-server): MCP server 97 tests at 97.84% coverage, EP/BVA, hypothesis with crosshair, mutmut 243/245, locust load tests of the Web API and the agents.
+- Layer 3: [Testing](docs/testing.md#layer-3-the-card-support-mcp-servers): MCP servers 118 tests at 98.31% coverage, EP/BVA, hypothesis with crosshair, mutmut 243/245, locust load tests of the Web API and the agents.
 - Layer 3: [Edge and secrets](docs/edge_security.md): NGINX Ingress for every UI and the Web API, HTTPS with a Let's Encrypt wildcard, basic auth and rate limits, HashiCorp Vault + External Secrets.
 - Layer 3: [Observability](docs/observability.md): Web API, compute, LLM and agent dashboards in Grafana, logs in VictoriaLogs, traces in Jaeger.
 - Layer 3: [Infrastructure as code](docs/iac.md): Terraform (VNet, VM, AKS, ACR on Azure), Ansible roles that deploy the model server to the VM, the same model image on AKS, and why the rest of the platform stays on the PC.

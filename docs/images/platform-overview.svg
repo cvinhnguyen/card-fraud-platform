@@ -320,12 +320,12 @@
 <text x="1239.0" y="1133.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">LLM · MCP · A2A routes</text>
 <text x="1239.0" y="1146.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">keys, limits, PII masking</text>
 <rect x="1448" y="1070" width="286" height="100" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
-<rect x="1456" y="1078" width="99" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
-<text x="1461.0" y="1089.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">20 · MCP SERVER</text>
+<rect x="1456" y="1078" width="105" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
+<text x="1461.0" y="1089.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">20 · MCP SERVERS</text>
 <svg x="1706" y="1077" width="20" height="20" viewBox="0 0 24 24"><path d="M12 .0387C5.3729.0384.0003 5.3931 0 11.9988c-.001 6.6066 5.372 11.9628 12 11.9625 6.628.0003 12.001-5.3559 12-11.9625-.0003-6.6057-5.3729-11.9604-12-11.96m-.829 5.4153h7.55l-7.5805 5.3284h5.1828L5.279 18.5436q2.9466-6.5444 5.892-13.0896" fill="#2d3142"/></svg>
-<text x="1591.0" y="1117.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">card-support-mcp</text>
-<text x="1591.0" y="1133.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">4 tools: card data, chunk,</text>
-<text x="1591.0" y="1146.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">policy search, fraud score</text>
+<text x="1591.0" y="1117.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">3 MCP servers</text>
+<text x="1591.0" y="1133.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">card-data · fraud-score ·</text>
+<text x="1591.0" y="1146.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">policy-rag, 1 image</text>
 <rect x="40" y="1270" width="286" height="100" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="48" y="1278" width="40" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="53.0" y="1289.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">USERS</text>
@@ -361,8 +361,8 @@
 <rect x="1808" y="1278" width="87" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="1813.0" y="1289.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">25 · REGISTRY</text>
 <text x="1943.0" y="1311.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">agentregistry</text>
-<text x="1943.0" y="1327.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog: 3 agents + MCP server,</text>
-<text x="1943.0" y="1340.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">version, image, tools used;</text>
+<text x="1943.0" y="1327.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog: 3 agents + 3 MCP</text>
+<text x="1943.0" y="1340.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">servers, versions, tools used;</text>
 <text x="1943.0" y="1353.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">catalog.yaml, UI for people</text>
 <rect x="40" y="1420" width="2046" height="56" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="48" y="1428" width="117" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
@@ -413,7 +413,7 @@
 <text x="1109.0" y="1753.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">DEPLOY</text>
 <text x="1239.0" y="1775.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="middle" font-weight="600">Deploy</text>
 <text x="1239.0" y="1791.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">kind: helm upgrade --atomic</text>
-<text x="1239.0" y="1804.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">(MCP server, 3 agents, prompts)</text>
+<text x="1239.0" y="1804.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">(3 MCP servers, agents, prompts)</text>
 <text x="1239.0" y="1817.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="10.5" fill="#4f5d75" text-anchor="middle" font-weight="400">Airflow rag_image · compose jobs</text>
 <rect x="1448" y="1734" width="286" height="100" rx="8" fill="#bf452014" stroke="#bf4520"/>
 <rect x="1456" y="1742" width="75" height="15" rx="3" fill="none" stroke="#bf4520"/>

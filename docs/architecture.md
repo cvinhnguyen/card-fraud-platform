@@ -47,10 +47,10 @@ starts a Kubeflow pipeline run with the newest labels
 ([`drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
 [drift.md](drift.md)).
 
-Layer 3 (bottom band) reads from both layers above it. The MCP server
-([`services/card_support_mcp/app/main.py` L73-L99](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/card_support_mcp/app/main.py#L73-L99),
-its four tools) takes a card's features from the same Feast
-online store and a fraud score from the Layer 2 Scoring API; the RAG pipeline
+Layer 3 (bottom band) reads from both layers above it. Three MCP servers, one per tool family
+([`services/card_support_mcp/app/main.py` L40-L44](../services/card_support_mcp/app/main.py#L40-L44)), give the agents
+their tools: card-data takes a card's features from the same Feast online store, fraud-score asks the Layer 2 Scoring
+API, and policy-rag searches the bank's documents; the RAG pipeline
 ([`rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/rag_ingest.py#L64-L73))
 writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
@@ -136,7 +136,7 @@ C is the developer's push through Jenkins, and O is the platform's monitoring an
 | Rule | In the picture |
 |---|---|
 | Every box is a deployable unit | a pod set in the kind cluster (tag = namespace), a compose service (tag = profile), a process on the host, or a service on the internet. The dotted frame groups the three agents: A5-A8, C5, O5 and O6 apply to each of them |
-| Arrows follow the data, the data on the arrow | Redis -> MCP server (A10) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
+| Arrows follow the data, the data on the arrow | Redis -> card-data MCP server (A10) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
 | Numbered, one numbering per user flow | A, K, C and O, each with its own colour and 1..n; the colours are the ones of S, B, T and M, so the validated pairs carry over |
 | Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow of their own: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
 
@@ -155,7 +155,7 @@ server (C4) are there for that reason.
 | A6 | Agent conversation | ... and for risk-agent (risk-agent-b, the B side of its model-config A/B test, sits behind the same route) |
 | A7 | Agent conversation | card-data-agent's tool calls (MCP, its own API key) and LLM calls through the gateway |
 | A8 | Agent conversation | risk-agent's tool calls and LLM calls through the gateway |
-| A9 | Agent conversation | Route /mcp: only the tools allowed to the caller's key reach the MCP server (300 calls/min) |
+| A9 | Agent conversation | Routes /mcp/card-data, /mcp/fraud-score, /mcp/policy-rag: only the key of each server's agent sees its tools (300 calls/min per server) |
 | A10 | Agent conversation | get_card_data: the card's online features from Redis through Feast (project card_fraud) |
 | A11 | Agent conversation | get_policy_chunk / search_policy: policy chunks from pgvector (Feast project card_support_kb) |
 | A12 | Agent conversation | search_policy embeds the question with Qwen3-Embedding-0.6B, then searches the chunks by it |
@@ -167,7 +167,7 @@ server (C4) are there for that reason.
 | K3 | Knowledge ingest | Step write: chunks + vectors into the Feast online store (pgvector) |
 | K4 | Knowledge ingest | ... and their history into the offline store s3://lakehouse/kb/policy_chunks.parquet |
 | K5 | Knowledge ingest | Step validate: 7 checks as assertions, plus lineage documents -> jobs -> feature view |
-| C1 | CI/CD | Jenkins polls GitHub main for its 5 pipelines (MCP server, data agents, coordinator, RAG, stream jobs) |
+| C1 | CI/CD | Jenkins polls GitHub main for its 5 pipelines (MCP servers, data agents, coordinator, RAG, stream jobs) |
 | C2 | CI/CD | Agent pipelines fetch the prompt labelled production for each agent |
 | C3 | CI/CD | MCP pipeline: tests (coverage gate 90 %), mutation test, image build, push, cosign signature |
 | C4 | CI/CD | helm upgrade --atomic; the node pulls the signed image (Kyverno verifies it whenever it is installed) |
@@ -176,7 +176,7 @@ server (C4) are there for that reason.
 | C7 | CI/CD | Answers and their scores stored as a run of the Langfuse experiment |
 | C8 | CI/CD | RAG pipeline: sets Variable rag_image to the new image, triggers rag_ingest (Airflow REST API) |
 | O1 | Observability and scaling | Gateway metrics: requests per route and backend, LLM tokens, time to first token, PII guardrail hits |
-| O2 | Observability and scaling | MCP server metrics: calls, failures and latency per tool |
+| O2 | Observability and scaling | MCP servers' metrics: calls, failures and latency per tool |
 | O3 | Observability and scaling | Grafana dashboards: Web API, compute, LLM telemetry, agent telemetry, A/B tests |
 | O4 | Observability and scaling | KEDA's trigger: A2A requests per second for each agent |
 | O5 | Observability and scaling | KEDA sets each agent's replicas between 2 and 4 |

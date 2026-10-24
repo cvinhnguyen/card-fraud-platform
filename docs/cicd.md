@@ -6,7 +6,7 @@ ships, and each one ends with a check against the running platform, so a green b
 | Jenkins job | Jenkinsfile | Runs when | Ships | Rubric |
 |---|---|---|---|---|
 | `rag-pipeline` | [`pipelines/rag/Jenkinsfile`](../pipelines/rag/Jenkinsfile) | RAG steps, DAG, documents or ml image changed | image of the RAG steps, released to Airflow and run | C33 |
-| `card-support-mcp` | [`services/card_support_mcp/Jenkinsfile`](../services/card_support_mcp/Jenkinsfile) | `services/card_support_mcp/**` changed | MCP server image, Helm release in `card-support` | B34 |
+| `card-support-mcp` | [`services/card_support_mcp/Jenkinsfile`](../services/card_support_mcp/Jenkinsfile) | `services/card_support_mcp/**` changed | image of the three MCP servers, one Helm release per server in `card-support` | B34 |
 | `card-support-data-agents` | [`agents/Jenkinsfile.data-agents`](../agents/Jenkinsfile.data-agents) | `agents/**` changed, after the MCP pipeline, or a new production prompt in Langfuse | card-data-agent and risk-agent, Helm release in `kagent` | C34 |
 | `card-support-coordinator` | [`agents/Jenkinsfile.coordinator`](../agents/Jenkinsfile.coordinator) | `agents/**` changed, after the data agents, or a new production prompt | coordinator, Helm release in `kagent` | C35 |
 | `stream-feature-jobs` | [`ml/jobs/Jenkinsfile.stream`](../ml/jobs/Jenkinsfile.stream) | push jobs, ML library, Feast repo or ml image changed | push-online and push-offline (Kafka to Redis and Delta) | B36 |
@@ -37,7 +37,7 @@ not show up in the process list or the build log.
 | `langfuse-public-key`, `langfuse-secret-key` | agent pipelines: system prompts and the eval experiment |
 | `a2a-key-coordinator`, `a2a-key-support-app` | A2A smoke tests through agentgateway |
 | `edge-admin-password` | MCP smoke test of the Web API over HTTPS through NGINX |
-| `cosign-key`, `cosign-password` | signing the MCP image |
+| `cosign-key`, `cosign-password` | signing the MCP servers' image |
 | `ml-db-password`, `redis-password`, `s3-access-key`, `s3-secret-key` | stream jobs deploy and smoke test |
 | `airflow-admin` | RAG pipeline: release and run through the Airflow REST API |
 
@@ -92,23 +92,24 @@ ok   expect_every_document_to_have_chunks         observed=['authentication_rule
 ok   expect_online_store_to_match_offline         observed=57/57 chunks identical online
 ```
 
-## MCP server
+## MCP servers
 
-[`services/card_support_mcp/Jenkinsfile`](../services/card_support_mcp/Jenkinsfile) ships the card support Web API /
-MCP server, the tool server both data agents use. When it succeeds it starts the data agents' pipeline, so the agents
-are deployed against the MCP release that just passed.
+[`services/card_support_mcp/Jenkinsfile`](../services/card_support_mcp/Jenkinsfile) ships the three MCP servers the
+data agents use (card-data, fraud-score, policy-rag, [agents.md](agents.md#the-three-mcp-servers)): one code base and
+one image, tested, mutation-tested and signed once, then deployed as one Helm release per server. When it succeeds it
+starts the data agents' pipeline, so the agents are deployed against the releases that just passed.
 
-![Jenkins stage view of card-support-mcp: #9 failed at signing, #10 and #11 passed every stage](images/cicd_card-support-mcp.png)
+![Jenkins full stage view of card-support-mcp: #16 passed every stage, from the unit tests and the mutation test to the signature, the deploy of the three servers and the smoke test; #15 was a poll with nothing to build](images/cicd_card-support-mcp.png)
 
 | Stage | What it does |
 |---|---|
 | Version | short commit hash, used as the image tag |
-| Unit tests + coverage gate | `docker build --target test`, then pytest in it; fails under 90% coverage ([testing.md](testing.md#layer-3-the-card-support-mcp-server)) |
+| Unit tests + coverage gate | `docker build --target test`, then pytest in it; fails under 90% coverage ([testing.md](testing.md#layer-3-the-card-support-mcp-servers)) |
 | Mutation test | mutmut on the tool rules; fails under 80% of mutants killed |
 | Build + push image | runtime stage of the multi-stage Dockerfile, pushed to the compose registry as `card-support-mcp:<commit>` |
 | Sign image (cosign) | signs the image by digest with the CI key ([novel_supply_chain.md](novel_supply_chain.md)) |
-| Deploy (helm --atomic) | `helm upgrade --install --atomic` into `card-support`: rolling update with maxUnavailable 0, and a release whose pods never get Ready is rolled back |
-| Smoke test | the Web API over HTTPS through NGINX must return a real card, and both kagent RemoteMCPServers must accept the new release |
+| Deploy (helm --atomic) | for each server, `helm upgrade --install <server>-mcp -f values-<server>.yaml --atomic` into `card-support`: rolling update with maxUnavailable 0; a release whose pods never get Ready is rolled back and stops the stage before the next server |
+| Smoke test | the card-data Web API over HTTPS through NGINX must return a real card, and the three kagent RemoteMCPServers must accept the new releases |
 | post: success | `build job: 'card-support-data-agents'` |
 
 The two test gates
@@ -145,6 +146,16 @@ both RemoteMCPServers `Accepted`, then `Scheduling project: card-support-data-ag
 after the trigger fix below) did the same in 89 s: 97 tests, image `b5bd125` signed (`sha256:fdb05642...`), Helm
 revision 12, and it started data agents #29.
 
+Build #13 (2026-10-24, started by hand, commit `7da43e5` that split the server into three) ran the same gates on the
+new code: 118 tests at 98.31% coverage, 243 of 245 mutants killed, image `7da43e5` pushed and signed
+(`sha256:933437f7...`), the three releases `card-data-mcp`, `fraud-score-mcp` and `policy-rag-mcp` upgraded one
+after the other in 83 s, `Web API: card data OK over HTTPS`, the three RemoteMCPServers `Accepted`, then data agents
+#35 ran the eval gate on them. Build #16, started by hand on the same commit, passed every stage again in about 10
+minutes: 118 tests (98.31%), 243 of 245 mutants killed, the image rebuilt and signed under a new digest
+(`sha256:0b9c88d6...`), the three releases upgraded in 2 min 14 s, smoke test passed, then data agents #37. Its eval
+gate failed while the fraud-score server had no Ready pod and rolled the agents back; #40 re-ran the deploy by hand
+and passed ([novel_eval_gate.md](novel_eval_gate.md#proof-it-worked)).
+
 ## Agents
 
 The agents' system prompts live in Langfuse (prompt `card-support/<agent>`, label `production`).
@@ -173,7 +184,7 @@ agents #29 started it, which is the case the fix is for.
 [`agents/Jenkinsfile.data-agents`](../agents/Jenkinsfile.data-agents) deploys card-data-agent and risk-agent (Helm
 release `card-support-data-agents`).
 
-![Jenkins stage view of card-support-data-agents: #29, started by the MCP pipeline, deployed and passed the eval gate; #27 failed in the eval gate](images/cicd_card-support-data-agents.png)
+![Jenkins stage view of card-support-data-agents: #35 and #40 deployed the agents on the three MCP servers and passed the eval gate, #37 failed it and rolled back, #39 was aborted by a crash of the PC; the other rows are timer runs with nothing to deploy](images/cicd_card-support-data-agents.png)
 
 | Stage | What it does |
 |---|---|
@@ -181,7 +192,7 @@ release `card-support-data-agents`).
 | Changed? | also deploys on a change under `agents/` or a manual / upstream start |
 | Validate | `helm lint`, then `helm template` through a server-side dry run against the cluster |
 | Deploy | `helm upgrade --atomic`, then waits until both Agents are Ready |
-| Smoke test (A2A through the gateway) | asks each agent one question through agentgateway, the way the coordinator calls it (coordinator key, header `x-kagent-host`); the answer must complete and contain the expected text |
+| Smoke test (A2A through the gateway) | asks each agent one question through agentgateway, the way the coordinator calls it (coordinator key, header `x-kagent-host`); the answer must complete and match the expected pattern (the fee question: its citation `fee_schedule` / "fee schedule" or the 2.5% fact) |
 | Eval gate (Langfuse experiment) | the risk agent answers the eval dataset as a Langfuse experiment; below 0.6 accuracy, `helm rollback` and the build fails ([novel_eval_gate.md](novel_eval_gate.md)) |
 
 The eval gate stage
@@ -222,6 +233,14 @@ credentials block left out):
 - #29 (started by MCP #11, with the trigger fix): deploy and smoke test passed, then the eval gate asked the 20
   questions twice: 0.95 and 0.90, `accuracy 0.93 over 2 run(s) of 20 questions (gate 0.60): pass`. It then started the
   coordinator pipeline.
+- #32 (2026-10-24, the commit that split the MCP server into three): the agents now take their tools from
+  `card-data-mcp`, `fraud-score-mcp` and `policy-rag-mcp`; deploy, smoke test, eval 0.90 and 0.95, pass. #35, started
+  by MCP #13: eval 1.00 and 0.95, pass.
+- #37 (started by MCP #16): deploy and smoke test passed, then the eval scored 0.20 and 0.70 (mean 0.45). For 28 s
+  both fraud-score pods had failed their readiness check, so the risk agent could not reach that server and failed
+  every question asked in that window ([agents.md](agents.md#gotchas)). The gate rolled the release back. #39 was
+  stopped by a crash of the PC during its eval; #40, started by hand, passed with 0.90 and 0.95 and started the
+  coordinator.
 
 ### Coordinator
 
@@ -238,13 +257,19 @@ does: the public A2A route `/a2a/coordinator` with the support-app key, and a qu
 | Changed? | also deploys on a change under `agents/` or a manual / upstream start |
 | Validate | `helm lint` and a server-side dry run |
 | Deploy | `helm upgrade --atomic`, waits until the coordinator is Ready |
-| Smoke test (A2A client through the gateway) | one question needing card data and policy; the answer must complete and cite `fee_schedule` |
+| Smoke test (A2A client through the gateway) | one question needing card data and policy; the answer must complete and state the fee from the policy (its citation `fee_schedule` / "fee schedule" or the 2.5% fact) |
 
 Build #24 (commit under `agents/`): `coordinator: completed | The card made 3 payments in the last 30 days. The
 foreign transaction fee is 2.5% for debit cards and 3.0% for credit cards (fee_schedule#2).` Build #26, started by
 data agents #29, answered the same question the same way. Build #18 failed its
 smoke test while the LLM canary sent part of the traffic to Groq's free tier, which answered 429; that is why the
 canary was stopped ([ab_testing.md](ab_testing.md)).
+
+On 2026-10-24 builds #29 and #30 failed the smoke test with correct answers: one wrote the source as
+"(fee schedule#2)", the other gave the 2.5% fee without a source, and the check wanted the exact text `fee_schedule`.
+The check now accepts the citation in either spelling or the fee itself
+([`agents/Jenkinsfile.coordinator` L72-L74](../agents/Jenkinsfile.coordinator#L72-L74)); #32 passed with
+`(fee_schedule#2)` in the answer.
 
 ## Stream feature jobs
 

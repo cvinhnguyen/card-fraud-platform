@@ -458,7 +458,7 @@ def layer3():
                      soft=True),
         "substrate": Box(k1, q(3), BW, BH, "Agent Substrate", ("gVisor sandboxes from", "warm snapshots"),
                          "ns ate-system", soft=True),
-        "areg": Box(k1, q(4), BW, BH, "agentregistry", ("catalog: 3 agents", "+ the MCP server"), "ns agentregistry",
+        "areg": Box(k1, q(4), BW, BH, "agentregistry", ("catalog: 3 agents", "+ 3 MCP servers"), "ns agentregistry",
                     soft=True),
         "kagent": Box(k2, q(1), BW, BH, "kagent", ("chat UI + controller", "Agent -> Deployment"), "ns kagent",
                       "kubernetes"),
@@ -475,13 +475,16 @@ def layer3():
         "grafana": Box(k4, q(5), BW, BH, "Grafana", ("Web API, compute, LLM,", "agent, A/B dashboards"), "ns monitoring"),
         "llmd": Box(k5, q(1), BW, BH, "llm-d router", ("InferencePool qwen3-8b", "endpoint picker"),
                     "ns agentgateway-system"),
-        "mcp": Box(k5, q(2), BW, q(4) + BH - q(2), "card-support-mcp",
-                   ("FastAPI + MCP server", "4 tools, REST /v1 too", "2 pods, rolling update", "helm --atomic",
-                    "signed image only"), "ns card-support", "fastapi"),
+        "rag": Box(k5, q(2), BW, BH, "policy-rag-mcp", ("search_policy (RAG)", "2 pods, helm --atomic"),
+                   "ns card-support", "fastapi"),
+        "cdata": Box(k5, q(3), BW, BH, "card-data-mcp", ("get_card_data,", "get_policy_chunk"), "ns card-support",
+                     "fastapi"),
+        "fscore": Box(k5, q(4), BW, BH, "fraud-score-mcp", ("score_payment", "-> Scoring API"), "ns card-support",
+                      "fastapi"),
         "chat": Box(c6, q(1), BW, BH, "llama.cpp chat", ("Qwen3-8B Q4, GPU", ":8085, 2 slots"), "host"),
         "embed": Box(c6, q(2), BW, BH, "llama.cpp embed", ("Qwen3-Embedding-0.6B", ":8086, 1024-dim"), "host"),
-        "redis": Box(c6, q(3), BW, BH, "Redis", ("Feast card_fraud", "online store"), "ml", "redis"),
-        "vdb": Box(c6, q(4), BW, BH, "vector-db", ("pgvector, Feast", "card_support_kb"), "ml", "postgres"),
+        "vdb": Box(c6, q(3), BW, BH, "vector-db", ("pgvector, Feast", "card_support_kb"), "ml", "postgres"),
+        "redis": Box(c6, q(4), BW, BH, "Redis", ("Feast card_fraud", "online store"), "ml", "redis"),
         "scoring": Box(c6, q(5), BW, BH, "Scoring API", ("Layer 2: features", "+ KServe -> score"), "ml", "fastapi"),
         "github": Box(c7, q(1), BW, BH, "GitHub", ("card-fraud-platform", "branch main"), "internet"),
         "langfuse": Box(c8, q(1), BW, BH, "Langfuse Cloud", ("prompts, datasets,", "experiments (EU)"), "internet"),
@@ -493,6 +496,7 @@ def layer3():
     }
     b = B
     fx, fy, fw, fh = k3 - 14, q(1) - 14, BW + 28, q(3) + BH + 14 - (q(1) - 14)   # frame around the three agents
+    mx, my, mw, mh = k5 - 14, q(2) - 14, BW + 28, q(4) + BH + 14 - (q(2) - 14)   # frame around the three MCP servers
     lane_c5, lane_c6 = 88, 106                                                       # CI lanes above the panels
     A = [
         Arrow("A", 1, "question", [b["staff"].right(), b["nginx"].left()],
@@ -514,26 +518,34 @@ def layer3():
               desc="card-data-agent's tool calls (MCP, its own API key) and LLM calls through the gateway"),
         Arrow("A", 8, "MCP + LLM", [b["risk"].right(60 / BH), (k4, q(3) + 60)], side="d",
               desc="risk-agent's tool calls and LLM calls through the gateway"),
-        Arrow("A", 9, "tool calls", [(k4 + BW, q(2) + 108), (k5, q(2) + 108)],
-              desc="Route /mcp: only the tools allowed to the caller's key reach the MCP server (300 calls/min)"),
-        Arrow("A", 10, "features", [b["redis"].left(), (k5 + BW, b["redis"].y + 42)],
-              desc="get_card_data: the card's online features from Redis through Feast (project card_fraud)"),
-        Arrow("A", 11, "chunks", [b["vdb"].left(), (k5 + BW, b["vdb"].y + 42)],
-              desc="get_policy_chunk / search_policy: policy chunks from pgvector (Feast project card_support_kb)"),
+        Arrow("A", 9, "tools", [(k4 + BW, q(2) + 108), (mx, q(2) + 108)],
+              desc="Routes /mcp/card-data, /mcp/fraud-score, /mcp/policy-rag: only the key of each server's agent "
+                   "sees its tools (300 calls/min per server)"),
+        Arrow("A", 10, "features", [b["redis"].left(20 / BH), (k5 + BW + 20, b["redis"].y + 20),
+                                    (k5 + BW + 20, q(3) + 64), (k5 + BW, q(3) + 64)], 0.6, "r",
+              desc="card-data-mcp, get_card_data: the card's online features from Redis through Feast (project "
+                   "card_fraud)"),
+        Arrow("A", 11, "chunk", [b["vdb"].left(), (k5 + BW, b["vdb"].y + 42)],
+              desc="card-data-mcp, get_policy_chunk: one policy chunk by id from pgvector (Feast project card_support_kb)"),
         Arrow("A", 12, "vector", [b["embed"].left(), (k5 + BW, b["embed"].y + 42)],
-              desc="search_policy embeds the question with Qwen3-Embedding-0.6B, then searches the chunks by it"),
-        Arrow("A", 13, "score", [b["scoring"].left(), (k5 + 120, b["scoring"].y + 42), b["mcp"].bottom(120 / BW)], 0.3,
-              desc="score_payment: the Layer 2 Scoring API answers with the fraud score and its decision"),
+              desc="policy-rag-mcp, search_policy: the question's vector from Qwen3-Embedding-0.6B"),
+        Arrow("A", 13, "score", [b["scoring"].left(), (k5 + 120, b["scoring"].y + 42), b["fscore"].bottom(120 / BW)], 0.3,
+              desc="fraud-score-mcp, score_payment: the Layer 2 Scoring API answers with the fraud score and its decision"),
         Arrow("A", 14, "prompts", [(k4 + BW, q(1) + 42), b["llmd"].left()],
               desc="Route /v1: key check, request and token limits, PII masked, then the InferencePool qwen3-8b"),
         Arrow("A", 15, "prompt", [b["llmd"].right(), b["chat"].left()],
               desc="The endpoint picker chooses a pod; its bridge forwards the prompt to llama.cpp on the host GPU"),
+        Arrow("A", 16, "search", [b["vdb"].left(20 / BH), (k5 + BW + 45, b["vdb"].y + 20),
+                                  (k5 + BW + 45, q(2) + 64), (k5 + BW, q(2) + 64)], 0.45, "r",
+              desc="policy-rag-mcp, search_policy: the chunks nearest to the question vector from pgvector, re-ranked "
+                   "by cosine"),
         Arrow("K", 1, "documents", [b["s3"].top(0.3), b["airflow"].bottom(0.3)], side="l",
               desc="rag_ingest reads the 5 bank documents from s3://bank-documents"),
         Arrow("K", 2, "vectors", [b["embed"].right(), (c7 - 30, b["embed"].y + 42), (c7 - 30, b["airflow"].y + 25),
-                                  b["airflow"].left(25 / BH)], 0.75,
+                                  b["airflow"].left(25 / BH)], 0.3,
               desc="Steps chunk (57 chunks) and embed: one 1024-dim vector per chunk from the embedding server"),
-        Arrow("K", 3, "chunks", [b["airflow"].left(59 / BH), (c6 + BW, b["vdb"].y + 59)], side="d",
+        Arrow("K", 3, "chunks", [b["airflow"].left(59 / BH), (c6 + BW + 20, b["airflow"].y + 59),
+                                 (c6 + BW + 20, b["vdb"].y + 59), (c6 + BW, b["vdb"].y + 59)], 0.62, "l",
               desc="Step write: chunks + vectors into the Feast online store (pgvector)"),
         Arrow("K", 4, "history", [b["airflow"].bottom(0.7), b["s3"].top(0.7)],
               desc="... and their history into the offline store s3://lakehouse/kb/policy_chunks.parquet"),
@@ -541,15 +553,16 @@ def layer3():
               desc="Step validate: 7 checks as assertions, plus lineage documents -> jobs -> feature view"),
         Arrow("C", 1, "commits", [b["github"].right(64 / BH), (c8 - 35, q(1) + 64), (c8 - 35, q(2) + 28),
                                   b["jenkins"].left(28 / BH)], 0.5, "l",
-              desc="Jenkins polls GitHub main for its 5 pipelines (MCP server, data agents, coordinator, RAG, stream jobs)"),
+              desc="Jenkins polls GitHub main for its 5 pipelines (MCP servers, data agents, coordinator, RAG, stream jobs)"),
         Arrow("C", 2, "prompts", [b["langfuse"].bottom(0.3), b["jenkins"].top(0.3)], side="l",
               desc="Agent pipelines fetch the prompt labelled production for each agent"),
         Arrow("C", 3, "image", [b["jenkins"].bottom(14 / BW), (c8 + 14, q(3) - 36), (c7 + 134, q(3) - 36),
                                 b["registry"].top(134 / BW)], 0.5,
               desc="MCP pipeline: tests (coverage gate 90 %), mutation test, image build, push, cosign signature"),
         Arrow("C", 4, "signed image", [b["registry"].top(34 / BW), (c7 + 34, q(2) - 36), (k5 + 85, q(2) - 36),
-                                       b["mcp"].top()], 0.24,
-              desc="helm upgrade --atomic; the node pulls the signed image (Kyverno verifies it whenever it is installed)"),
+                                       (k5 + 85, my)], 0.24,
+              desc="helm upgrade --atomic of each MCP server; the node pulls the signed image (Kyverno verifies it whenever "
+                   "it is installed)"),
         Arrow("C", 5, "agents + prompts", [b["jenkins"].right(68 / BH), (c8 + BW + 66, q(2) + 68),
                                            (c8 + BW + 66, lane_c5), (k3 + 85, lane_c5), (k3 + 85, fy)], 0.62,
               desc="Agent pipelines: helm upgrade --atomic of the agents, the Langfuse prompts in a ConfigMap"),
@@ -564,8 +577,8 @@ def layer3():
               desc="RAG pipeline: sets Variable rag_image to the new image, triggers rag_ingest (Airflow REST API)"),
         Arrow("O", 1, "metrics", [b["gw"].bottom(), b["prom"].top()],
               desc="Gateway metrics: requests per route and backend, LLM tokens, time to first token, PII guardrail hits"),
-        Arrow("O", 2, "metrics", [b["mcp"].left(354 / b["mcp"].h), b["prom"].right()],
-              desc="MCP server metrics: calls, failures and latency per tool"),
+        Arrow("O", 2, "metrics", [(mx, b["prom"].y + 42), b["prom"].right()],
+              desc="MCP servers' metrics (one ServiceMonitor each): calls, failures and latency per tool"),
         Arrow("O", 3, "series", [b["prom"].bottom(), b["grafana"].top()],
               desc="Grafana dashboards: Web API, compute, LLM telemetry, agent telemetry, A/B tests"),
         Arrow("O", 4, "req/s", [b["prom"].left(), b["keda"].right()],
@@ -591,17 +604,19 @@ def layer3():
             ((cx0 + cx1) / 2, cyb)]
     body.append(f'<path d="{path_d(poly, 12)} Z" fill="{PANEL}" stroke="{LINE}"/>')
     body.append(t(cx0 + 16, cy1 + 22, "DOCKER COMPOSE · fraud", 11, INK2, "start", 600, mono=True, spacing=0.08))
-    body.append(f'<rect x="{fx}" y="{fy}" width="{fw}" height="{fh}" rx="12" fill="none" stroke="#9aa1b1" '
-                f'stroke-dasharray="2 4"/>')
+    for x0, y0, w0, h0 in ((fx, fy, fw, fh), (mx, my, mw, mh)):   # dotted frames: the agents, the MCP servers
+        body.append(f'<rect x="{x0}" y="{y0}" width="{w0}" height="{h0}" rx="12" fill="none" stroke="#9aa1b1" '
+                    f'stroke-dasharray="2 4"/>')
     body += [box_svg(x) for x in B.values()]
     body += [arrow_svg(a, PANEL) for a in A]
     body.append(legend(28, kind_b + 24, FLOWS3, [
         "Arrow = data moving from A to B, labelled with the data; the reply to an A2A, MCP or LLM request "
         "travels back on the same call and is not drawn.",
-        "Dotted frame: the three agents (A5-A8, C5, O5, O6 apply to each). Dashed boxes: support services "
-        "without a flow of their own.",
-        "NGINX also serves registry, grafana, logs, traces and the Web API (api.<domain>: card data, chunks, "
-        "search, score over HTTPS)."]))
+        "Dotted frames: the three agents (A5-A8, C5, O5, O6 apply to each) and the three MCP servers, one image "
+        "and one Helm release each (A9, C4, O2 apply to each). Dashed boxes: support services without a flow of "
+        "their own.",
+        "NGINX also serves registry, grafana, logs, traces and the Web API (api.<domain>: card-data-mcp's card "
+        "data and chunks by id over HTTPS)."]))
     check("layer3", B, A)
     crossings("layer3", A)
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: Layer 3 system architecture",
@@ -790,7 +805,9 @@ def deployment():
         ("qwen3-8b", "bridge -> host :8085", "", "kubernetes")], w=kgw)
     parts.append(g)
     g, a2 = group(kgx[2], a1 + 14, "card-support", "", [
-        ("card-support-mcp", "2 pods, signed image", "", "fastapi")], w=kgw)
+        ("card-data-mcp", "2 pods, signed image", "", "fastapi"),
+        ("fraud-score-mcp", "2 pods, signed image", "", "fastapi"),
+        ("policy-rag-mcp", "2 pods, signed image", "", "fastapi")], w=kgw)
     parts.append(g)
     g, _ = group(kgx[2], a2 + 14, "nginx-ingress", "", [
         ("nginx-ingress", "F5 NIC 5.6.3", ":80 :443", "kubernetes")], w=kgw)
@@ -976,7 +993,7 @@ def overview():
           card(1, r3a, "17 · MODEL SERVER", "llama.cpp", ("Qwen3-8B chat on the GPU", "Qwen3-Embedding 0.6B"), ""),
           card(2, r3a, "18 · ROUTER", "llm-d", ("InferencePool qwen3-8b", "endpoint picker"), "kubernetes"),
           card(3, r3a, "19 · GATEWAY", "agentgateway", ("LLM · MCP · A2A routes", "keys, limits, PII masking"), ""),
-          card(4, r3a, "20 · MCP SERVER", "card-support-mcp", ("4 tools: card data, chunk,", "policy search, fraud score"),
+          card(4, r3a, "20 · MCP SERVERS", "3 MCP servers", ("card-data · fraud-score ·", "policy-rag, 1 image"),
                "fastapi"),
           card(0, r3b, "USERS", "Support staff", ("kagent chat in a browser", "or an app over A2A"), ""),
           card(1, r3b, "21 · EDGE", "NGINX Ingress", ("HTTPS *.<domain>", "basic auth, rate limits"), ""),
@@ -985,8 +1002,8 @@ def overview():
           card(4, r3b, "24 · WARM POOL", "Agent Substrate", ("the 3 agents again, sandboxed:",
                                                              "one gVisor sandbox per chat,",
                                                              "warm snapshot, 1 shared worker"), ""),
-          card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog: 3 agents + MCP server,",
-                                                         "version, image, tools used;",
+          card(5, r3b, "25 · REGISTRY", "agentregistry", ("catalog: 3 agents + 3 MCP",
+                                                         "servers, versions, tools used;",
                                                          "catalog.yaml, UI for people"), "")]
     mid3a, mid3b = r3a + 50, r3b + 50
     arrows += [net([(x[i] + CWD, mid3b), (x[i + 1], mid3b)], "", 0, 0) for i in range(3)]
@@ -1028,7 +1045,7 @@ def overview():
                 "jenkins"),
             Box(x[2], cyc, CWD, 100, "Docker registry", ("images + cosign signatures", "localhost:5001"), "REGISTRY",
                 "docker", store=True),
-            Box(x[3], cyc, CWD, 100, "Deploy", ("kind: helm upgrade --atomic", "(MCP server, 3 agents, prompts)",
+            Box(x[3], cyc, CWD, 100, "Deploy", ("kind: helm upgrade --atomic", "(3 MCP servers, agents, prompts)",
                                                 "Airflow rag_image · compose jobs"), "DEPLOY", ""),
             Box(x[4], cyc, CWD, 100, "Signed images only", ("Kyverno checks the cosign", "signature, pins the digest;",
                                                             "unsigned Pod: rejected"), "NOVEL L3 #2", "", accent=NOVEL),
