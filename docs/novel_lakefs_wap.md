@@ -1,22 +1,21 @@
 # Novel idea: Write-Audit-Publish for the nightly export with lakeFS
 
-Every night the core banking system exports the card transactions of the business day as Parquet files into the
-bucket `core-banking-export`. Another department runs that system and delivers the files; DP1 appends them to
-`bronze.raw_transactions`, which silver, dbt and every Trino user read. DP1 already checks each export with Great
-Expectations, but it used to check after the append: when a check failed, DP2 did not start, and the rows were already
-in the table that everyone queries. Taking them out again means a Delta `DELETE` and, because older table versions
-keep the files, a `VACUUM` after the retention period.
+Layer 1 novel idea: DP1 loads the nightly core banking export with the Write-Audit-Publish pattern on lakeFS. Each run
+writes the new export on its own branch, the checks read that branch, and only a run that passed is merged into
+`main`, the branch every reader sees, so a broken export never reaches the table that silver, dbt and Trino read. Not
+covered in EDAI: data version control over a data lake (branches, commits, merges, zero-copy import with lakeFS) and
+Write-Audit-Publish. The course covered Delta Lake (versions of one table) and Great Expectations, which this uses
+unchanged.
 
-The worst bad delivery for this table is an export that carries real card numbers (PAN) instead of the tokens
-`card_xxxxxxxx`. PCI DSS v4.0 requirement 3.5.1 asks for the PAN to be unreadable anywhere it is stored, so those rows
-must never reach a table people can query.
+| | |
+|---|---|
+| Code | [`infra/init_lakefs.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/init_lakefs.py), [`pipelines/airflow/dags/common.py` L130-L175](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L130-L175), [`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp1_source_to_bronze.py), [`infra/docker-compose.yaml` L162-L188](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/docker-compose.yaml#L162-L188) |
+| Runs on | lakeFS 1.88: compose profile `batch`, UI and API http://127.0.0.1:8001; the DP1 DAG in Airflow (profile `orch`) |
+| Reads | the nightly export in `s3://core-banking-export/transactions/export_date=<ds+1>/` |
+| Writes | `bronze.raw_transactions` in the lakeFS repository `bronze`: the run branch `dp1_<ds>`, merged into `main`; new objects in `s3://lakefs-data` |
+| Related | [airflow.md](airflow.md) |
 
-[lakeFS](https://docs.lakefs.io/) puts Git-like branches, commits and merges over object storage. DP1 now follows the
-Write-Audit-Publish pattern: each run writes the new export on its own branch, the checks read that branch, and only a
-run that passed is merged into `main`, the branch every reader sees. A failed run leaves `main` as it was and keeps its
-branch for the source team to inspect. Not covered in EDAI: data version control over a data lake (branches, commits,
-merges, zero-copy import with lakeFS) and Write-Audit-Publish. The course covered Delta Lake (versions of one table)
-and Great Expectations, which this uses unchanged.
+One DP1 run on lakeFS:
 
 ```mermaid
 flowchart LR
@@ -28,6 +27,36 @@ flowchart LR
     v -- "a check failed" --> s["run stops<br/>main unchanged, branch kept"]
     m --> r[("main: bronze.raw_transactions<br/>silver, dbt, Trino")]
 ```
+
+## Run it
+
+`init_lakefs.py` runs once, with the `core` and `batch` profiles up. After it, every DP1 run goes through a branch
+(the other Airflow commands are in [airflow.md](airflow.md#run-it)):
+
+```bash
+docker compose -f infra/docker-compose.yaml --profile core --profile batch --profile orch up -d --build
+python infra/init_lakefs.py                                                     # repository, zero-copy import, main protected
+docker exec airflow-scheduler airflow dags test dp1_source_to_bronze <ds>        # one DP1 run: branch, load, checks, merge
+```
+
+Replace `<ds>` with the business day to load (`YYYY-MM-DD`); the run reads the export of the next day,
+`export_date=<ds+1>`.
+
+## Problem
+
+Every night the core banking system exports the card transactions of the business day as Parquet files into the
+bucket `core-banking-export`. Another department runs that system and delivers the files; DP1 appends them to
+`bronze.raw_transactions`, which silver, dbt and every Trino user read. DP1 already checks each export with Great
+Expectations, but it used to check after the append: when a check failed, DP2 did not start, and the rows were already
+in the table that everyone queries. Taking them out again means a Delta `DELETE` and, because older table versions
+keep the files, a `VACUUM` after the retention period.
+
+The worst bad delivery for this table is an export that carries real card numbers (PAN) instead of the tokens
+`card_xxxxxxxx`. PCI DSS v4.0 requirement 3.5.1 asks for the PAN to be unreadable anywhere it is stored, so those rows
+must never reach a table people can query.
+
+[lakeFS](https://docs.lakefs.io/) puts Git-like branches, commits and merges over object storage. With
+Write-Audit-Publish on it, a failed run leaves `main` as it was and keeps its branch for the source team to inspect.
 
 ## Scope: one table, chosen by who delivers it
 
@@ -42,34 +71,37 @@ SeaweedFS as before.
 
 ## How it is wired
 
-- [`infra/docker-compose.yaml` L162-L188](../infra/docker-compose.yaml#L162-L188): lakeFS 1.88 in the `batch` profile.
+- [`infra/docker-compose.yaml` L162-L188](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/docker-compose.yaml#L162-L188): lakeFS 1.88 in the `batch` profile.
   Objects go to the SeaweedFS bucket `lakefs-data`, the metadata to a local key-value store in the volume
   `lakefs_data`. `LAKEFS_EMAIL_SUBSCRIPTION_ENABLED=false` removes the first-start form that asks for a company e-mail;
   the admin user and its keys come from `infra/.env`.
-- [`spark-defaults.conf` L19-L24](../infra/conf/spark/spark-defaults.conf#L19-L24) and
-  [`hive-site.xml` L14-L17](../infra/conf/hive/hive-site.xml#L14-L17): an S3A setting for the bucket `bronze` only.
+- [`infra/conf/spark/spark-defaults.conf` L19-L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/spark/spark-defaults.conf#L19-L24) and
+  [`infra/conf/hive/hive-site.xml` L14-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/hive/hive-site.xml#L14-L17): an S3A setting for the bucket `bronze` only.
   `s3a://bronze/<branch>/...` goes to the lakeFS S3 gateway, every other bucket still goes to SeaweedFS, so no job
   changes how it reads other tables.
-- [`infra/init_lakefs.py`](../infra/init_lakefs.py), run once: creates the repository `bronze`, imports the existing
+- [`infra/init_lakefs.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/init_lakefs.py), run once: creates the repository `bronze`, imports the existing
   table into `main` without copying it, protects `main` (no direct writes or commits, only merges) and points the
   metastore table at `s3a://bronze/main/raw_transactions`. Silver and dbt read the same table name as before.
-- [`infra/conf/trino/catalog/lakefs.properties`](../infra/conf/trino/catalog/lakefs.properties): Trino reads the table
+- [`infra/conf/trino/catalog/lakefs.properties`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/trino/catalog/lakefs.properties): Trino reads the table
   as `lakefs.bronze.raw_transactions`; every other table stays in the catalog `delta`.
-- [`pipelines/airflow/dags/common.py` L130-L175](../pipelines/airflow/dags/common.py#L130-L175): the tasks
+- [`pipelines/airflow/dags/common.py` L130-L175](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L130-L175): the tasks
   `create_branch`, `commit_branch` and `merge_to_main`, three calls to the lakeFS API. The commit carries the Airflow
   run id; the merge commit also carries the path of the validation results.
-- [`dp1_source_to_bronze.py` L34-L52](../pipelines/airflow/dags/dp1_source_to_bronze.py#L34-L52): the run's branch
-  `dp1_<ds>`, `ingest_exports` and `validate_dp1` with `--txn-root s3a://bronze/dp1_<ds>`, and the order
-  `ingest -> commit -> validate -> merge -> trigger DP2`.
+- [`pipelines/airflow/dags/dp1_source_to_bronze.py` L34-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp1_source_to_bronze.py#L34-L52): the run's branch
+  `dp1_<ds>`, `ingest_exports` and `validate_dp1` with `--txn-root s3a://bronze/dp1_<ds>`, and the order of the tasks:
+  ingest, commit, validate, merge, trigger DP2.
 
-`ingest_bronze.py` refuses to append an export to `main` (`--txn-root` is required and must be a branch), and
-`rewind_days.py` deletes days on a branch of its own and merges it, since `main` takes no direct writes.
+`ingest_bronze.py` refuses to append an export to `main` (`--txn-root` is required and must be a branch,
+[`pipelines/spark/ingest_bronze.py` L127-L129](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/ingest_bronze.py#L127-L129)),
+and `rewind_days.py` deletes days on a branch of its own and merges it, since `main` takes no direct writes
+([`pipelines/spark/rewind_days.py` L40-L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/rewind_days.py#L40-L47)).
 
 ## How it works, step by step (2026-10-24)
 
 ### 1. The table moves into lakeFS without a copy
 
-`init_lakefs.py` imported `s3://lakehouse/bronze/raw_transactions/` into `main`: 1,970 objects in 2 s, one commit.
+`init_lakefs.py` imported `s3://lakehouse/bronze/raw_transactions/` into `main`: 1,970 objects in 2 s, one commit
+([`infra/init_lakefs.py` L50-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/init_lakefs.py#L50-L61)).
 lakeFS records where each object already is and copies nothing. Spark counted 8,314,171 rows through `main` and through
 the old path, and Trino's `lakefs.bronze.raw_transactions` returned the same.
 
@@ -90,8 +122,9 @@ of the task before them; the run took about 4 minutes, almost all of it Spark.
 
 To test the gate, 20 of the 8,189 rows in the export of 2026-11-06 got the card number 4111 1111 1111 1111 in
 `card_id` (a public test number that belongs to no card). The run for 2026-11-05 appended it on `dp1_20261105` and
-committed it. The check that every `card_id` is a token failed, so `validate_dp1` failed and `merge_to_main` and
-`trigger_dp2` never ran:
+committed it. The check that every `card_id` is a token
+([`pipelines/spark/validate.py` L60-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/validate.py#L60-L61))
+failed, so `validate_dp1` failed and `merge_to_main` and `trigger_dp2` never ran:
 
 ![Airflow: run 2026-11-05 of dp1_source_to_bronze; create_branch, ingest_exports and commit_branch succeeded, validate_dp1 failed, merge_to_main and trigger_dp2 upstream_failed](images/wap_airflow_blocked.png)
 
@@ -100,9 +133,11 @@ The validation results that DP1 writes for every run name the check and the coun
 ![Git Bash: results.json of dp1 2026-11-05 read from SeaweedFS, success false, expect_column_values_to_match_regex on card_id with unexpected_count 20 of 8189](images/wap_validation_fail.png)
 
 The broken export is on the branch only. lakeFS shows the difference between `main` and the branch, one new export
-folder and one new Delta log entry, and the branch's commit on top of `main`'s history:
+folder and one new Delta log entry:
 
 ![lakeFS Compare: main and dp1_20261105 differ by raw_transactions/_delta_log/ and raw_transactions/export_date=2026-11-06/](images/wap_lakefs_compare.png)
+
+The Commits page of the branch shows its commit on top of `main`'s history:
 
 ![lakeFS Commits of dp1_20261105: DP1 load for 2026-11-05 on top of Publish DP1 2026-11-04 validated, DP1 load for 2026-11-04, the zero-copy import and Repository created](images/wap_lakefs_branch_commits.png)
 
@@ -123,8 +158,9 @@ docker exec spark-master /opt/spark/bin/spark-sql --master 'local[2]' -e "SELECT
 ### 4. The corrected export is published
 
 The source team delivers the export again (here: the original file put back) and the same run is started again.
-`create_branch` replaces the old `dp1_20261105` with a fresh branch from `main`, the run appends the export, commits
-(`69715bd2`), passes 45 of 45 checks and merges, then starts DP2 for the day:
+`create_branch` replaces the old `dp1_20261105` with a fresh branch from `main`
+([`pipelines/airflow/dags/common.py` L150-L155](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L150-L155)),
+the run appends the export, commits (`69715bd2`), passes 45 of 45 checks and merges, then starts DP2 for the day:
 
 ![Airflow: the rerun of 2026-11-05, every task succeeded, merge_to_main and trigger_dp2 included](images/wap_airflow_published.png)
 
@@ -168,14 +204,17 @@ The same gate would stop any other failed check on the export (row count, nulls,
 - The validation results are one file per suite and day, so a rerun overwrites the result of the failed run. The
   lakeFS commit keeps the data that failed, but not the check result.
 - Two branches that append to the same Delta table write the same log file name and conflict on merge. DP1 runs one
-  day at a time (`max_active_runs=1`), so this does not happen in the pipeline; a manual load next to a run would hit it.
+  day at a time (`max_active_runs=1`,
+  [`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L38)),
+  so this does not happen in the pipeline; a manual load next to a run would hit it.
 - One lakeFS server with its metadata in the Docker volume `lakefs_data`: no high availability, and losing the volume
   (`docker compose down -v`, a Docker Desktop reset) breaks `bronze.raw_transactions`. The objects stay in SeaweedFS,
   but every export appended through lakeFS sits under a generated name in `s3://lakefs-data`, and only the lakeFS
   metadata maps it back to the table, so silver, DP2 and Trino fail on the table. Recovery: delete the leftover
-  `s3://lakefs-data/bronze/` prefix, run `infra/init_lakefs.py` again (it imports the table as it was at the import,
-  exports up to 2026-11-04), then rerun DP1 for every business day after that; the export files are still in
-  `core-banking-export`. lakeFS can also dump a repository's refs and restore them (`lakectl refs-dump` and
-  `refs-restore`), which is not set up here.
+  `s3://lakefs-data/bronze/` prefix, run
+  [`infra/init_lakefs.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/init_lakefs.py)
+  again (it imports the table as it was at the import, exports up to 2026-11-04), then rerun DP1 for every business
+  day after that; the export files are still in `core-banking-export`. lakeFS can also dump a repository's refs and
+  restore them (`lakectl refs-dump` and `refs-restore`), which is not set up here.
 - Trino's `delta.bronze.raw_transactions` no longer works (that catalog cannot reach the bucket `bronze`); use
   `lakefs.bronze.raw_transactions`.

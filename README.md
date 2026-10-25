@@ -41,8 +41,6 @@ Layer 2's online features and model.
 
 ## Architecture
 
-![Platform overview: Layer 1 builds the features, each step writing a lakehouse zone (landing, bronze, silver, gold, features) that the next step reads; Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents; below them the CI/CD path (GitHub, Jenkins, registry, deploy, signed images, eval gate) and what runs in the cloud (SaaS and the Azure IaC resources)](docs/images/platform-overview.png)
-
 Layer 1 turns the source systems into feature tables (batch) and realtime features (stream). Feast is the hand-over:
 the same 20 features for training (offline store, point-in-time joins) and for serving (online store). Layer 2 trains
 on them, serves the model behind the Scoring API and retrains when the drift check fails. Layer 3 reads the same
@@ -50,16 +48,18 @@ online features and the Scoring API through three MCP servers, adds the bank's d
 (chunks and vectors), and runs the agents behind one gateway. The numbers are the steps of the tables below. Blue
 cards are where the data rests between two steps (lakehouse zones on SeaweedFS, Kafka topics, databases): a step
 writes a store and the next step reads it, so no arrow goes straight from one Spark job to the next. Orange cards are
-the four novel ideas. The
-two rows at the bottom show how a change ships (CI/CD: GitHub, Jenkins, the signed image, deploy and check) and
-what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deployment](#deployment)).
+the four novel ideas. The two rows at the bottom show how a change ships (CI/CD: GitHub, Jenkins, the signed image,
+deploy and check) and what runs in the cloud: SaaS, and the Azure resources an IaC run creates
+([Deployment](#deployment)):
+
+![Platform overview: Layer 1 builds the features, each step writing a lakehouse zone (landing, bronze, silver, gold, features) that the next step reads; Feast hands them to Layer 2, which trains, serves and monitors the model, and Layer 3's agents answer card support questions from the same features, the model and the bank's documents; below them the CI/CD path (GitHub, Jenkins, registry, deploy, signed images, eval gate) and what runs in the cloud (SaaS and the Azure IaC resources)](docs/images/platform-overview.png)
 
 ### Layer 1: data platform
 
 | Step | Component | What it does |
 |---|---|---|
 | 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged; the export lands on a lakeFS branch and is merged into `main` only after its checks pass (novel idea 2) |
-| 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in `skew_join.py`) |
+| 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/skew_join.py)) |
 | 03 · DP2 | dbt-spark | Gold `dim_*` / `fact_*` on Spark (own session in Airflow, Thrift Server by hand), SCD2 `dim_customer` model, incremental fact, 22 dbt tests |
 | 04 · DP3 | Spark features | `feat_*` tables with `event_timestamp` and `created` for the Layer 2 feature store |
 | 05 | Trino | SQL over every zone (`delta.<zone>.<table>`, the export as `lakefs.bronze.raw_transactions`): finds a table's location in the Hive Metastore, reads its Delta files from S3 |
@@ -71,8 +71,8 @@ what runs in the cloud: SaaS, and the Azure resources an IaC run creates ([Deplo
 
 | Step | Component | What it does |
 |---|---|---|
-| 09 | Feast (`ml/feature_repo/`) | Offline store = the lakehouse Delta tables (Spark), online store = Redis; daily stats materialized by Airflow, realtime and device features pushed from Kafka (`ml/jobs/push_job.py`) |
-| 10 | Notebook | The same 7 steps the pipeline runs, one by one, ending with both models saved and an MLflow run (`ml/notebooks/fraud_model.ipynb`) |
+| 09 | Feast ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/feature_repo)) | Offline store = the lakehouse Delta tables (Spark), online store = Redis; daily stats materialized by Airflow, realtime and device features pushed from Kafka ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/jobs/push_job.py)) |
+| 10 | Notebook | The same 7 steps the pipeline runs, one by one, ending with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/notebooks/fraud_model.ipynb)) |
 | 11 | Kubeflow Pipelines on kind | `train_fraud_model`: labels -> Feast point-in-time features -> data checks -> time split -> distributed XGBoost (Spark executor pods) -> evaluation gate -> MLflow registry |
 | 12 | MLflow | Experiment runs, data versions, model registry with aliases `challenger` / `production` |
 | 13 | KServe | InferenceService (Standard mode) serving the `production` booster baked into the image |
@@ -83,11 +83,11 @@ Five classes carry the ML logic:
 
 | Class | File | Job |
 |---|---|---|
-| `TrainingDataService` | `ml/fraud_ml/data.py` | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
-| `FraudModelTrainer` | `ml/fraud_ml/train.py` | Logistic-regression baseline + distributed `SparkXGBClassifier` |
-| `ModelEvaluator` | `ml/fraud_ml/evaluate.py` | Thresholds on validation, test metrics, gate vs baseline and `production` |
-| `ModelRegistry` | `ml/fraud_ml/registry.py` | MLflow logging, model versions and aliases |
-| `FraudScorer` | `services/scoring_api/app/scorer.py` | Request -> features -> score -> decision, fallback when KServe is down |
+| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/fraud_ml/data.py#L38) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
+| `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
+| `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
+| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/fraud_ml/registry.py#L24) | MLflow logging, model versions and aliases |
+| `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
 
 ### Layer 3: LLM and agent platform
 
@@ -108,11 +108,13 @@ Five classes carry the ML logic:
 
 ### System diagram
 
-![System architecture: deployable units and the numbered data flows between them](docs/images/platform-architecture.png)
-
 Every box is a deployable unit: a compose container or a workload on the kind cluster (Feast is a library inside
 them, so it has no box). Arrows follow the data and carry it as their label; a call without data (B1, M7) points from
-caller to callee. Each flow has its own colour, letter and numbering:
+caller to callee:
+
+![System architecture: deployable units and the numbered data flows between them](docs/images/platform-architecture.png)
+
+Each flow has its own colour, letter and numbering:
 
 | Flow | Who / when | Path |
 |---|---|---|
@@ -126,13 +128,13 @@ Every numbered arrow, one line each: [docs/architecture.md](docs/architecture.md
 
 ### Layer 3 system diagram
 
-![Layer 3 system architecture: agents, gateway, model servers, RAG ingest, CI/CD and observability, numbered per flow](docs/images/platform-layer3.png)
-
 Support staff reach the agents through NGINX over HTTPS. Every agent call (A2A, MCP, LLM) then passes agentgateway,
 which checks keys, limits requests and masks personal data before the llm-d router hands LLM calls to llama.cpp on
 the host GPU. The card-data MCP server takes a card's features from the same Feast online store as Layer 2, the
 fraud-score server asks the Scoring API, and the policy-rag server searches the policy chunks and vectors the RAG
-pipeline writes into a second Feast project (pgvector).
+pipeline writes into a second Feast project (pgvector):
+
+![Layer 3 system architecture: agents, gateway, model servers, RAG ingest, CI/CD and observability, numbered per flow](docs/images/platform-layer3.png)
 
 | Flow | Who / when | Path |
 |---|---|---|
@@ -144,6 +146,9 @@ pipeline writes into a second Feast project (pgvector).
 Every Layer 3 arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows-layer-3).
 
 ### Deployment
+
+Where each part runs: the host with its tools and the two model servers, the compose profiles in the Docker Desktop
+VM, the namespaces of the kind cluster, the Azure resources of an IaC run, and the SaaS used over the internet:
 
 ![Deployment: host tools and model servers, compose profiles in the Docker Desktop VM, the kind cluster's namespaces, the Azure resources of the IaC runs, and the SaaS on the internet](docs/images/platform-deployment.png)
 
@@ -200,6 +205,9 @@ docs/                 one file per major part; diagrams/ = the scripts that draw
 ```
 
 ## Quick start
+
+From the repo root, with Docker and Python 3. The commands use the Windows venv path `.venv/Scripts`; on macOS or
+Linux it is `.venv/bin`:
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
@@ -272,7 +280,7 @@ Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to g
 - [Schema design](docs/schema_design.md): zones, naming, grain of every table, which job reads and writes each table, ER diagrams of bronze, silver and gold.
 - [Spark jobs](docs/spark_jobs.md): DP1 bronze ingest, DP2 silver (dedup, unit normalization, HCMC chart), dbt gold star schema, labels with label delay, DP3 features.
 - [Spark optimization](docs/spark_optimization.md): the three offline data problems from baseline to fix: merchant join skew (baseline vs salting vs AQE vs broadcast, skew level sweep), schema evolution (`mergeSchema`), duplicates (dedup + MERGE).
-- [Flink jobs](docs/flink_jobs.md): late events, duplicates, realtime features, out-of-order sessions, raw events to bronze; each checked against the Parquet truth.
+- [Flink jobs](docs/flink_jobs.md): late events, duplicates, realtime features, out-of-order sessions, the hot key (replayed and at a fixed live rate), raw events to bronze; each replay checked against the Parquet truth, and the live jobs that stay RUNNING.
 - [Storage optimization](docs/storage_optimization.md): small files, partitioning, `OPTIMIZE` + Z-order on Delta; B-tree and BRIN indexes on the Postgres serving table.
 - [Airflow](docs/airflow.md): DP1 / DP2 / DP3 DAGs, connections and variables in Airflow, validate stages (GE on Spark), backfill.
 - [DataHub](docs/datahub.md): tables of every zone, lineage from source to features, which DAG produced each table, validation results.

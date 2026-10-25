@@ -1,9 +1,16 @@
 # Architecture
 
-Four views of the same platform, all drawn by `docs/diagrams/platform.py` from the tables in that script (stdlib only).
-Redraw with `python docs/diagrams/platform.py` (or name the views to redraw, e.g. `... platform.py layer3`): it writes
-`docs/images/platform-*.svg`, renders the PNGs with headless Chrome or Edge one at a time, prints the arrow tables
-below, and warns when an arrow crosses a box, a label overlaps one, or two arrows of the Layer 3 diagram cross.
+Four views of the same platform, Layers 1 to 3: what it does step by step, which deployable unit sends which data to
+which, and where each unit runs. All four are drawn by
+[`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/docs/diagrams/platform.py)
+from the tables in that script (stdlib only), which also prints the numbered-arrow tables of this page.
+
+| | |
+|---|---|
+| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/docs/diagrams/platform.py) |
+| Runs on | host process (Python stdlib; headless Chrome or Edge renders the PNGs) |
+| Writes | `docs/images/platform-*.svg` and the PNGs next to them; prints the arrow tables below |
+| Related | [schema_design.md](schema_design.md), [agents.md](agents.md), [cicd.md](cicd.md), [iac.md](iac.md) |
 
 | View | Question it answers | Boxes are |
 |---|---|---|
@@ -12,46 +19,62 @@ below, and warns when an arrow crosses a box, a label overlaps one, or two arrow
 | [System diagram, Layer 3](#layer-3-system-diagram) | The same question for the agents, the gateway and the model servers | deployable units |
 | [Deployment](#deployment) | Where does each unit run, on which port? | containers, Kubernetes workloads, host processes |
 
+## Run it
+
+Redraw the diagrams from the repo root (Python stdlib only; Chrome or Edge renders the PNGs):
+
+```bash
+python docs/diagrams/platform.py            # every view
+python docs/diagrams/platform.py layer3     # only the named views (overview, architecture, layer3, deployment)
+```
+
+It writes `docs/images/platform-*.svg`, renders the PNGs with headless Chrome or Edge one at a time, prints the arrow
+tables below, and warns when an arrow crosses a box, a label overlaps one, or two arrows of the Layer 3 diagram cross.
+
 ## Overview
 
-![Platform overview](images/platform-overview.png)
+The overview has three bands, a bar between the first two, and bars under all of them. White cards are steps, blue
+cards are stores (where the data rests between two steps), orange cards are the four novel ideas:
 
-Three bands, a bar between the first two, and bars under all of them. White cards are steps, blue cards are stores
-(where the data rests between two steps), orange cards are the four novel ideas. Layer 1 (top) turns the source systems into
-feature tables, daily with Spark (DAG
-[`dp1_source_to_bronze.py` L26-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/dp1_source_to_bronze.py#L26-L39),
+![Platform overview: the 27 steps in three bands for Layers 1, 2 and 3, the stores between them in blue, Feast as the bar between Layers 1 and 2, the four novel ideas in orange, and the CI/CD and cloud rows](images/platform-overview.png)
+
+Layer 1 (top) turns the source systems into feature tables, daily with Spark (DAG
+[`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L52),
 which triggers DP2 and DP3) and continuously with Flink
-([`rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/flink/rt_features.py#L94-L121)).
+([`pipelines/flink/rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/flink/rt_features.py#L94-L121)).
 No step hands its data straight to the next one: each writes a zone of the lakehouse (Delta tables under
 `s3a://lakehouse/<zone>/` on SeaweedFS, registered in the Hive Metastore) and the next step reads that zone. Flink
 lands the raw authorizations as JSON files in `landing/`, DP1 copies them and the core banking sources into
 `bronze/`, DP2 cleans bronze into `silver/`, dbt builds `gold/` from silver, DP3 computes `gold/feat_*` from gold.
+One bronze table lives elsewhere: DP1 appends the nightly export to `bronze.raw_transactions` in the lakeFS
+repository `bronze`, on a branch of its own, and merges that branch into `main` after the checks
+([novel_lakefs_wap.md](novel_lakefs_wap.md)).
 Trino has no arrow from Spark: it asks the Hive Metastore where a table lives and reads the Delta files itself, so it
 can query any zone.
 Layer 2 (middle) trains, registers, serves and monitors the model (KFP pipeline
-[`train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/pipelines/train_fraud_model.py#L102-L124),
+[`ml/pipelines/train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/pipelines/train_fraud_model.py#L102-L124),
 Scoring API
-[`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/services/scoring_api/app/main.py#L60-L63)).
+[`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/main.py#L60-L63)).
 Its stores sit under the steps: the versioned training sets in `lakehouse/ml/`, MLflow's PostgreSQL (runs, registry)
 and bucket `mlflow` (model files), and the Kafka topic `fraud_predictions` that carries every decision to the drift
 check.
 Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
 see the same 20 features (`fraud_model_v1`,
-[`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/ml/feature_repo/fraud_features.py#L123-L128)).
+[`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/ml/feature_repo/fraud_features.py#L123-L128)).
 Drift is checked twice. The Drift API is a service that runs all the time: the drift forwarder reads every decision
 from the Kafka topic `fraud_predictions` and posts it, and the API keeps per-minute counts in Redis and returns the
 PSI of each input over the last 15 minutes (no labels needed). The loop inside Layer 2 is the retraining path: the
 Airflow DAG `drift_monitoring` runs every day (`schedule="@daily"`), scores the last 7 days with ground truth and
 point-in-time features from the offline store, and when a PSI is above 0.25 or the PR-AUC fell more than 0.05 it
 starts a Kubeflow pipeline run with the newest labels
-([`drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
+([`pipelines/airflow/dags/drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
 [drift.md](drift.md)).
 
 Layer 3 (bottom band) reads from both layers above it. Three MCP servers, one per tool family
-([`services/card_support_mcp/app/main.py` L40-L44](../services/card_support_mcp/app/main.py#L40-L44)), give the agents
+([`services/card_support_mcp/app/main.py` L40-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/card_support_mcp/app/main.py#L40-L44)), give the agents
 their tools: card-data takes a card's features from the same Feast online store, fraud-score asks the Layer 2 Scoring
 API, and policy-rag searches the bank's documents; the RAG pipeline
-([`rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/rag_ingest.py#L64-L73))
+([`pipelines/airflow/dags/rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/rag_ingest.py#L64-L73))
 writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
 NGINX; every agent call (A2A, MCP, LLM) then goes through agentgateway, which sends the LLM calls to llama.cpp via the
@@ -71,14 +94,17 @@ the model server, AKS running the same model image from ACR), destroyed after th
 
 ## System diagram
 
-![System architecture](images/platform-architecture.png)
+The system diagram of Layers 1-2: every box is a deployable unit, and the arrows carry the data, numbered per flow
+(S payment scoring, R streaming features, B batch data, T training and deploy, M monitoring and retraining):
+
+![System architecture of Layers 1-2: deployable units with numbered arrows in five flows, S, R, B, T and M, one colour each](images/platform-architecture.png)
 
 The rules of the README diagram, and how the picture follows them:
 
 | Rule | In the picture |
 |---|---|
 | Every box is a deployable unit | each box is one compose service or one Kubernetes workload; the tag says where (compose profile or namespace). Feast is a library inside Scoring API, push jobs, Airflow, Jupyter and the KFP steps, so it has no box; its stores (Redis, SeaweedFS) and registry (ml-db) do |
-| Arrows follow the data, the data on the arrow | Redis -> Scoring API (S2), not the other way, because features flow to the API; a call without data (B1 spark-submit, M7 retraining run) points from caller to callee |
+| Arrows follow the data, the data on the arrow | the arrow runs from Redis to Scoring API (S2), not the other way, because features flow to the API; a call without data (B1 spark-submit, M7 retraining run) points from caller to callee |
 | Numbered, one numbering per user flow | five flows, each with its own colour, letter and 1..n: S for the end user's payment, T for the ML engineer, R / B / M for the system's own flows |
 | Few dashed lines, only off the main path | no dashed arrows; the three dashed boxes are support services used by many units (Hive Metastore, ml-db, DataHub), whose arrows would cross every flow |
 
@@ -127,16 +153,17 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 
 ## Layer 3 system diagram
 
-![Layer 3 system architecture](images/platform-layer3.png)
+The Layer 3 diagram follows the same rules as the Layers 1-2 diagram, with four flows of their own. A is the support
+staff's question, the only flow that starts with a person at a screen. K is the RAG ingest that Airflow runs after
+each release of its image. C is the developer's push through Jenkins, and O is the platform's monitoring and the
+agents' autoscaling:
 
-The same rules as the Layers 1-2 diagram, with four flows of their own. A is the support staff's question, the only
-flow that starts with a person at a screen. K is the RAG ingest that Airflow runs after each release of its image.
-C is the developer's push through Jenkins, and O is the platform's monitoring and the agents' autoscaling.
+![Layer 3 system architecture: agents, gateway, model servers, MCP servers, RAG ingest, CI/CD and observability, with the numbered flows A, K, C and O](images/platform-layer3.png)
 
 | Rule | In the picture |
 |---|---|
 | Every box is a deployable unit | a pod set in the kind cluster (tag = namespace), a compose service (tag = profile), a process on the host, or a service on the internet. The dotted frame groups the three agents: A5-A8, C5, O5 and O6 apply to each of them |
-| Arrows follow the data, the data on the arrow | Redis -> card-data MCP server (A10) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
+| Arrows follow the data, the data on the arrow | the arrow from Redis to the card-data MCP server (A10) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
 | Numbered, one numbering per user flow | A, K, C and O, each with its own colour and 1..n; the colours are the ones of S, B, T and M, so the validated pairs carry over |
 | Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow of their own: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
 
@@ -185,13 +212,13 @@ server (C4) are there for that reason.
 
 ## Deployment
 
-![Deployment](images/platform-deployment.png)
-
 Compose sits on top and the kind cluster underneath, both inside the Docker Desktop VM. The host runs the CLIs and
 the two llama.cpp servers. The column on the right holds the SaaS the platform talks to and, under it, the Azure
 resources an IaC run creates, reached from the host's terraform and ansible. The corridor
 between compose and the VM's edge carries the three paths between the host and the cluster: pods to the model
-servers, the browser to NGINX, and kubectl/helm to the API server.
+servers, the browser to NGINX, and kubectl/helm to the API server:
+
+![Deployment: the host with the CLIs and the two llama.cpp servers, the Docker Desktop VM (8 GB RAM) with the compose profiles on top and the kind cluster underneath, the SaaS and the Azure resources on the right](images/platform-deployment.png)
 
 | Decision | Why |
 |---|---|

@@ -1,5 +1,21 @@
 # Infrastructure as code (Azure)
 
+Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it; kubectl deploys the
+same model image to AKS, which pulls it from the registry. The cloud is an Azure for Students subscription ($100
+credit, no card): it caps a region at 6 vCPU, refuses quota increases and only allows 5 EU regions. Of those, only
+`polandcentral` lets AKS use the B-series the quota covers (in `germanywestcentral` AKS only offers v6/v7 sizes, whose
+quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
+
+| | |
+|---|---|
+| Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/aks/predictor.yaml) |
+| Runs on | Azure, resource group `rg-cardfraud-dev` in `polandcentral` (one IaC run: created, checked, destroyed); Terraform, Ansible and kubectl run from the PC |
+| Reads | `services/predictor/` (code + production model) for the VM, the image `fraud/predictor:1` of the local registry for AKS |
+| Writes | the Azure resources, `infra/ansible/inventory/hosts.ini`, `infra/.secrets/aks-kubeconfig`, the local Terraform state (all three gitignored) |
+| Related | [serving.md](serving.md), [architecture.md](architecture.md) |
+
+What one IaC run creates and deploys:
+
 ```mermaid
 flowchart LR
     tf["Terraform<br/>infra/terraform/envs/dev"] -->|azurerm 5| rg["resource group rg-cardfraud-dev<br/>polandcentral"]
@@ -14,11 +30,45 @@ flowchart LR
     inv -->|kubectl apply<br/>infra/k8s/aks/predictor.yaml| aks
 ```
 
-Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it; kubectl deploys the
-same model image to AKS, which pulls it from the registry. The cloud is an Azure for Students subscription ($100
-credit, no card): it caps a region at 6 vCPU, refuses quota increases and only allows 5 EU regions. Of those, only
-`polandcentral` lets AKS use the B-series the quota covers (in `germanywestcentral` AKS only offers v6/v7 sizes, whose
-quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
+## Run it
+
+Create the resources with Terraform:
+
+```bash
+az login && export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+cd infra/terraform/envs/dev
+terraform init
+terraform apply -var admin_cidr=$(curl -s https://api.ipify.org)/32
+kubectl --kubeconfig ../../../.secrets/aks-kubeconfig get nodes
+```
+
+Configure the VM with Ansible, from the repo root. `services/predictor/model/` is gitignored:
+`python services/predictor/fetch_model.py --alias production` fills it.
+
+```bash
+# macOS / Linux
+pip install ansible==14.5.0 && cd infra/ansible && ansible-playbook site.yml
+# Windows: Ansible has no Windows control node, so it runs in a container (infra/ansible/Dockerfile)
+docker build -t fraud/ansible:14.5.0 infra/ansible
+docker run --rm -v "$PWD:/work:ro" -v "$HOME/.ssh/id_ed25519:/key:ro" fraud/ansible:14.5.0 ansible-playbook site.yml
+```
+
+Push the model image to ACR and deploy it on AKS:
+
+```bash
+az acr login -n crcardfrauddev
+docker tag localhost:5001/fraud/predictor:1 crcardfrauddev.azurecr.io/fraud/predictor:1
+docker push crcardfrauddev.azurecr.io/fraud/predictor:1
+sed -e "s#ACR#crcardfrauddev.azurecr.io#; s#MODEL_VERSION#1#" infra/k8s/aks/predictor.yaml |
+  kubectl --kubeconfig infra/.secrets/aks-kubeconfig apply -f -
+```
+
+Destroy everything when done:
+
+```bash
+cd infra/terraform/envs/dev
+terraform destroy -var admin_cidr=0.0.0.0/32     # the VM and the node are billed by the hour
+```
 
 ## What runs where
 
@@ -57,11 +107,12 @@ So the cloud part is the deployment path of one service, in two forms (a VM conf
 a registry), built from the same image the local platform serves. A run of an hour or two costs under a dollar of
 credit: two B2s v2 at $0.096 an hour each, plus the registry, the disks and the load balancer while they exist.
 
-## Terraform (`infra/terraform`)
+## Terraform
 
-One reusable module per service, one folder per environment (the layout the rubric links to):
+[`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform)
+has one reusable module per service and one folder per environment (the layout the rubric links to):
 
-```
+```text
 infra/terraform/
   modules/network/   VNet, subnet, NSG: only the admin's IP reaches SSH (22), the model server (8080), node_exporter (9100)
   modules/vm/        static public IP, NIC, Ubuntu 24.04 VM, SSH key login only
@@ -70,30 +121,18 @@ infra/terraform/
   envs/dev/          the resource group + the 4 modules + AcrPull for AKS; writes Ansible's inventory and the AKS kubeconfig
 ```
 
-```bash
-az login && export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-cd infra/terraform/envs/dev
-terraform init
-terraform apply -var admin_cidr=$(curl -s https://api.ipify.org)/32
-kubectl --kubeconfig ../../../.secrets/aks-kubeconfig get nodes
-terraform destroy -var admin_cidr=0.0.0.0/32     # the VM and the node are billed by the hour
-```
-
-- azurerm 5 registers no resource providers by itself: `resource_providers_to_register` lists the three it needs
-  ([`versions.tf` L16-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/terraform/envs/dev/versions.tf#L16-L20)),
+- azurerm 5 registers no resource providers by itself: `resource_providers_to_register` lists the four it needs
+  ([`infra/terraform/envs/dev/versions.tf` L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/envs/dev/versions.tf#L16-L22)),
   and `node_provisioning_profile` is required on the AKS cluster
-  ([`modules/aks/main.tf` L31-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/terraform/modules/aks/main.tf#L31-L33)).
+  ([`infra/terraform/modules/aks/main.tf` L31-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/modules/aks/main.tf#L31-L33)).
 - The subscription id comes from `ARM_SUBSCRIPTION_ID`, never from a committed file. The state, the plan, the
   inventory (VM IP) and the kubeconfig are gitignored. The state is local: one person runs this.
 - `admin_cidr` is required and validated (`0.0.0.0/0` is refused), so the VM is never open to the whole internet.
 
-The environment wires the three modules
-([`envs/dev/main.tf` L17-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/terraform/envs/dev/main.tf#L17-L53)).
+The environment wires the resource group and the four modules
+([`infra/terraform/envs/dev/main.tf` L17-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/envs/dev/main.tf#L17-L61)).
 The check on `admin_cidr`
-([`envs/dev/variables.tf` L13-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/terraform/envs/dev/variables.tf#L13-L21))
-and the NSG rule that uses it
-([`modules/network/main.tf` L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/terraform/modules/network/main.tf#L36-L46),
-SSH has the same rule on port 22 just above):
+([`infra/terraform/envs/dev/variables.tf` L13-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/envs/dev/variables.tf#L13-L21)):
 
 ```hcl
 variable "admin_cidr" {
@@ -106,6 +145,11 @@ variable "admin_cidr" {
   }
 }
 ```
+
+The NSG rules use it: SSH on port 22
+([`infra/terraform/modules/network/main.tf` L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/modules/network/main.tf#L24-L34))
+and, just below it, the service ports,
+[`infra/terraform/modules/network/main.tf` L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/modules/network/main.tf#L36-L46):
 
 ```hcl
   security_rule {
@@ -124,7 +168,8 @@ variable "admin_cidr" {
 ### Run on 2026-10-22
 
 `terraform apply` from an empty state, in Git Bash. The `grep` keeps the "Creation complete" lines and the `sed` cuts
-their `[id=/subscriptions/...]` suffix; the plan body is left out because it prints the admin IP:
+their `[id=/subscriptions/...]` suffix; the plan body is left out because it prints the admin IP. 13 resources were
+created, the AKS cluster in 3m23s:
 
 ![terraform apply in Git Bash: 13 resources created, the AKS cluster in 3m23s](images/iac_terraform_apply.png)
 
@@ -132,14 +177,20 @@ The first attempts (2026-10-21) hit the subscription's limits: `Standard_B2s_v2`
 capacity for VMs in `germanywestcentral`, then two transient `404` right after the VNet and the subnet were created in
 `polandcentral`.
 
-The resource group in the Azure Portal, then the Portal's own drawing of it (Resource visualizer). Tenant, subscription
-id and account are blanked out:
+In the Azure Portal (tenant, subscription id and account are blanked out), the resource group with its 8 resources:
 
 ![Resource group rg-cardfraud-dev with its 8 Azure resources: AKS, container registry, NIC, NSG, public IP, VM, disk, VNet](images/iac_portal_rg.png)
 
+The Portal's own drawing of the resource group (Resource visualizer):
+
 ![Resource visualizer of rg-cardfraud-dev: the VM with its disk and NIC, the NIC with its public IP and VNet, the NSG; the registry and the AKS cluster](images/iac_portal_visualizer.png)
 
+The VM, running as Standard B2s v2 with Ubuntu 24.04 in Poland Central:
+
 ![VM vm-cardfraud-dev-serving: Running, Standard B2s v2, Ubuntu 24.04, Poland Central](images/iac_portal_vm.png)
+
+The AKS cluster: Kubernetes 1.36.4, Free tier, Azure CNI Overlay, 1 node pool, with the container registry
+`crcardfrauddev`:
 
 ![AKS aks-cardfraud-dev: Kubernetes 1.36.4, Free tier, Azure CNI Overlay, 1 node pool, container registry crcardfrauddev](images/iac_portal_aks.png)
 
@@ -148,9 +199,11 @@ The state and the subscription's quotas while the run is up: the run's 4 vCPU (B
 
 ![terraform state list and az usage in Git Bash: Total Regional vCPUs 6 of 6, GPU families 0 of 0, Public IP Addresses 3 of 3](images/iac_quota.png)
 
-## Ansible (`infra/ansible`)
+## Ansible
 
-`site.yml` applies four roles to the `serving` group (the VM Terraform created):
+[`infra/ansible/site.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/ansible/site.yml)
+applies four roles to the `serving` group (the VM Terraform created;
+[`infra/ansible/site.yml` L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/ansible/site.yml#L10-L17)):
 
 | Role | What it does |
 |---|---|
@@ -159,20 +212,10 @@ The state and the subscription's quotas while the run is up: the run's 4 vCPU (B
 | `predictor` | copies `services/predictor` (code + production model) and builds the image on the VM (no registry credential), runs it with compose, waits until the model is ready, then a smoke prediction |
 | `node_exporter` | host metrics for Prometheus on :9100 |
 
-```bash
-# macOS / Linux
-pip install ansible==14.5.0 && cd infra/ansible && ansible-playbook site.yml
-# Windows: Ansible has no Windows control node, so it runs in a container (infra/ansible/Dockerfile)
-docker build -t fraud/ansible:14.5.0 infra/ansible
-docker run --rm -v "$PWD:/work:ro" -v "$HOME/.ssh/id_ed25519:/key:ro" fraud/ansible:14.5.0 ansible-playbook site.yml
-```
-
 A code or model change rebuilds the image (handler on the copy); otherwise the role only checks the container runs.
-`services/predictor/model/` is gitignored: `python services/predictor/fetch_model.py --alias production` fills it.
 
-The checks at the end of the predictor role
-([`roles/predictor/tasks/main.yml` L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
-the play fails unless the model answers.
+The checks at the end of the predictor role; the play fails unless the model answers
+([`infra/ansible/roles/predictor/tasks/main.yml` L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
 
 ```yaml
 - name: Model is loaded and ready
@@ -191,6 +234,10 @@ the play fails unless the model answers.
     body: {instances: [{}]}
   register: prediction
   failed_when: prediction.json.predictions | length != 1
+
+- name: Served model version
+  ansible.builtin.debug:
+    msg: "model {{ prediction.json.model_version }}, score {{ prediction.json.predictions[0] }}"
 ```
 
 First run on the new VM, from Git Bash: 9 changes, the model answers with version 1 of the registry:
@@ -269,12 +316,13 @@ vm-cardfraud-dev-serving   : ok=17   changed=9    unreachable=0    failed=0    s
 
 </details>
 
-Run again right after: 0 changes, the play is idempotent. The `pull access denied` warning of the first run is
-expected: the image is built on the VM, never pulled.
+The `pull access denied` warning of the first run is expected: the image is built on the VM, never pulled. Run again
+right after, the play makes 0 changes, so it is idempotent:
 
 ![second ansible-playbook run in Git Bash: ok=16 changed=0](images/iac_ansible_run2.png)
 
-From the local machine, through the NSG (2026-10-21 run):
+From the local machine, through the NSG (2026-10-21 run), curl reaches the model server on 8080 and node_exporter on
+9100:
 
 ![curl to the model server (8080) and node_exporter (9100) on the VM](images/iac_vm_http.png)
 
@@ -283,7 +331,7 @@ From the local machine, through the NSG (2026-10-21 run):
 The VM builds its image from source. AKS runs the image the local platform serves, `fraud/predictor:1` (the model
 inside the image, as on kind), pulled from the registry Terraform creates. Terraform also grants the cluster's kubelet
 identity `AcrPull` on that registry, so the cluster holds no image pull secret
-([`envs/dev/main.tf`](../infra/terraform/envs/dev/main.tf)):
+([`infra/terraform/envs/dev/main.tf` L64-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/terraform/envs/dev/main.tf#L64-L69)):
 
 ```hcl
 resource "azurerm_role_assignment" "aks_acr_pull" {
@@ -294,16 +342,9 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
 }
 ```
 
-[`infra/k8s/aks/predictor.yaml`](../infra/k8s/aks/predictor.yaml) is a plain Deployment (one B2s v2 node has no
-room for KServe and cert-manager): 2 replicas, `maxUnavailable: 0`, a readiness probe on the model, non-root.
-
-```bash
-az acr login -n crcardfrauddev
-docker tag localhost:5001/fraud/predictor:1 crcardfrauddev.azurecr.io/fraud/predictor:1
-docker push crcardfrauddev.azurecr.io/fraud/predictor:1
-sed -e "s#ACR#crcardfrauddev.azurecr.io#; s#MODEL_VERSION#1#" infra/k8s/aks/predictor.yaml |
-  kubectl --kubeconfig infra/.secrets/aks-kubeconfig apply -f -
-```
+[`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/aks/predictor.yaml)
+is a plain Deployment (one B2s v2 node has no room for KServe and cert-manager): 2 replicas, `maxUnavailable: 0`, a
+readiness probe on the model, non-root. The image is pushed to ACR and the manifest applied as in [Run it](#run-it).
 
 A `LoadBalancer` Service gets no public IP here: Azure answers `PublicIPCountLimitReached`, "Cannot create more than
 3 public IP addresses for this subscription in this region". The Service is a `ClusterIP`, and the check goes through
@@ -311,16 +352,19 @@ A `LoadBalancer` Service gets no public IP here: Azure answers `PublicIPCountLim
 
 ![kubectl on AKS: the node, card-fraud 2/2 from crcardfrauddev.azurecr.io/fraud/predictor:1, tag 1 in ACR, a prediction through port-forward](images/iac_aks_predictor.png)
 
-In the Portal, the deployment next to the system pods, and the repository in the registry:
+In the Portal, the deployment `card-fraud` next to the system pods:
 
 ![AKS Workloads: card-fraud in namespace serving, 2/2 ready, next to the kube-system deployments](images/iac_portal_aks_workloads.png)
+
+And the repository `fraud/predictor` in the registry:
 
 ![ACR crcardfrauddev, Repositories: fraud/predictor](images/iac_portal_acr.png)
 
 ## Destroy
 
-Then everything goes away again. Only the summary lines are kept, since the plan of a destroy prints the ids and the
-admin IP:
+Then everything goes away again (`terraform destroy`, see [Run it](#run-it)). Only the summary lines are kept, since
+the plan of a destroy prints the ids and the admin IP. 13 resources were destroyed and the resource group no longer
+exists:
 
 ![terraform destroy in Git Bash: 13 destroyed, the resource group no longer exists](images/iac_terraform_destroy.png)
 
@@ -328,6 +372,7 @@ admin IP:
 
 - Docker publishes ports through its own iptables chains, before `ufw`: the NSG is the firewall that holds for 8080.
 - Bind-mounted files from Windows are world-readable and `ssh` refuses such a key: the container copies `/key` to
-  `~/.ssh` with mode 600 first.
+  `~/.ssh` with mode 600 first
+  ([`infra/ansible/Dockerfile` L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/ansible/Dockerfile#L8)).
 - Run on a loaded Docker Desktop VM, the Ansible container once failed reading `model.json` with
   `[Errno 12] Cannot allocate memory` (the host, not the VM); the rerun passed.

@@ -1,19 +1,42 @@
 # Automatic lineage with OpenLineage
 
-OpenLineage is an open standard for lineage events (a job run read these datasets
-and wrote those, with column-level detail) plus integrations that emit them without code changes. Here a Spark
-listener reads each query plan and posts the events to DataHub's OpenLineage endpoint; DataHub turns them into
-datasets, jobs and lineage edges.
+OpenLineage is an open standard for lineage events (a job run read these datasets and wrote those, with column-level
+detail) plus integrations that emit them without code changes. Here a Spark listener reads the query plan of every
+Layer 1 Spark job, dbt included, and posts the events to DataHub's OpenLineage endpoint; DataHub turns them into
+datasets, jobs and lineage edges. No Spark job or DAG declares its lineage.
+
+| | |
+|---|---|
+| Code | [`infra/conf/spark/spark-defaults.conf` L34-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/spark/spark-defaults.conf#L34-L41), [`infra/spark/Dockerfile` L8-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/spark/Dockerfile#L8-L14), [`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L41-L49) |
+| Runs on | inside every Spark driver: the Spark containers, the Airflow image (drivers of DAG tasks, dbt's session) and the Thrift Server; DataHub GMS in compose profile `gov` receives the events |
+| Reads | the query plan of every Spark action |
+| Writes | lineage events to GMS `/openapi/openlineage/api/v1/lineage` |
+| Related | [datahub.md](datahub.md), [dbt_gold.md](dbt_gold.md), [airflow.md](airflow.md) |
+
+## Run it
+
+Nothing runs for OpenLineage itself: with DataHub up, every Spark job posts its lineage
+([airflow.md](airflow.md) runs the pipelines).
+
+```bash
+docker compose -f infra/docker-compose.yaml --profile core --profile batch --profile orch --profile gov up -d --build
+# a job that no DAG declares: it appears in DataHub after its first run
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit \
+    --conf spark.cores.max=2 --conf spark.executor.memory=1g /opt/jobs/build_gold_pyspark.py
+```
+
+## How it is wired
 
 In the course (lesson L12, DAG `orders_pipeline`), every task declares its tables by hand
 (`inlets=[DatahubDataset(...)]`, `outlets=[...]`) or emits `UpstreamLineage` itself. Each new job or new table means
 editing the DAG, and nothing checks that the declaration matches what the code really reads and writes.
 
 Here it takes the `openlineage-spark_2.13:1.53.0` jar in the Spark image
-([`infra/spark/Dockerfile` L8-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/spark/Dockerfile#L8-L14)) and five lines in
-`infra/conf/spark/spark-defaults.conf`, shared by every Spark container, the Airflow image (drivers of DAG tasks,
-dbt's session) and the Thrift Server,
-[`infra/conf/spark/spark-defaults.conf` L31-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/conf/spark/spark-defaults.conf#L31-L35):
+([`infra/spark/Dockerfile` L8-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/spark/Dockerfile#L8-L14))
+and five lines in
+[`infra/conf/spark/spark-defaults.conf`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/spark/spark-defaults.conf),
+shared by every Spark container, the Airflow image (drivers of DAG tasks, dbt's session) and the Thrift Server
+([`infra/conf/spark/spark-defaults.conf` L37-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/conf/spark/spark-defaults.conf#L37-L41)):
 
 ```properties
 spark.extraListeners                           io.openlineage.spark.agent.OpenLineageSparkListener
@@ -23,9 +46,10 @@ spark.openlineage.transport.endpoint           /openapi/openlineage/api/v1/linea
 spark.openlineage.namespace                    card-fraud-platform
 ```
 
-and one setting per Airflow task, `spark.openlineage.appName = {{ dag.dag_id }}`, so the jobs carry the name of the
-DAG that ran them. Every `spark_job()` of the DAGs gets it from
-[`pipelines/airflow/dags/common.py` L39-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/airflow/dags/common.py#L39-L44):
+Each Airflow task adds one setting, `spark.openlineage.appName = {{ dag.dag_id }}`, so the jobs carry the name of the
+DAG that ran them. Every `spark_job()` of the DAGs gets it from `SPARK_CONF`, next to the executor memory and the
+driver's bind address
+([`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L41-L49)):
 
 ```python
 SPARK_CONF = {
@@ -33,14 +57,17 @@ SPARK_CONF = {
     "spark.executor.memory": "1536m",
     # OpenLineage names its jobs after this: every table in DataHub shows which DAG's job produced it
     "spark.openlineage.appName": "{{ dag.dag_id }}",
+    # The scheduler is on two networks (default + airflow-docker for DockerOperator): its hostname resolves to the
+    # airflow-docker address first, so a driver bound there refuses the executors, which reach it on the default one
+    "spark.driver.bindAddress": "0.0.0.0",
 }
 ```
 
 Apart from these settings, no Spark job or DAG declares lineage.
 
-## Proof 1: lineage of the whole pipeline, with no lineage code
+## Lineage of the whole pipeline, with no lineage code
 
-After one DP1 -> DP2 -> DP3 run, DataHub holds (counts from its GraphQL API, see `docs/datahub.md` for the
+After one run of DP1, DP2 and DP3, DataHub holds (counts from its GraphQL API; [datahub.md](datahub.md) has the
 screenshots):
 
 | | Count |
@@ -49,25 +76,28 @@ screenshots):
 | Jobs (one per Spark action) in those pipelines | 17 / 22 / 3 = 42 |
 | Job-dataset edges written by DP1 / DP2 / DP3 | 23 / 30 / 4 = 57 |
 | Lakehouse tables with lineage | 17 (8 bronze, 2 silver, 7 gold) |
-| Longest chain | core banking Postgres -> bronze -> silver -> gold fact (dbt) -> features: 7 hops, 37 upstream entities |
+| Longest chain | from core banking Postgres through bronze, silver and the gold fact (dbt) to the features: 7 hops, 37 upstream entities |
 
 Each Spark action becomes one DataHub job (`<dag>.<action>.<table>`, e.g.
 `dp2_bronze_to_gold.execute_merge_into_command.stg_transactions`), linked to the tables it read (`Consumes`) and
 wrote (`Produces`). The tables carry hive URNs (`bronze.raw_transactions`), the same names the GE assertions use, so
 lineage and validation land on the same entity. Postgres inputs keep their source identity
-(`core_banking.public.customers`).
+(`core_banking.public.customers`). In DataHub, `bronze.raw_transactions` with the Spark action that produced it,
+`create_table.bronze_raw_transactions`, in the pipeline `dp1_source_to_bronze`:
 
 ![DataHub: bronze.raw_transactions, produced by the Spark action create_table.bronze_raw_transactions in the pipeline dp1_source_to_bronze (named after the DAG)](images/datahub_lineage_bronze.png)
 
+`silver.stg_transactions` sits between DP2's MERGE job and the jobs that read it:
+
 ![DataHub: silver.stg_transactions between DP2's MERGE job and the jobs that read it](images/datahub_lineage_silver.png)
 
-## Proof 2: column-level lineage
+## Column-level lineage
 
 The listener also reports, for every output column, the input columns it comes from and whether it is a copy or a
 computation; GMS keeps them because of `DATAHUB_OPENLINEAGE_CAPTURE_COLUMN_LEVEL_LINEAGE`
-([`infra/docker-compose.yaml` L497-L499](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/infra/docker-compose.yaml#L497-L499)).
+([`infra/docker-compose.yaml` L535-L537](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/docker-compose.yaml#L535-L537)).
 For the fact built in
-[`build_gold_pyspark.py` L68-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_gold_pyspark.py#L68-L79),
+[`pipelines/spark/build_gold_pyspark.py` L68-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/build_gold_pyspark.py#L68-L79),
 DataHub shows 16 column mappings, for example:
 
 | Output column (`fact_transaction`) | From | Kind |
@@ -76,19 +106,23 @@ DataHub shows 16 column mappings, for example:
 | `date_key` | `silver.stg_transactions.txn_date` | TRANSFORMATION (`date_format` + cast) |
 | `customer_sk` | `dim_customer.customer_sk` (point-in-time join) | IDENTITY |
 
-and for silver, `stg_transactions.txn_unit <- raw_ref_province_mapping.new_unit_name` (the 63 -> 34 unit lookup in
-[`build_silver.py` L20-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_silver.py#L20-L35)), the
-example the plan asked for. The course's `inlets`/`outlets` are table-level, so they cannot declare this at all.
+For silver it shows `stg_transactions.txn_unit <- raw_ref_province_mapping.new_unit_name`, the example the plan asked
+for: the lookup from 63 provinces to 34 units in
+[`pipelines/spark/build_silver.py` L20-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/build_silver.py#L20-L35).
+The course's `inlets`/`outlets` are table-level, so they cannot declare this at
+all.
 
-## Proof 3: a new job needs nothing
+## A new job needs nothing
 
-`pipelines/spark/build_gold_pyspark.py` (written to compare with dbt, never run by Airflow, no DataHub code: its entry
-point is plain Spark,
-[`build_gold_pyspark.py` L123-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/build_gold_pyspark.py#L123-L136)) appeared in DataHub
-with its 5 output tables and 17 job-dataset edges on its first run, column lineage included. With the course's
-approach the same job would need its inputs and outputs written into a DAG first.
+[`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/build_gold_pyspark.py)
+was written to compare with dbt. Airflow never runs it and it has no DataHub code: its entry point is plain Spark
+([`pipelines/spark/build_gold_pyspark.py` L123-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/build_gold_pyspark.py#L123-L136)).
+It appeared in DataHub with its 5 output tables and 17 job-dataset edges on its first run, column lineage included.
+The lineage of its `gold_pyspark.fact_transaction`, created by the listener alone:
 
 ![DataHub: lineage of gold_pyspark.fact_transaction, created by the listener alone](images/datahub_new_job_lineage.png)
+
+With the course's approach the same job would need its inputs and outputs written into a DAG first:
 
 | | Course (L12): `inlets` / `outlets` / emitter | OpenLineage |
 |---|---|---|
@@ -98,13 +132,16 @@ approach the same job would need its inputs and outputs written into a DAG first
 | Can drift from the code | yes (a declaration is a promise) | no (read from the executed plan) |
 | Cost when DataHub is down | DAG code must handle it | listener logs the HTTP error, the job goes on |
 
-## Limits seen
+## Limits
 
 - A write by path (`.save(s3a://...)`) followed by `CREATE TABLE ... LOCATION` (the `save()` helper of
-  [`ingest_bronze.py` L34-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/ingest_bronze.py#L34-L43)) produces both an `s3` dataset
-  (`lakehouse/bronze/raw_transactions`) and the `hive` one. Lineage is attached to the hive one (the listener
-  resolves the Delta path to the table); the s3 ones are extra entities.
-- There is one job per Spark action, not per Airflow task: a task with three writes shows three jobs. The DataHub Airflow
+  [`pipelines/spark/ingest_bronze.py` L43-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/ingest_bronze.py#L43-L54))
+  produces both an `s3` dataset (`lakehouse/bronze/raw_transactions`) and the `hive` one. Lineage is attached to the
+  hive one (the listener resolves the Delta path to the table); the s3 ones are extra entities. Since
+  `bronze.raw_transactions` moved into lakeFS (2026-10-24), the helper registers a table only for
+  `s3a://lakehouse/bronze` and lakeFS `main`; a DP1 run appends the export on its own lakeFS branch, which the
+  metastore does not point at ([novel_lakefs_wap.md](novel_lakefs_wap.md)).
+- There is one job per Spark action, not per Airflow task: a task with 3 writes shows 3 jobs. The DataHub Airflow
   listener adds the DAG / task entities next to them; the shared name (`spark.openlineage.appName = dag_id`) is what
   ties the two together.
 - `ContextFactory: Query execution is null: can't emit event` errors in the logs are commands without a query plan

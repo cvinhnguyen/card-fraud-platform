@@ -1,10 +1,44 @@
 # The 100 GB run
 
 The rubric asks for at least 100 GB of offline source data, so that optimizations show. Everything else in this repo
-runs on the ~1 GB dataset (`generator/generate.py`), which stays as it is; the 100 GB dataset is a separate run of
-the same generator code with larger volumes, kept under its own prefixes
-([`generator/generate_scale.py` L77-L92](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/generate_scale.py#L77-L92)
-calls the same `gen_day` once per day and chunk).
+runs on the ~1 GB dataset, which stays as it is; the 100 GB dataset is a separate run of the same generator code with
+larger volumes, kept under its own prefixes. Two Spark benchmarks run on it: the merchant join skew and the silver
+dedup.
+
+| | |
+|---|---|
+| Code | [`generator/generate_scale.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/generator/generate_scale.py), [`pipelines/spark/scale_100g.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_100g.py), [`pipelines/spark/scale_dedup.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_dedup.py) |
+| Runs on | generator: host process (compose profile `core` up); benchmarks: compose profile `batch` (inside `spark-master`) |
+| Reads | `s3://core-banking-export/scale_100g/transactions/` + `merchants.parquet` |
+| Writes | the generator writes the 100 GB export to `s3://core-banking-export/scale_100g/`; the dedup writes `s3a://lakehouse/scale_100g/stg_transactions`; the skew benchmark writes nothing |
+| Related | [spark_optimization.md](spark_optimization.md), [spark_jobs.md](spark_jobs.md), [data_characteristics.md](data_characteristics.md) |
+
+## Run it
+
+From the repo root:
+
+```bash
+# 100 GB dataset (host, core profile up)
+python generator/generate_scale.py --transactions 4050000000 --customers 2000000 --merchants 20000 --workers 5
+
+# Skew join benchmark (batch profile up, nothing else running on the worker)
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit \
+    --conf spark.sql.shuffle.partitions=2000 --conf spark.io.compression.codec=zstd \
+    --conf spark.cleaner.periodicGC.interval=5min /opt/jobs/scale_100g.py
+
+# Dedup at scale: the 20-date slice, then one variant (--method window|broadcast, --batch-days 0 = global)
+python generator/generate_scale.py --transactions 4050000000 --every 51 --workers 3
+docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit \
+    --conf spark.io.compression.codec=zstd --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=16m \
+    /opt/jobs/scale_dedup.py --method broadcast --batch-days 2
+```
+
+## The 100 GB dataset
+
+[`generator/generate_scale.py` L77-L92](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/generator/generate_scale.py#L77-L92)
+calls the same `gen_day` as
+[`generator/generate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/generator/generate.py)
+once per day and chunk:
 
 | | 1 GB dataset | 100 GB dataset |
 |---|---|---|
@@ -18,14 +52,11 @@ Same problems as the 1 GB data, from the same functions: merchant skew (top 10 m
 (HCMC 60%), cross-border payments, old province names after 2025-07-01, 2% export duplicates, the auth columns from
 2024-07-01 (schema evolution).
 
-```bash
-python generator/generate_scale.py --transactions 4050000000 --customers 2000000 --merchants 20000 --workers 5
-docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit \
-    --conf spark.sql.shuffle.partitions=2000 --conf spark.io.compression.codec=zstd \
-    --conf spark.cleaner.periodicGC.interval=5min /opt/jobs/scale_100g.py
-```
-
 ## Skew join benchmark
+
+[`pipelines/spark/scale_100g.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_100g.py)
+runs the merchant join benchmark of [spark_optimization.md](spark_optimization.md#merchant-join-skew) (baseline,
+salting, AQE, broadcast) on the 100 GB export.
 
 ### Why the raw export and two columns
 
@@ -38,8 +69,10 @@ pruning: Spark reads 2 of the 13 column chunks of every row group). The 2% dupli
 hot. Shuffle files are zstd-compressed and cleaned every 5 minutes, and a watcher stops the job if the disk falls
 below 25 GB.
 
-The job reuses the 1 GB benchmark code (`skew_join.py`) and sets Spark's AQE defaults back
-([`pipelines/spark/scale_100g.py` L30-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_100g.py#L30-L39)):
+The job reuses the 1 GB benchmark code
+([`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/skew_join.py))
+and sets Spark's AQE defaults back
+([`pipelines/spark/scale_100g.py` L30-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_100g.py#L30-L39)):
 
 ```python
     spark = SparkSession.builder.appName("p9_scale_skew").getOrCreate()
@@ -56,7 +89,7 @@ The job reuses the 1 GB benchmark code (`skew_join.py`) and sets Spark's AQE def
 
 ### Results
 
-4,131,056,674 rows (4.05B + 2% duplicates), biggest merchant **23.9%** of all rows (~990M rows), top 10 merchants
+4,131,056,674 rows (4.05B + 2% duplicates), biggest merchant 23.9% of all rows (~990M rows), top 10 merchants
 70.0%; one executor, 8 cores, 2 GB heap; 2,000 shuffle partitions; one run per method (a run is a full pass).
 
 | Method | Wall time | Slowest task | Median task | Biggest shuffle read | |
@@ -69,14 +102,6 @@ The job reuses the 1 GB benchmark code (`skew_join.py`) and sets Spark's AQE def
 With ~24% of 4.1B rows behind one key, the baseline cannot finish on this executor at all: one task must sort ~990M
 rows alone while 1,999 others finish in seconds. The 1 GB run only hinted at this.
 
-> [!note] A mistake of the first attempt
-> The first AQE run also ran out of memory, after 67 min. `skew_join.configure` set the target partition size
-> equal to the skew threshold
-> ([`pipelines/spark/skew_join.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/skew_join.py#L46);
-> right for the 1 GB run, where both are 8 MB), so at 100 GB each task aimed at 256 MB
-> instead of Spark's default 64 MB. The run in the table uses Spark's defaults. The broadcast of that attempt failed
-> only because the executor was still broken from the OOM.
-
 Ranking at 100 GB: broadcast 48 min < AQE 113 min < salting 151 min < baseline (fails).
 
 - Broadcast wins whenever the small side fits in memory (20k merchants): the 4.1B rows are never shuffled, every
@@ -87,40 +112,38 @@ Ranking at 100 GB: broadcast 48 min < AQE 113 min < salting 151 min < baseline (
   code that has to know which keys are hot.
 - The baseline fails outright.
 
-Each method ran once (48 to 151 min per run), so small differences would mean nothing; the differences here are
-large. The order is the same as in the 1 GB benchmark ([spark_optimization.md](spark_optimization.md): baseline
-51 s, salting 46 s, AQE 38 s, broadcast 24 s), where the baseline was only 2x slower than broadcast.
+The order is the same as in the 1 GB benchmark ([spark_optimization.md](spark_optimization.md): baseline 51 s,
+salting 46 s, AQE 38 s, broadcast 24 s), where the baseline was only 2x slower than broadcast.
 
 ## Dedup at scale
 
-The silver dedup (latest `created_ts` per `transaction_id`, as in `pipelines/spark/build_silver.py`) was measured on a slice of
-the 100 GB dataset, with `pipelines/spark/scale_dedup.py`. The full 100 GB plus its silver copy (~190 GB) does not fit the free
-disk since the Docker disk moved to the C: SSD. The slice is every 51st day of the period at full daily volume:
-20 export dates spread over 2024-2026, so it has both schemas (before and after 2024-07-01) and the trend.
-Generating it with the same seed writes the same files as the full run (each day and chunk has its own random stream,
-[`generator/generate_scale.py` L109-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/generator/generate_scale.py#L109-L110)).
-
-```bash
-python generator/generate_scale.py --transactions 4050000000 --every 51 --workers 3   # 81,072,211 rows, 2.0 GiB, 8 min
-docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit \
-    --conf spark.io.compression.codec=zstd --conf spark.sql.adaptive.advisoryPartitionSizeInBytes=16m \
-    /opt/jobs/scale_dedup.py --method broadcast --batch-days 2
-```
+The silver dedup (latest `created_ts` per `transaction_id`, as in
+[`pipelines/spark/build_silver.py` L58-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/build_silver.py#L58-L59))
+was measured on a slice of the 100 GB dataset, with
+[`pipelines/spark/scale_dedup.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_dedup.py).
+The full 100 GB plus its silver copy (~190 GB) does not fit the free disk since the Docker disk moved to the C: SSD.
+The slice is every 51st day of the period at full daily volume: 20 export dates spread over 2024-2026, so it has both
+schemas (before and after 2024-07-01) and the trend. Generating it (`--every 51`, 3 workers) wrote 81,072,211 rows,
+2.0 GiB, in 8 min. With the same seed it writes the same files as the full run: each day and chunk has its own random
+stream
+([`generator/generate_scale.py` L81](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/generator/generate_scale.py#L81)),
+and `--every` only drops days
+([`generator/generate_scale.py` L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/generator/generate_scale.py#L109)).
 
 Two choices are measured:
 
 - Scope: global runs all dates in one job, as a one-shot backfill would run it; batched runs a few export dates per
   job, appended to the same Delta table
-  ([`pipelines/spark/scale_dedup.py` L81-L85](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L81-L85)). Batching is correct because a duplicate comes from re-running one nightly
-  export, so both copies always share an `export_date`; DP2 relies on the same fact every night, when it dedups only
-  the new export dates.
+  ([`pipelines/spark/scale_dedup.py` L81-L85](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_dedup.py#L81-L85)).
+  Batching is correct because a duplicate comes from re-running one nightly export, so both copies always share an
+  `export_date`; DP2 relies on the same fact every night, when it dedups only the new export dates.
 - Method: window is `row_number()` over `transaction_id`, the `build_silver.py` code, which shuffles and sorts every
   row with every column. Broadcast uses the fact that only 2% of the ids are duplicated: the job finds them from the
   `transaction_id` column alone, passes every other row through a broadcast anti join (no shuffle, no sort) and runs
   the window on the duplicated rows only.
 
 The two methods
-([`pipelines/spark/scale_dedup.py` L38-L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L38-L47)):
+([`pipelines/spark/scale_dedup.py` L38-L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_dedup.py#L38-L47)):
 
 ```python
 def latest(raw, method: str):
@@ -136,7 +159,7 @@ def latest(raw, method: str):
 ```
 
 Every run wrote the same 79,482,558 rows from 81,072,211 (1,589,653 duplicates removed) with the same checksum
-([`pipelines/spark/scale_dedup.py` L88-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/scale_dedup.py#L88-L93)).
+([`pipelines/spark/scale_dedup.py` L88-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_dedup.py#L88-L93)).
 Setup as in the rest of P9: one 2 GB executor, 8 cores, Docker disk on the SSD; one run each.
 
 | Method | Scope | AQE partition target | Time (20 dates) | Per date | Spill (memory / disk) |
@@ -164,5 +187,20 @@ The slice shows four things:
   stays at one batch's ids, and its time grows linearly: 116 s for 10 dates and 201 s for 20, so about 31 s of fixed
   cost plus 8.5 s per date. Five dates per batch were no faster and spilled again.
 
-For the whole 100 GB (1,019 export dates) that is about 31 s + 1,019 x 8.5 s, roughly **2.4 hours** on this machine,
-against the ~4 days estimated from the HDD probe. This is an extrapolation from 20 dates, not a measured 100 GB run.
+For the whole 100 GB (1,019 export dates) that is about 31 s + 1,019 x 8.5 s, roughly 2.4 hours on this machine,
+against the ~4 days estimated from the HDD probe.
+
+## Gotchas
+
+- The first AQE run of the skew benchmark also ran out of memory, after 67 min. `skew_join.configure` set the target
+  partition size equal to the skew threshold
+  ([`pipelines/spark/skew_join.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/skew_join.py#L46);
+  right for the 1 GB run, where both are 8 MB), so at 100 GB each task aimed at 256 MB instead of Spark's default
+  64 MB. The run in the results table uses Spark's defaults. The broadcast of that attempt failed only because the
+  executor was still broken from the OOM.
+
+## Limits
+
+- Each skew method ran once (48 to 151 min per run), so small differences would mean nothing; the differences here
+  are large.
+- The 2.4 hours for a dedup of the whole 100 GB is an extrapolation from 20 dates, not a measured 100 GB run.
