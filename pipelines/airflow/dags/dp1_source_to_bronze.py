@@ -28,11 +28,17 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
+from datahub_airflow_plugin.entities import Dataset
 
 from common import CORE_DB_ENV, DEFAULT_ARGS, commit_branch, create_branch, merge_to_main, spark_job, validate
 
 BRANCH = "dp1_{{ ds_nodash }}"
 TXN_ROOT = "s3a://bronze/" + BRANCH   # the run's lakeFS branch; readers use s3a://bronze/main
+# Lineage of the lakeFS hop, declared here: OpenLineage sees the Spark write but not the merge, which is an API call.
+# export -> ingest_exports -> raw_transactions in the lakeFS repository -> merge_to_main -> the metastore table.
+EXPORT = Dataset("s3", "core-banking-export/transactions")
+LAKEFS_TXN = Dataset("s3", "bronze/raw_transactions")   # spark-defaults drops dp1_<ds>/ from the Spark write's name too
+TABLE = Dataset("hive", "bronze.raw_transactions")
 
 with DAG("dp1_source_to_bronze", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False,
          max_active_runs=1, default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp1", "bronze"]) as dag:
@@ -42,11 +48,13 @@ with DAG("dp1_source_to_bronze", schedule="@daily", start_date=datetime(2026, 10
     branch = create_branch(BRANCH)
     snapshot = spark_job("snapshot_core_banking", "ingest_bronze.py", ["--part", "core_banking"], env=CORE_DB_ENV)
     exports = spark_job("ingest_exports", "ingest_bronze.py",
-                        ["--part", "exports", "--until", "{{ macros.ds_add(ds, 1) }}", "--txn-root", TXN_ROOT])
+                        ["--part", "exports", "--until", "{{ macros.ds_add(ds, 1) }}", "--txn-root", TXN_ROOT],
+                        inlets=[EXPORT], outlets=[LAKEFS_TXN])
     landing = spark_job("ingest_stream_landing", "ingest_bronze.py", ["--part", "landing"])
     trigger = TriggerDagRunOperator(task_id="trigger_dp2", trigger_dag_id="dp2_bronze_to_gold",
                                     logical_date="{{ logical_date }}", reset_dag_run=True)
 
     [wait, branch] >> exports
     checks = validate("dp1", ["--txn-root", TXN_ROOT])   # reads the export on the run's branch
-    [snapshot, exports >> commit_branch(BRANCH), landing] >> checks >> merge_to_main(BRANCH) >> trigger
+    publish = merge_to_main.override(inlets=[LAKEFS_TXN], outlets=[TABLE])(BRANCH)
+    [snapshot, exports >> commit_branch(BRANCH), landing] >> checks >> publish >> trigger

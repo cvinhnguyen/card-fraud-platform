@@ -78,6 +78,21 @@ all payments of the busiest card (fraud investigation); spend per unit in 2026-0
 | by month, `OPTIMIZE` | 1.95 s, 165 files, 475 MB | 0.40 s, 5 files, 14 MB | 1.94 s, 165 files, 475 MB |
 | by month, `OPTIMIZE ZORDER BY (card_id)` | **0.71 s, 34 files, 128 MB** | **0.36 s, 3 files, 12 MB** | 1.22 s, 100 files, 374 MB |
 
+Both tables come from the job's printed output of the run of 2026-10-17, saved as `layout.log` in the Spark work
+volume: the four writes and `OPTIMIZE` runs (12,800, 6,800, 165 and 100 files), then the 12 query lines:
+
+![Git Bash: layout.log of 2026-10-17 19:31, write by city 66 s 12,800 files, by month 40 s 6,800 files, OPTIMIZE 165 files, ZORDER 100 files, then 12 query lines down to ZORDER card lookup 0.71 s 34 files 127.9 MB](images/storage_layout_log.png)
+
+The same run in the Spark History Server, app `p5_storage_layout`. Before, the card lookup on the naive month layout
+(query 543, 15 s) reads 6,800 files, 554.8 MiB and all 7,879,773 rows of the 34 months to keep 107:
+
+![History Server, query 543: Scan parquet 6,800 files, 554.8 MiB, 7,879,773 rows, 34 partitions; Filter keeps 107 rows; 15 s](images/storage_card_lookup_naive.png)
+
+After `ZORDER BY (card_id)`, the same lookup (query 594, 0.7 s) reads 34 files, 127.9 MiB and 2,600,657 rows for the
+same 107:
+
+![History Server, query 594: Scan parquet 34 files, 127.9 MiB, 2,600,657 rows, 34 partitions; Filter keeps 107 rows; 0.7 s](images/storage_card_lookup_zorder.png)
+
 - The number of files costs more than the bytes. The naive month layout reads about as much (555 MB, against 475 MB
   after `OPTIMIZE`) but takes 7.6× longer, because opening 6,800 objects on S3 dominates. `OPTIMIZE` (bin-packing)
   turns them into 165 files and the scans drop from ~15 s to ~2 s.
@@ -137,6 +152,17 @@ DROP INDEX mart.btree_obt_ts;
 - BRIN stores only the min/max `txn_ts` of each block range. That works because the table is loaded in time order, so
   a 7-day range covers few block ranges. It is 24 kB where a B-tree on `txn_ts` is 29 MB. The 6,069 rows removed by
   recheck are the price of the coarse ranges. If rows were inserted in random order, BRIN would match every range.
+
+A re-run of the script on 2026-10-25 gives the same plans and the same buffer counts, with timings a few ms apart.
+The output went to a file, and `awk` prints the second (warm cache) plan of each query. Before the indexes: Parallel
+Seq Scan, 1,722 + 25,152 = 26,874 buffers and 71.7 ms for the card, 26,778 buffers and 72.3 ms for the 7-day spend:
+
+![Git Bash: serving_indexes.sql before the indexes, 1,392,065 rows 209 MB; card lookup Parallel Seq Scan, 1722 hit + 25152 read buffers, 71.683 ms; 7-day spend Parallel Seq Scan, 1818 + 24960 buffers, 72.347 ms](images/serving_explain_before.png)
+
+After: index sizes 54 MB, 29 MB and 24 kB; Index Scan on `ix_obt_card_ts` with 22 buffers and 0.051 ms; Bitmap Heap
+Scan through `brin_obt_ts` on 1,162 lossy blocks, 6,069 rows removed by recheck, 18.0 ms:
+
+![Git Bash: index sizes ix_obt_card_ts 54 MB, btree_obt_ts 29 MB, brin_obt_ts 24 kB; card lookup Index Scan 22 buffers 0.051 ms; 7-day spend Bitmap Heap Scan via brin_obt_ts, lossy 1162, 6069 removed by recheck, 18.002 ms](images/serving_explain_after.png)
 
 Trino has no indexes on Delta. On the lakehouse side the same idea is partition pruning and the min/max statistics
 that Z-order makes selective.

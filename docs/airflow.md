@@ -243,11 +243,13 @@ The DAG list after the backfill, 4 DAGs and 0 failed runs:
 ![DAG list: 4 DAGs, 0 failed](images/airflow_dags.png)
 
 In DP1 the sensor gates `ingest_exports` only; the Postgres snapshot and the landing load do not wait for the
-export file. The three Spark tasks queue in the `spark` pool. The DP1 graph below, with 4 green runs, predates the
-lakeFS tasks; the current one, with `create_branch`, `commit_branch` and `merge_to_main`, is in
-[novel_lakefs_wap.md](novel_lakefs_wap.md#4-the-corrected-export-is-published):
+export file. The three Spark tasks queue in the `spark` pool. The DP1 graph of the run of 2026-11-07, every task
+green: `create_branch` and the sensor before `ingest_exports`, `commit_branch` after it, then `validate_dp1`,
+`merge_to_main` and `trigger_dp2` (Write-Audit-Publish on lakeFS,
+[novel_lakefs_wap.md](novel_lakefs_wap.md#4-the-corrected-export-is-published)); the grid on the left holds 10 green
+runs:
 
-![dp1_source_to_bronze graph, 4 green runs](images/airflow_dp1_graph.png)
+![dp1_source_to_bronze graph of the run of 2026-11-07: create_branch, wait_for_export, ingest_exports, commit_branch, snapshot_core_banking, ingest_stream_landing, validate_dp1, merge_to_main and trigger_dp2, all success; 10 green runs in the grid](images/airflow_dp1_graph.png)
 
 In DP2, silver is validated before dbt reads it, labels run next to dbt (they read silver, not gold), and the gold
 validation waits for both, as the DP2 graph shows:

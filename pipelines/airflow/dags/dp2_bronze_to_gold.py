@@ -17,8 +17,15 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from datahub_airflow_plugin.entities import Dataset
 
 from common import DEFAULT_ARGS, S3_ENV, spark_job, validate
+
+# OpenLineage reports the MERGE into silver.stg_transactions with its target only, not the bronze source (OpenLineage
+# 1.53 on Delta 4; probed 2026-10-25: the same with a SQL MERGE, without cache, without source materialization).
+# build_silver declares the tables it reads and writes, so silver keeps its link to bronze in DataHub.
+SILVER_IN = [Dataset("hive", f"bronze.{t}") for t in ("raw_transactions", "raw_customers", "raw_ref_province_mapping")]
+SILVER_OUT = [Dataset("hive", f"silver.{t}") for t in ("stg_transactions", "stg_customers")]
 
 DBT = "/opt/venvs/dbt/bin/dbt"
 DBT_ARGS = "--project-dir {{ var.value.dbt_project_dir }} --profiles-dir {{ var.value.dbt_project_dir }} --target session"
@@ -37,7 +44,7 @@ DBT_ENV = {
 
 with DAG("dp2_bronze_to_gold", schedule=None, start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
          default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp2", "silver", "gold", "dbt"]) as dag:
-    silver = spark_job("build_silver", "build_silver.py")
+    silver = spark_job("build_silver", "build_silver.py", inlets=SILVER_IN, outlets=SILVER_OUT)
     # pool `spark`: a dbt run is a Spark application like the others
     dbt_build = BashOperator(task_id="dbt_build", bash_command=f"{DBT} build {DBT_ARGS}", env=DBT_ENV, append_env=True,
                              pool="spark")

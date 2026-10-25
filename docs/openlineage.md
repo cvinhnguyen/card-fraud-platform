@@ -63,9 +63,18 @@ SPARK_CONF = {
 }
 ```
 
-Apart from these settings, no Spark job or DAG declares lineage.
+Apart from these settings, no Spark job declares lineage. Two DAG tasks declare their tables with `inlets` /
+`outlets` (added 2026-10-25), where OpenLineage misses a hop:
 
-## Lineage of the whole pipeline, with no lineage code
+- DP1 writes the export on a lakeFS branch and publishes it with a merge, an API call OpenLineage cannot see; there,
+  `spark-defaults.conf` also drops the branch from the written dataset's name
+  ([novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)).
+- DP2's `build_silver`: OpenLineage reports its MERGE into `silver.stg_transactions` with the target only, without
+  `bronze.raw_transactions`. A probe on 2026-10-25 (OpenLineage 1.53, Delta 4) gave the same with a SQL MERGE,
+  without the cache and without source materialization, while a MERGE from `bronze.raw_ref_province_mapping` kept
+  its source. The task now declares the three bronze tables it reads and the two silver tables it writes.
+
+## Lineage of the whole pipeline, with no lineage code in the jobs
 
 After one run of DP1, DP2 and DP3, DataHub holds (counts from its GraphQL API; [datahub.md](datahub.md) has the
 screenshots):
@@ -82,14 +91,17 @@ Each Spark action becomes one DataHub job (`<dag>.<action>.<table>`, e.g.
 `dp2_bronze_to_gold.execute_merge_into_command.stg_transactions`), linked to the tables it read (`Consumes`) and
 wrote (`Produces`). The tables carry hive URNs (`bronze.raw_transactions`), the same names the GE assertions use, so
 lineage and validation land on the same entity. Postgres inputs keep their source identity
-(`core_banking.public.customers`). In DataHub, `bronze.raw_transactions` with the Spark action that produced it,
-`create_table.bronze_raw_transactions`, in the pipeline `dp1_source_to_bronze`:
+(`core_banking.public.customers`). In DataHub after the DP1 run of 2026-11-07, the export's way into bronze:
+`core-banking-export/transactions`, the Spark job and the Airflow task `ingest_exports`, the lakeFS repository's
+`bronze/raw_transactions` (one dataset for every branch, thanks to the path pattern above), then `merge_to_main` and
+`bronze.raw_transactions`:
 
-![DataHub: bronze.raw_transactions, produced by the Spark action create_table.bronze_raw_transactions in the pipeline dp1_source_to_bronze (named after the DAG)](images/datahub_lineage_bronze.png)
+![DataHub lineage of bronze/raw_transactions in the lakeFS repository (16 columns): core-banking-export/transactions, then ingest_exports and its Spark job, then the repository dataset, then the hovered task merge_to_main of dp1_source_to_bronze, then bronze.raw_transactions](images/datahub_lineage_bronze.png)
 
-`silver.stg_transactions` sits between DP2's MERGE job and the jobs that read it:
+`silver.stg_transactions` sits between its bronze inputs, linked through the task `build_silver` (declared, see
+above), and the jobs that read it:
 
-![DataHub: silver.stg_transactions between DP2's MERGE job and the jobs that read it](images/datahub_lineage_silver.png)
+![DataHub: silver.stg_transactions between bronze.raw_customers, bronze.raw_ref_province_mapping and bronze.raw_transactions (through build_silver and the MERGE job) and the jobs that read it](images/datahub_lineage_silver.png)
 
 ## Column-level lineage
 

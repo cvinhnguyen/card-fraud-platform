@@ -90,6 +90,12 @@ SeaweedFS as before.
 - [`pipelines/airflow/dags/dp1_source_to_bronze.py` L34-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp1_source_to_bronze.py#L34-L52): the run's branch
   `dp1_<ds>`, `ingest_exports` and `validate_dp1` with `--txn-root s3a://bronze/dp1_<ds>`, and the order of the tasks:
   ingest, commit, validate, merge, trigger DP2.
+- Lineage (added 2026-10-25). OpenLineage sees the Spark write on the branch but not the merge, which is an API call,
+  and it named the written dataset after the branch, a new one every run. `spark-defaults.conf` now drops `dp1_<ds>/`
+  from dataset names (`spark.openlineage.dataset.removePath.pattern`), and the DP1 DAG declares the hop for DataHub
+  with `inlets` / `outlets`, as `rag_ingest` does: `ingest_exports` reads `s3 core-banking-export/transactions` and
+  writes `s3 bronze/raw_transactions` (the repository), `merge_to_main` reads that and writes
+  `hive bronze.raw_transactions`, the table silver and Trino read.
 
 `ingest_bronze.py` refuses to append an export to `main` (`--txn-root` is required and must be a branch,
 [`pipelines/spark/ingest_bronze.py` L127-L129](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/ingest_bronze.py#L127-L129)),
@@ -175,6 +181,15 @@ Trino reads `main` through the catalog `lakefs`: the export of 2026-11-06 is the
 
 DP2 for the day then built silver and gold from `main` like any other day; every task succeeded.
 
+### 5. The publish shows in DataHub (2026-10-25)
+
+Before the lineage fix, the DP1 run of 2026-11-06 left a dataset named after its branch,
+`bronze/dp1_20261106/raw_transactions`, with nothing after it, and `bronze.raw_transactions` still showed only the job
+that created it before lakeFS. The run of 2026-11-07, with the fix, writes the repository's `bronze/raw_transactions`
+and links it to the table through `merge_to_main`:
+
+![DataHub lineage of bronze/raw_transactions in the lakeFS repository (16 columns): core-banking-export/transactions, then ingest_exports and its Spark job, then the repository dataset, then the hovered task merge_to_main of dp1_source_to_bronze, then bronze.raw_transactions](images/datahub_lineage_bronze.png)
+
 ## How the result is judged
 
 What the runs show:
@@ -218,3 +233,6 @@ The same gate would stop any other failed check on the export (row count, nulls,
   restore them (`lakectl refs-dump` and `refs-restore`), which is not set up here.
 - Trino's `delta.bronze.raw_transactions` no longer works (that catalog cannot reach the bucket `bronze`); use
   `lakefs.bronze.raw_transactions`.
+- The path pattern renames datasets, not jobs: OpenLineage still names the Spark job of `ingest_exports` after the
+  branch it wrote, so DataHub gets one more Spark job entity per DP1 run. The lineage stays connected through the
+  dataset and the Airflow tasks.

@@ -52,6 +52,18 @@ Same problems as the 1 GB data, from the same functions: merchant skew (top 10 m
 (HCMC 60%), cross-border payments, old province names after 2025-07-01, 2% export duplicates, the auth columns from
 2024-07-01 (schema evolution).
 
+The 100 GB export is no longer in SeaweedFS, but the Spark History Server (profile `batch`, port 18080) keeps the
+event log of every run on it. Its list of those runs, filtered on `p9_scale`: the three skew runs
+of 2026-10-18 and 2026-10-19 (3.7 h, 3.6 h, 2.7 h) and the nine dedup runs of 2026-10-20:
+
+![Spark History Server, apps filtered on p9_scale: three p9_scale_skew runs of 3.7 h, 3.6 h and 2.7 h and nine p9_scale_dedup runs of 2.5 to 5.2 min](images/scale_history_runs.png)
+
+The broadcast run of the skew benchmark read the whole export. Its scan node in the History Server: 10,190 Parquet
+files, 101.7 GiB, 4,131,056,674 rows, 1,019 `export_date` partitions, then a `BroadcastHashJoin` with the 20,200
+merchants and no shuffle of the big side:
+
+![History Server, query 1 of p9_scale_skew on 2026-10-19, 48 min: Scan parquet 10,190 files, 101.7 GiB, 4,131,056,674 rows, 1,019 partitions, BroadcastHashJoin with 20,200 merchants](images/scale_skew_scan_100g.png)
+
 ## Skew join benchmark
 
 [`pipelines/spark/scale_100g.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/spark/scale_100g.py)
@@ -101,6 +113,27 @@ and sets Spark's AQE defaults back
 
 With ~24% of 4.1B rows behind one key, the baseline cannot finish on this executor at all: one task must sort ~990M
 rows alone while 1,999 others finish in seconds. The 1 GB run only hinted at this.
+
+The baseline's reduce stage (stage 23 of the run of 2026-10-18) shows the skew: the median task read 2.1 MiB
+(389,471 records) in 7 s, the largest finished task 506.1 MiB (197,930,153 records) in 10 min:
+
+![History Server, stage 23 of the baseline: 42 min, spill 46.1 GiB; median task 7 s and 2.1 MiB / 389,471 records, max 10 min and 506.1 MiB / 197,930,153 records](images/scale_skew_baseline_stage.png)
+
+The History Server REST API gives the end of it: job 13 (`baseline-1`) ran from 20:33:11 to 22:19:29 and failed. One
+task, index 1263, ran 541 s and died with `java.lang.OutOfMemoryError: Java heap space`; the 94 other failed tasks
+were rejected by the executor while it shut down:
+
+![Git Bash: History Server API for job 13, baseline-1, FAILED after 20:33:11 to 22:19:29; failed tasks: 1 OutOfMemoryError Java heap space, 94 RejectedExecutionException; the OOM task index 1263, duration 541020 ms](images/scale_skew_baseline_oom.png)
+
+The second run, on 2026-10-18 from 23:01: salting finished in 2.5 h (job 5). The two failed jobs under it are the first
+AQE attempt and the broadcast after it ([Gotchas](#gotchas)):
+
+![History Server, second p9_scale_skew run: job 5 salting-1 2.5 h succeeded; failed jobs aqe-1 after 8.6 min (9 failed tasks) and broadcast-1](images/scale_skew_salting.png)
+
+The third run, on 2026-10-19 from 02:41: broadcast in 48 min (job 6), AQE in 59 + 54 min (jobs 8 and 9). The last AQE
+job has 218 tasks where 2,000 shuffle partitions were planned:
+
+![History Server, third p9_scale_skew run: broadcast-1 job 6 48 min; aqe-1 jobs 8 and 9, 59 min and 54 min, the second with 218 tasks](images/scale_skew_broadcast_aqe.png)
 
 Ranking at 100 GB: broadcast 48 min < AQE 113 min < salting 151 min < baseline (fails).
 
@@ -171,6 +204,12 @@ Setup as in the rest of P9: one 2 GB executor, 8 cores, Docker disk on the SSD; 
 | broadcast | global | 16 MB | **180 s** | **9.0 s** | 16.5 / 0.3 GB |
 | broadcast | batched, 2 dates | 16 MB | 201 s | 10.0 s | **0.4 / 0.0 GB** |
 | broadcast | batched, 5 dates | 16 MB | 200 s | 10.0 s | 16.1 / 0.3 GB |
+
+The first row in the History Server (run of 2026-10-20 09:30, query 1, 4.0 min): the scan reads 200 files, 2,042 MiB,
+81,072,211 rows; both sorts spill, 16.3 GiB before the shuffle and 15.6 GiB after it (31.9 GiB, the 34.3 GB of the
+table), and 79,482,558 rows come out of the window:
+
+![History Server, window dedup global with the default target, 4.0 min: Scan 200 files, 2042 MiB, 81,072,211 rows; Sort spill 16.3 GiB and 15.6 GiB; WindowGroupLimit 79,482,558 rows](images/scale_dedup_window_spill.png)
 
 The slice shows four things:
 

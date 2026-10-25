@@ -90,11 +90,11 @@ run that passed is merged into `main`, and DP2 starts after the merge
     [snapshot, exports >> commit_branch(BRANCH), landing] >> checks >> merge_to_main(BRANCH) >> trigger
 ```
 
-The runs with the lakeFS tasks are in [novel_lakefs_wap.md](novel_lakefs_wap.md). The graph below is from 2026-10-18,
-before those tasks existed: `wait_for_export` gates `ingest_exports`, and the three Spark tasks run before
-`validate_dp1` and `trigger_dp2`:
+The lakeFS tasks are explained in [novel_lakefs_wap.md](novel_lakefs_wap.md). The graph of the run of 2026-11-07:
+`wait_for_export` and `create_branch` gate `ingest_exports`, the three Spark tasks run before `validate_dp1`, and
+`merge_to_main` publishes before `trigger_dp2`:
 
-![Airflow graph of dp1_source_to_bronze on 2026-10-18: wait_for_export gates ingest_exports; snapshot_core_banking, ingest_stream_landing and ingest_exports run before validate_dp1 and trigger_dp2](images/airflow_dp1_graph.png)
+![Airflow graph of dp1_source_to_bronze, run of 2026-11-07: wait_for_export and create_branch gate ingest_exports; snapshot_core_banking, ingest_stream_landing and ingest_exports then commit_branch run before validate_dp1, merge_to_main and trigger_dp2, all success](images/airflow_dp1_graph.png)
 
 DP2 runs the dedup first, validates silver, then builds gold with dbt and the labels in parallel
 ([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L38-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/dp2_bronze_to_gold.py#L38-L53)):

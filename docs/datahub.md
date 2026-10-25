@@ -81,20 +81,28 @@ The lineage graph of the feature table shows its direct inputs, `gold.fact_trans
 
 ![Feature table lineage: built from gold.fact_transaction and bronze.raw_disputes](images/datahub_lineage_feat.png)
 
-`silver.stg_transactions` sits in the middle. Its lineage graph shows it produced by DP2's MERGE job and read by dbt
-(the fact and `dim_date`), the labels, and the PySpark comparison job:
+`silver.stg_transactions` sits in the middle. Its lineage graph after the DP2 run of 2026-11-07: upstream, the three
+bronze tables `build_silver` reads (`raw_customers`, `raw_ref_province_mapping`, `raw_transactions`) through the
+task, which declares them since OpenLineage reports DP2's MERGE without its source
+([openlineage.md](openlineage.md#how-it-is-wired)); downstream, dbt (the fact and `dim_date`), the labels and the PySpark
+comparison job:
 
-![silver.stg_transactions lineage: produced by DP2's MERGE job, read by dbt, the labels and the PySpark comparison job](images/datahub_lineage_silver.png)
+![silver.stg_transactions lineage: upstream bronze.raw_customers, bronze.raw_ref_province_mapping and bronze.raw_transactions through build_silver and the MERGE job; downstream dbt, gold.dim_date, gold.fact_transaction and gold_pyspark.fact_transaction](images/datahub_lineage_silver.png)
 
 ### Which pipeline produced a table
 
-Each table's upstream job carries the DAG's name: `bronze.raw_transactions` is produced by
-`create_table.bronze_raw_transactions` in the pipeline `dp1_source_to_bronze`. The OpenLineage job name is
-`spark.openlineage.appName`, which is the DAG id, set for every Spark task in
+Each table's upstream job carries the DAG's name. The OpenLineage job name is `spark.openlineage.appName`, which is
+the DAG id, set for every Spark task in
 [`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/pipelines/airflow/dags/common.py#L41-L49).
-`bronze.raw_transactions` in DataHub, with the task of `dp1_source_to_bronze` that produced it:
 
-![bronze.raw_transactions: produced by a task of dp1_source_to_bronze](images/datahub_lineage_bronze.png)
+`bronze.raw_transactions` takes one more step. DP1 writes the export into the lakeFS repository on a branch and
+publishes it with a merge, an API call OpenLineage cannot see, so the DAG declares that hop
+([novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)). After the DP1 run of 2026-11-07, the repository's
+`bronze/raw_transactions` (S3) sits between the export and the table: `ingest_exports` and its Spark job write it from
+`core-banking-export/transactions`, and `merge_to_main` reads it and produces `bronze.raw_transactions`. The table
+also keeps its first producer, `create_table.bronze_raw_transactions`, the load that created it before lakeFS:
+
+![DataHub lineage of bronze/raw_transactions in the lakeFS repository (16 columns): core-banking-export/transactions, then ingest_exports and its Spark job, then the repository dataset, then the hovered task merge_to_main of dp1_source_to_bronze, then bronze.raw_transactions](images/datahub_lineage_bronze.png)
 
 The Airflow DAG itself is an entity next to it, with its documentation, tasks and runs from the Airflow listener. The
 pipeline `dp2_bronze_to_gold`, with its DAG doc:
