@@ -6,7 +6,7 @@ indexes.
 
 | | |
 |---|---|
-| Code | [`pipelines/spark/storage_layout.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py), [`pipelines/spark/load_serving.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/load_serving.py), [`infra/sql/serving_indexes.sql`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/sql/serving_indexes.sql) |
+| Code | [`pipelines/spark/storage_layout.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py), [`pipelines/spark/load_serving.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/load_serving.py), [`infra/sql/serving_indexes.sql`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/sql/serving_indexes.sql) |
 | Runs on | Spark jobs: compose profile `batch` (inside `spark-master`); Postgres: compose service `postgres` (profile `core`), database `serving` |
 | Reads | `gold.fact_transaction`, `gold.dim_merchant` |
 | Writes | the benchmark tables under `s3a://lakehouse/lab/` (not registered in the metastore); Postgres `serving.mart.obt_card_txn` |
@@ -32,11 +32,11 @@ docker compose -f infra/docker-compose.yaml exec -T postgres sh -c 'psql -U "$PO
 
 ## Lakehouse layout
 
-[`pipelines/spark/storage_layout.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py)
+[`pipelines/spark/storage_layout.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py)
 writes `gold.fact_transaction` (7.9M rows) after a 200-way shuffle (what a job writes after a join or aggregation),
 then runs three queries on each layout, each the median of 3 runs after a warm-up. Files and bytes read come from the
 scan node of the Spark SQL metrics (REST API,
-[`pipelines/spark/storage_layout.py` L34-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py#L34-L46)).
+[`pipelines/spark/storage_layout.py` L34-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py#L34-L46)).
 Tables go to `s3a://lakehouse/lab/`.
 
 | Layout | Files | Avg file | Write |
@@ -49,7 +49,7 @@ Tables go to `s3a://lakehouse/lab/`.
 Every task of the 200-way shuffle holds rows of every partition value, so it writes one file per value:
 200 tasks × 64 raw city names = 12,800 files, 200 × 34 months = 6,800 files, most of them a few dozen KB.
 The two writes, then the two `OPTIMIZE` runs that make versions 1 and 2
-([`pipelines/spark/storage_layout.py` L79-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py#L79-L90)):
+([`pipelines/spark/storage_layout.py` L79-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py#L79-L90)):
 
 ```python
     by_city, by_month = f"{LAB}/fact_by_city", f"{LAB}/fact_by_month"
@@ -67,7 +67,7 @@ The two writes, then the two `OPTIMIZE` runs that make versions 1 and 2
 ```
 
 Queries
-([`pipelines/spark/storage_layout.py` L72-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py#L72-L77)):
+([`pipelines/spark/storage_layout.py` L72-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py#L72-L77)):
 all payments of the busiest card (fraud investigation); spend per unit in 2026-06 (reporting); spend in raw city
 "Da Nang".
 
@@ -107,23 +107,23 @@ same 107:
   files, card lookup 0.60 s, and Z-order skipped nothing (34 files read before and after). The job sets
   `spark.databricks.delta.optimize.maxFileSize` to 4 MB so a month has several files, as it would at 100 GB (about
   3 GB per month)
-  ([`pipelines/spark/storage_layout.py` L68-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/storage_layout.py#L68-L70)).
+  ([`pipelines/spark/storage_layout.py` L68-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/storage_layout.py#L68-L70)).
 
 The gold tables are partitioned by month for the same reason (`fact_transaction` by `txn_month`,
-[`pipelines/dbt/models/gold/fact_transaction.sql` L4-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/dbt/models/gold/fact_transaction.sql#L4-L9);
+[`pipelines/dbt/models/gold/fact_transaction.sql` L4-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/dbt/models/gold/fact_transaction.sql#L4-L9);
 `label_transaction` by `event_month`,
-[`pipelines/spark/build_labels.py` L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_labels.py#L53)).
+[`pipelines/spark/build_labels.py` L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_labels.py#L53)).
 
 ## Serving database (Postgres)
 
-[`pipelines/spark/load_serving.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/load_serving.py)
+[`pipelines/spark/load_serving.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/load_serving.py)
 fills the serving table, and
-[`infra/sql/serving_indexes.sql`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/sql/serving_indexes.sql)
+[`infra/sql/serving_indexes.sql`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/sql/serving_indexes.sql)
 measures its two query patterns, creates the indexes and measures again.
 
 The load copies the last 180 days of `fact_transaction`, joined with the merchant name, into one flat table
 `mart.obt_card_txn` (1,392,065 rows, 209 MB), written in `txn_ts` order like a daily append
-([`pipelines/spark/load_serving.py` L24-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/load_serving.py#L24-L28)).
+([`pipelines/spark/load_serving.py` L24-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/load_serving.py#L24-L28)).
 Dashboards and the analyst's screen read it without joins.
 
 | Query pattern | Index | Before | After |
@@ -132,10 +132,10 @@ Dashboards and the analyst's screen read it without joins.
 | Spend per unit over the last 7 days | BRIN `(txn_ts)`, 24 kB | Parallel Seq Scan, 26,778 buffers, **68.6 ms** | Bitmap Heap Scan on 1,162 blocks, **17.0 ms** |
 
 Warm cache, second run of each `EXPLAIN (ANALYZE, BUFFERS)`
-([`infra/sql/serving_indexes.sql` L17-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/sql/serving_indexes.sql#L17-L26)
+([`infra/sql/serving_indexes.sql` L17-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/sql/serving_indexes.sql#L17-L26)
 for the "before" runs). The script then creates the two indexes, plus a plain B-tree on `txn_ts` that exists only
 to compare sizes
-([`infra/sql/serving_indexes.sql` L28-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/sql/serving_indexes.sql#L28-L34)):
+([`infra/sql/serving_indexes.sql` L28-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/sql/serving_indexes.sql#L28-L34)):
 
 ```sql
 CREATE INDEX ix_obt_card_ts ON mart.obt_card_txn (card_id, txn_ts DESC);

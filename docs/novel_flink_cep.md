@@ -9,7 +9,7 @@ uses.
 
 | | |
 |---|---|
-| Code | [`pipelines/flink/ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_cep.py), [`pipelines/flink/check_ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/check_ato_cep.py) |
+| Code | [`pipelines/flink/ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_cep.py), [`pipelines/flink/check_ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/check_ato_cep.py) |
 | Runs on | compose profile `stream` (the Flink session cluster of [flink_jobs.md](flink_jobs.md)) |
 | Reads | Kafka `app_events_replay` |
 | Writes | Kafka `ato_alerts_cep` |
@@ -46,7 +46,7 @@ takeover as a sequence inside one session. Since Decision 2345 (identity checks 
 device, for a transfer of 10M VND or more and above 20M VND a day), takeovers look different. Most stop at a failed
 identity check, and malware that drives the victim's own phone needs no password reset: it adds a payee and splits
 the money into transfers just below 10M. The Layer 1 streaming job
-[`pipelines/flink/ato_sequence.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_sequence.py)
+[`pipelines/flink/ato_sequence.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_sequence.py)
 ([flink_jobs.md](flink_jobs.md#out-of-order-app-events)) codes one sequence (password reset, add payee, transfer) as a
 state machine with its own event-time buffer and timers. On the replays below it flags 10 and 8 takeover sessions out
 of about 1,340, and it is slow: a Python operator per event.
@@ -55,7 +55,7 @@ of about 1,340, and it is slow: a Python operator per event.
 
 Flink CEP, through Flink SQL's `MATCH_RECOGNIZE`, describes each sequence as a pattern over the rows of a partition
 in event time, much like a regular expression over events.
-[`pipelines/flink/ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_cep.py)
+[`pipelines/flink/ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_cep.py)
 runs three patterns in one job. The SQL operator sorts each session's events by event time once the watermark
 passes, so the hand-written buffer is gone.
 
@@ -66,7 +66,7 @@ passes, so the hand-written buffer is gone.
 | `split_transfers` | `add_payee`, then two transfers of 9,000,000 to 9,999,999 VND to that payee, within 30 minutes | remote control of the victim's phone: no reset, no new device, amounts kept under the 10M check |
 
 The patterns (`X*?` and `Y*?` let any other events sit in between), in
-[`pipelines/flink/ato_cep.py` L20-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_cep.py#L20-L39):
+[`pipelines/flink/ato_cep.py` L20-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_cep.py#L20-L39):
 
 ```python
 PATTERNS = {
@@ -93,9 +93,9 @@ PATTERNS = {
 
 Each pattern becomes `INSERT INTO ato_alerts_cep SELECT ... FROM app_events MATCH_RECOGNIZE (PARTITION BY session_id
 ORDER BY ts ...)`, and the three inserts run as one statement set, so Kafka is read once
-([`pipelines/flink/ato_cep.py` L65-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_cep.py#L65-L71)).
+([`pipelines/flink/ato_cep.py` L65-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_cep.py#L65-L71)).
 The source table takes `event_ts` as event time with a 30 s watermark
-([`pipelines/flink/ato_cep.py` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/ato_cep.py#L50));
+([`pipelines/flink/ato_cep.py` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/ato_cep.py#L50));
 the app delays an event by 20 s at most.
 
 ## How it works, step by step (2026-10-24)
@@ -132,12 +132,12 @@ and for transfers the payee and the amount. Counts per pattern and the first ale
 
 ### 4. Checked against the rule definitions and the truth
 
-[`pipelines/flink/check_ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/check_ato_cep.py)
+[`pipelines/flink/check_ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/check_ato_cep.py)
 loads the replay, runs the hand-written job and the CEP job, and compares their alerts with:
 
 - the sessions each rule should flag, recomputed with pandas from the Parquet files in event time (an independent
   implementation of the same definitions,
-  [`pipelines/flink/check_ato_cep.py` L26-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/check_ato_cep.py#L26-L48));
+  [`pipelines/flink/check_ato_cep.py` L26-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/check_ato_cep.py#L26-L48));
 - the generator's list of takeover sessions (`new_device`, `remote_access`).
 
 The run on the held-out window (2026-03-01 to 2026-05-03), in Git Bash:

@@ -7,7 +7,7 @@ database `feast`).
 
 | | |
 |---|---|
-| Code | [`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo), [`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/jobs/push_job.py), [`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/feast_materialize.py) |
+| Code | [`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo), [`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/push_job.py), [`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/feast_materialize.py) |
 | Runs on | a library inside the Scoring API, the push jobs, Airflow, Jupyter and the KFP steps; push jobs `push-online` / `push-offline`: compose profile `ml`; materialization: Airflow DAG `feast_materialize` |
 | Reads | `gold.feat_card_txn_stats_daily`, `gold.dim_card`, Kafka `card_features_rt` and `card_device_seen` |
 | Writes | Redis online store; `gold.feat_card_auth_rt` and `gold.feat_card_device` (push job B) |
@@ -48,9 +48,9 @@ the DAG `feast_materialize`, triggered by DP3.
 ## Feature views
 
 The views are defined in
-[`ml/feature_repo/fraud_features.py` L46-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L46-L72),
+[`ml/feature_repo/fraud_features.py` L46-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L46-L72),
 the on-demand view in
-[`ml/feature_repo/fraud_features.py` L80-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L80-L120):
+[`ml/feature_repo/fraud_features.py` L80-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L80-L120):
 
 | View | Source | Key | TTL | Written by |
 |---|---|---|---|---|
@@ -61,7 +61,7 @@ the on-demand view in
 | `fraud_request_features` | on demand: the request + the four views | | | computed per request (pandas) |
 
 Feature service `fraud_model_v1` = 7 daily stats + the 13 on-demand features
-([`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L123-L128)).
+([`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L123-L128)).
 The model is trained on exactly this list and the API asks for exactly this list, so the two cannot drift apart: a
 model with other inputs gets `fraud_model_v2`.
 
@@ -80,7 +80,7 @@ on-demand view from the value's own timestamp, so training and serving age it th
 | card device | none | "this card has used this device before" never expires |
 
 The ageing in the on-demand view, from each value's own timestamp
-([`ml/feature_repo/fraud_features.py` L103-L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L103-L111)):
+([`ml/feature_repo/fraud_features.py` L103-L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L103-L111)):
 
 ```python
     # Realtime values were computed at the card's previous authorization: "now" they still hold only within their
@@ -100,11 +100,11 @@ Three decisions keep the training rows identical to what the API sees:
 
 1. Entity timestamp = payment time - 1 ms. When the API scores a payment, Flink has not processed it yet: the
    online store holds features of the *previous* authorizations. Training joins at `txn_ts - 1 ms`
-   ([`ml/fraud_ml/data.py` L88-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/fraud_ml/data.py#L88-L91)),
+   ([`ml/fraud_ml/data.py` L88-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/data.py#L88-L91)),
    so the point-in-time join also excludes the payment itself.
 2. DP3 rows land the night after the activity. A row for day L has `event_timestamp = L + 1` and windows that
    end at L
-   ([`pipelines/spark/build_features.py` L69-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_features.py#L69-L70)).
+   ([`pipelines/spark/build_features.py` L69-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_features.py#L69-L70)).
    A payment on day L+1 sees the stats up to L, which is what Redis holds that day (materialized after DP3 of L).
    Layer 1 wrote one row on each day D the card *paid*, windows ending at D-1: that row existed only because of the
    payment being scored. For a card that last paid 20 days ago, training saw windows ending yesterday; serving has
@@ -117,7 +117,7 @@ Three decisions keep the training rows identical to what the API sees:
 
 | What | How | When |
 |---|---|---|
-| Daily stats to Redis | DAG `feast_materialize` ([`pipelines/airflow/dags/feast_materialize.py` L20-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/feast_materialize.py#L20-L29), [run of 2026-11-03](#materialize-run-of-2026-11-03)): `feast materialize-incremental <ds+1>` then `ml/tools/check_online.py` (sample of cards active on ds read back from Redis, values compared with Delta) | triggered by DP3 |
+| Daily stats to Redis | DAG `feast_materialize` ([`pipelines/airflow/dags/feast_materialize.py` L20-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/feast_materialize.py#L20-L29), [run of 2026-11-03](#materialize-run-of-2026-11-03)): `feast materialize-incremental <ds+1>` then `ml/tools/check_online.py` (sample of cards active on ds read back from Redis, values compared with Delta) | triggered by DP3 |
 | Streaming to Redis | push job A (`ml/jobs/push_job.py --to online`), consumer group per job, offsets committed after the write | continuous |
 | Streaming to Delta | push job B (`--to offline`), `deltalake` append (Feast's Spark offline push appends plain Parquet next to the Delta log, which Delta readers ignore) | continuous; `--until-idle` for the backfill |
 | Definitions | `feast apply` from `ml/feature_repo/` | after a change |
@@ -125,7 +125,7 @@ Three decisions keep the training rows identical to what the API sees:
 
 Both push jobs write a batch first and commit the Kafka offsets after it (at-least-once: after a crash the last
 batch is written again)
-([`ml/jobs/push_job.py` L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/jobs/push_job.py#L113-L122)):
+([`ml/jobs/push_job.py` L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/push_job.py#L113-L122)):
 
 ```python
         if full or (now - last_flush >= max_wait_s and any(pending.values())):
@@ -141,9 +141,9 @@ batch is written again)
 ```
 
 The two push jobs
-([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/jobs/push_job.py))
+([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/push_job.py))
 are deployed by their own CI pipeline
-([`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/jobs/Jenkinsfile.stream), [cicd.md](cicd.md#stream-feature-jobs)):
+([`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/Jenkinsfile.stream), [cicd.md](cicd.md#stream-feature-jobs)):
 unit tests, the ml image, `push-online` and `push-offline` recreated on it, then a smoke test that sends one marked
 message to Kafka and waits for it in both stores. Build #2: `ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s
 (s3://lakehouse/gold/feat_card_auth_rt)`. The Jenkins stage view of that build:
@@ -195,13 +195,13 @@ history again.
   maximum permitted memory-backed state. Size=5380688, maxSize=5242880`, 25 failed checkpoints, then a restart loop
   that looked like a slow job (lag 24k events). `execution.checkpointing.storage: filesystem` with
   `execution.checkpointing.dir: s3://lakehouse/flink/checkpoints` in the cluster config
-  ([`infra/docker-compose.yaml` L313-L316](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/docker-compose.yaml#L313-L316))
+  ([`infra/docker-compose.yaml` L313-L316](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/docker-compose.yaml#L313-L316))
   fixed it: checkpoints of ~2 MB on S3, ~270 events/s.
 - `raw_landing.py` always started at the earliest offset, so landing the live period would have landed the 8.1M
   history events again; `--from-ms` starts at a Kafka timestamp instead (the producers stamp event time).
 - `SparkSource(file_format=...)` accepts only csv / json / parquet / avro: a Delta table is
   `file_format="parquet", table_format=DeltaFormat()`
-  ([`ml/feature_repo/fraud_features.py` L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L39-L43)).
+  ([`ml/feature_repo/fraud_features.py` L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L39-L43)).
 - The on-demand view runs from the source text stored in the registry: module-level helpers and imports are not
   there at run time (`NameError`). The function is self-contained.
 - `feast apply` infers schemas by reading the sources: the push-source Delta tables must exist first (push job B

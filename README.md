@@ -59,7 +59,7 @@ deploy and check) and what runs in the cloud: SaaS, and the Azure resources an I
 | Step | Component | What it does |
 |---|---|---|
 | 01 · DP1 | Spark ingest | Copies `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged; the export lands on a lakeFS branch and is merged into `main` only after its checks pass (novel idea 2) |
-| 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py)) |
+| 02 · DP2 | Spark silver | Dedup, 63 → 34 unit normalization, `auth_method` for rows before 2024-07-01 → silver `stg_*` (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py)) |
 | 03 · DP2 | dbt-spark | Gold `dim_*` / `fact_*` on Spark (own session in Airflow, Thrift Server by hand), SCD2 `dim_customer` model, incremental fact, 22 dbt tests |
 | 04 · DP3 | Spark features | `feat_*` tables with `event_timestamp` and `created` for the Layer 2 feature store |
 | 05 | Trino | SQL over every zone (`delta.<zone>.<table>`, the export as `lakefs.bronze.raw_transactions`): finds a table's location in the Hive Metastore, reads its Delta files from S3 |
@@ -71,8 +71,8 @@ deploy and check) and what runs in the cloud: SaaS, and the Azure resources an I
 
 | Step | Component | What it does |
 |---|---|---|
-| 09 | Feast ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo)) | Offline store = the lakehouse Delta tables (Spark), online store = Redis; daily stats materialized by Airflow, realtime and device features pushed from Kafka ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/jobs/push_job.py)) |
-| 10 | Notebook | The same 7 steps the pipeline runs, one by one, ending with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/notebooks/fraud_model.ipynb)) |
+| 09 | Feast ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo)) | Offline store = the lakehouse Delta tables (Spark), online store = Redis; daily stats materialized by Airflow, realtime and device features pushed from Kafka ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/push_job.py)) |
+| 10 | Notebook | The same 7 steps the pipeline runs, one by one, ending with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/notebooks/fraud_model.ipynb)) |
 | 11 | Kubeflow Pipelines on kind | `train_fraud_model`: labels -> Feast point-in-time features -> data checks -> time split -> distributed XGBoost (Spark executor pods) -> evaluation gate -> MLflow registry |
 | 12 | MLflow | Experiment runs, data versions, model registry with aliases `challenger` / `production` |
 | 13 | KServe | InferenceService (Standard mode) serving the `production` booster baked into the image |
@@ -83,11 +83,11 @@ Five classes carry the ML logic:
 
 | Class | File | Job |
 |---|---|---|
-| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/fraud_ml/data.py#L38) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
-| `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
-| `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
-| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/fraud_ml/registry.py#L24) | MLflow logging, model versions and aliases |
-| `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
+| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/data.py#L38) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
+| `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
+| `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
+| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/registry.py#L24) | MLflow logging, model versions and aliases |
+| `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
 
 ### Layer 3: LLM and agent platform
 

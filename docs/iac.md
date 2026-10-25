@@ -8,7 +8,7 @@ quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
 
 | | |
 |---|---|
-| Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/aks/predictor.yaml) |
+| Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/k8s/aks/predictor.yaml) |
 | Runs on | Azure, resource group `rg-cardfraud-dev` in `polandcentral` (one IaC run: created, checked, destroyed); Terraform, Ansible and kubectl run from the PC |
 | Reads | `services/predictor/` (code + production model) for the VM, the image `fraud/predictor:1` of the local registry for AKS |
 | Writes | the Azure resources, `infra/ansible/inventory/hosts.ini`, `infra/.secrets/aks-kubeconfig`, the local Terraform state (all three gitignored) |
@@ -109,7 +109,7 @@ credit: two B2s v2 at $0.096 an hour each, plus the registry, the disks and the 
 
 ## Terraform
 
-[`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform)
+[`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform)
 has one reusable module per service and one folder per environment (the layout the rubric links to):
 
 ```text
@@ -122,17 +122,17 @@ infra/terraform/
 ```
 
 - azurerm 5 registers no resource providers by itself: `resource_providers_to_register` lists the four it needs
-  ([`infra/terraform/envs/dev/versions.tf` L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/envs/dev/versions.tf#L16-L22)),
+  ([`infra/terraform/envs/dev/versions.tf` L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/envs/dev/versions.tf#L16-L22)),
   and `node_provisioning_profile` is required on the AKS cluster
-  ([`infra/terraform/modules/aks/main.tf` L31-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/modules/aks/main.tf#L31-L33)).
+  ([`infra/terraform/modules/aks/main.tf` L31-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/modules/aks/main.tf#L31-L33)).
 - The subscription id comes from `ARM_SUBSCRIPTION_ID`, never from a committed file. The state, the plan, the
   inventory (VM IP) and the kubeconfig are gitignored. The state is local: one person runs this.
 - `admin_cidr` is required and validated (`0.0.0.0/0` is refused), so the VM is never open to the whole internet.
 
 The environment wires the resource group and the four modules
-([`infra/terraform/envs/dev/main.tf` L17-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/envs/dev/main.tf#L17-L61)).
+([`infra/terraform/envs/dev/main.tf` L17-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/envs/dev/main.tf#L17-L61)).
 The check on `admin_cidr`
-([`infra/terraform/envs/dev/variables.tf` L13-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/envs/dev/variables.tf#L13-L21)):
+([`infra/terraform/envs/dev/variables.tf` L13-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/envs/dev/variables.tf#L13-L21)):
 
 ```hcl
 variable "admin_cidr" {
@@ -147,9 +147,9 @@ variable "admin_cidr" {
 ```
 
 The NSG rules use it: SSH on port 22
-([`infra/terraform/modules/network/main.tf` L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/modules/network/main.tf#L24-L34))
+([`infra/terraform/modules/network/main.tf` L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/modules/network/main.tf#L24-L34))
 and, just below it, the service ports,
-[`infra/terraform/modules/network/main.tf` L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/modules/network/main.tf#L36-L46):
+[`infra/terraform/modules/network/main.tf` L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/modules/network/main.tf#L36-L46):
 
 ```hcl
   security_rule {
@@ -201,9 +201,9 @@ The state and the subscription's quotas while the run is up: the run's 4 vCPU (B
 
 ## Ansible
 
-[`infra/ansible/site.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/ansible/site.yml)
+[`infra/ansible/site.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/ansible/site.yml)
 applies four roles to the `serving` group (the VM Terraform created;
-[`infra/ansible/site.yml` L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/ansible/site.yml#L10-L17)):
+[`infra/ansible/site.yml` L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/ansible/site.yml#L10-L17)):
 
 | Role | What it does |
 |---|---|
@@ -215,7 +215,7 @@ applies four roles to the `serving` group (the VM Terraform created;
 A code or model change rebuilds the image (handler on the copy); otherwise the role only checks the container runs.
 
 The checks at the end of the predictor role; the play fails unless the model answers
-([`infra/ansible/roles/predictor/tasks/main.yml` L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
+([`infra/ansible/roles/predictor/tasks/main.yml` L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
 
 ```yaml
 - name: Model is loaded and ready
@@ -331,7 +331,7 @@ From the local machine, through the NSG (2026-10-21 run), curl reaches the model
 The VM builds its image from source. AKS runs the image the local platform serves, `fraud/predictor:1` (the model
 inside the image, as on kind), pulled from the registry Terraform creates. Terraform also grants the cluster's kubelet
 identity `AcrPull` on that registry, so the cluster holds no image pull secret
-([`infra/terraform/envs/dev/main.tf` L64-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/terraform/envs/dev/main.tf#L64-L69)):
+([`infra/terraform/envs/dev/main.tf` L64-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/terraform/envs/dev/main.tf#L64-L69)):
 
 ```hcl
 resource "azurerm_role_assignment" "aks_acr_pull" {
@@ -342,7 +342,7 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
 }
 ```
 
-[`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/aks/predictor.yaml)
+[`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/k8s/aks/predictor.yaml)
 is a plain Deployment (one B2s v2 node has no room for KServe and cert-manager): 2 replicas, `maxUnavailable: 0`, a
 readiness probe on the model, non-root. The image is pushed to ACR and the manifest applied as in [Run it](#run-it).
 
@@ -373,6 +373,6 @@ exists:
 - Docker publishes ports through its own iptables chains, before `ufw`: the NSG is the firewall that holds for 8080.
 - Bind-mounted files from Windows are world-readable and `ssh` refuses such a key: the container copies `/key` to
   `~/.ssh` with mode 600 first
-  ([`infra/ansible/Dockerfile` L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/ansible/Dockerfile#L8)).
+  ([`infra/ansible/Dockerfile` L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/ansible/Dockerfile#L8)).
 - Run on a loaded Docker Desktop VM, the Ansible container once failed reading `model.json` with
   `[Errno 12] Cannot allocate memory` (the host, not the VM); the rerun passed.

@@ -2,12 +2,12 @@
 
 Four views of the same platform, Layers 1 to 3: what it does step by step, which deployable unit sends which data to
 which, and where each unit runs. All four are drawn by
-[`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/docs/diagrams/platform.py)
+[`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/docs/diagrams/platform.py)
 from the tables in that script (stdlib only), which also prints the numbered-arrow tables of this page.
 
 | | |
 |---|---|
-| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/docs/diagrams/platform.py) |
+| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/docs/diagrams/platform.py) |
 | Runs on | host process (Python stdlib; headless Chrome or Edge renders the PNGs) |
 | Writes | `docs/images/platform-*.svg` and the PNGs next to them; prints the arrow tables below |
 | Related | [schema_design.md](schema_design.md), [agents.md](agents.md), [cicd.md](cicd.md), [iac.md](iac.md) |
@@ -39,9 +39,9 @@ cards are stores (where the data rests between two steps), orange cards are the 
 ![Platform overview: the 27 steps in three bands for Layers 1, 2 and 3, the stores between them in blue, Feast as the bar between Layers 1 and 2, the four novel ideas in orange, and the CI/CD and cloud rows](images/platform-overview.png)
 
 Layer 1 (top) turns the source systems into feature tables, daily with Spark (DAG
-[`pipelines/airflow/dags/dp1_source_to_bronze.py` L43-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L43-L60),
+[`pipelines/airflow/dags/dp1_source_to_bronze.py` L43-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L43-L60),
 which triggers DP2 and DP3) and continuously with Flink
-([`pipelines/flink/rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/flink/rt_features.py#L94-L121)).
+([`pipelines/flink/rt_features.py` L94-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/flink/rt_features.py#L94-L121)).
 No step hands its data straight to the next one: each writes a zone of the lakehouse (Delta tables under
 `s3a://lakehouse/<zone>/` on SeaweedFS, registered in the Hive Metastore) and the next step reads that zone. Flink
 lands the raw authorizations as JSON files in `landing/`, DP1 copies them and the core banking sources into
@@ -52,29 +52,29 @@ repository `bronze`, on a branch of its own, and merges that branch into `main` 
 Trino has no arrow from Spark: it asks the Hive Metastore where a table lives and reads the Delta files itself, so it
 can query any zone.
 Layer 2 (middle) trains, registers, serves and monitors the model (KFP pipeline
-[`ml/pipelines/train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/pipelines/train_fraud_model.py#L102-L124),
+[`ml/pipelines/train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/pipelines/train_fraud_model.py#L102-L124),
 Scoring API
-[`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/main.py#L60-L63)).
+[`services/scoring_api/app/main.py` L60-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/services/scoring_api/app/main.py#L60-L63)).
 Its stores sit under the steps: the versioned training sets in `lakehouse/ml/`, MLflow's PostgreSQL (runs, registry)
 and bucket `mlflow` (model files), and the Kafka topic `fraud_predictions` that carries every decision to the drift
 check.
 Feast (the bar) is the hand-over: Layer 1 writes into it, Layer 2 reads from it, so training and serving
 see the same 20 features (`fraud_model_v1`,
-[`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/ml/feature_repo/fraud_features.py#L123-L128)).
+[`ml/feature_repo/fraud_features.py` L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo/fraud_features.py#L123-L128)).
 Drift is checked twice. The Drift API is a service that runs all the time: the drift forwarder reads every decision
 from the Kafka topic `fraud_predictions` and posts it, and the API keeps per-minute counts in Redis and returns the
 PSI of each input over the last 15 minutes (no labels needed). The loop inside Layer 2 is the retraining path: the
 Airflow DAG `drift_monitoring` runs every day (`schedule="@daily"`), scores the last 7 days with ground truth and
 point-in-time features from the offline store, and when a PSI is above 0.25 or the PR-AUC fell more than 0.05 it
 starts a Kubeflow pipeline run with the newest labels
-([`pipelines/airflow/dags/drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
+([`pipelines/airflow/dags/drift_monitoring.py` L39-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/drift_monitoring.py#L39-L51),
 [drift.md](drift.md)).
 
 Layer 3 (bottom band) reads from both layers above it. Three MCP servers, one per tool family
-([`services/card_support_mcp/app/main.py` L40-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/card_support_mcp/app/main.py#L40-L44)), give the agents
+([`services/card_support_mcp/app/main.py` L40-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/services/card_support_mcp/app/main.py#L40-L44)), give the agents
 their tools: card-data takes a card's features from the same Feast online store, fraud-score asks the Layer 2 Scoring
 API, and policy-rag searches the bank's documents; the RAG pipeline
-([`pipelines/airflow/dags/rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/rag_ingest.py#L64-L73))
+([`pipelines/airflow/dags/rag_ingest.py` L64-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/rag_ingest.py#L64-L73))
 writes the policy chunks and their
 vectors into a second Feast project (`card_support_kb`, online store pgvector). Support staff reach the agents through
 NGINX; every agent call (A2A, MCP, LLM) then goes through agentgateway, which sends the LLM calls to llama.cpp via the

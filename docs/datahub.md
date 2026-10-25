@@ -8,7 +8,7 @@ by `make_env.py` instead of the default `datahub:datahub`.
 
 | | |
 |---|---|
-| Code | [`infra/docker-compose.yaml` L455-L564](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/docker-compose.yaml#L455-L564), [`pipelines/airflow/dags/datahub_metadata.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/datahub_metadata.py), [`pipelines/airflow/dags/datahub_recipes/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/datahub_recipes) |
+| Code | [`infra/docker-compose.yaml` L455-L564](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/docker-compose.yaml#L455-L564), [`pipelines/airflow/dags/datahub_metadata.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/datahub_metadata.py), [`pipelines/airflow/dags/datahub_recipes/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/datahub_recipes) |
 | Runs on | compose profile `gov`: GMS on 127.0.0.1:8083, UI on http://127.0.0.1:9002 |
 | Reads | OpenLineage events of every Spark job, the Airflow listener, GE results, `datahub ingest` of Postgres `core_banking`, the Kafka topics and the dbt artifacts |
 | Writes | its own Postgres and OpenSearch |
@@ -30,13 +30,13 @@ Then open http://127.0.0.1:9002 and log in as `datahub`.
 
 | What | Sent by | How |
 |---|---|---|
-| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in [`infra/conf/spark/spark-defaults.conf` L34-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/conf/spark/spark-defaults.conf#L34-L44), posting to GMS `/openapi/openlineage/api/v1/lineage` ([openlineage.md](openlineage.md)) |
+| Lakehouse tables (bronze / silver / gold / feat), their schema and lineage, column-level lineage | every Spark job, dbt included | OpenLineage listener in [`infra/conf/spark/spark-defaults.conf` L34-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/conf/spark/spark-defaults.conf#L34-L44), posting to GMS `/openapi/openlineage/api/v1/lineage` ([openlineage.md](openlineage.md)) |
 | DAGs, tasks, task runs | Airflow | DataHub's Airflow listener (`acryl-datahub-airflow-plugin`) |
-| Validation results (GE) | `publish_results` task of every validate stage ([`pipelines/airflow/dags/common.py` L62-L117](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L62-L117)) | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
-| Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in [`pipelines/airflow/dags/datahub_recipes/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/datahub_recipes) |
+| Validation results (GE) | `publish_results` task of every validate stage ([`pipelines/airflow/dags/common.py` L62-L117](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L62-L117)) | `AssertionInfo` + `AssertionRunEvent` per expectation, on the hive URN of the table |
+| Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in [`pipelines/airflow/dags/datahub_recipes/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/datahub_recipes) |
 
 The `datahub_metadata` DAG runs one `datahub ingest` per recipe
-([`pipelines/airflow/dags/datahub_metadata.py` L33-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/datahub_metadata.py#L33-L37)):
+([`pipelines/airflow/dags/datahub_metadata.py` L33-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/datahub_metadata.py#L33-L37)):
 
 ```python
 with DAG("datahub_metadata", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
@@ -84,7 +84,7 @@ The lineage graph of the feature table shows its direct inputs, `gold.fact_trans
 `silver.stg_transactions` sits in the middle. Its lineage graph after the DP2 run of 2026-11-07: upstream, the three
 bronze tables `build_silver` reads (`raw_customers`, `raw_ref_province_mapping`, `raw_transactions`) through the
 task, which declares them since OpenLineage reports DP2's MERGE without its source
-([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L24-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py#L24-L28), [`pipelines/airflow/dags/dp2_bronze_to_gold.py` L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py#L47); [openlineage.md](openlineage.md#how-it-is-wired)); downstream, dbt (the fact and `dim_date`), the labels and the PySpark
+([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L24-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py#L24-L28), [`pipelines/airflow/dags/dp2_bronze_to_gold.py` L47](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py#L47); [openlineage.md](openlineage.md#how-it-is-wired)); downstream, dbt (the fact and `dim_date`), the labels and the PySpark
 comparison job:
 
 ![silver.stg_transactions lineage: upstream bronze.raw_customers, bronze.raw_ref_province_mapping and bronze.raw_transactions through build_silver and the MERGE job; downstream dbt, gold.dim_date, gold.fact_transaction and gold_pyspark.fact_transaction](images/datahub_lineage_silver.png)
@@ -93,11 +93,11 @@ comparison job:
 
 Each table's upstream job carries the DAG's name. The OpenLineage job name is `spark.openlineage.appName`, which is
 the DAG id, set for every Spark task in
-[`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L41-L49).
+[`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L41-L49).
 
 `bronze.raw_transactions` takes one more step. DP1 writes the export into the lakeFS repository on a branch and
 publishes it with a merge, an API call OpenLineage cannot see, so the DAG declares that hop
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L41), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L52), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L59); [novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)). After the DP1 run of 2026-11-07, the repository's
+([`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L41), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L52), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L59); [novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)). After the DP1 run of 2026-11-07, the repository's
 `bronze/raw_transactions` (S3) sits between the export and the table: `ingest_exports` and its Spark job write it from
 `core-banking-export/transactions`, and `merge_to_main` reads it and produces `bronze.raw_transactions`. The table
 also keeps its first producer, `create_table.bronze_raw_transactions`, the load that created it before lakeFS:
@@ -120,7 +120,7 @@ Every GE expectation of the validate stages is an assertion on its table with on
 
 Each GE result becomes an `AssertionInfo` (what is checked) and an `AssertionRunEvent` (this run's result). The
 assertion id is a hash of table, expectation and column, so every run lands on the same assertion
-([`pipelines/airflow/dags/common.py` L77-L94](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L77-L94)):
+([`pipelines/airflow/dags/common.py` L77-L94](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L77-L94)):
 
 ```python
     for r in report["results"]:
@@ -156,7 +156,7 @@ The Assertions tab lists them, Passing (10) and External (11), with the dbt test
 
 ### A job nobody declared
 
-[`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_gold_pyspark.py)
+[`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_gold_pyspark.py)
 (the hand-written comparison for the dbt gold layer, never run by Airflow) appears with its inputs and outputs after
 its first run:
 
@@ -174,12 +174,12 @@ DataHub, which the tables written by path do not get from the listener.
   `lookUpSchemaUnderSubject method not implemented` / `Error retrieving Avro value schema version for id 16`, and stop.
   OpenLineage events were accepted (HTTP 200) but entities had no properties and search returned 0. DataHub's own
   quickstart sets those variables (and `SCHEMA_REGISTRY_SYSTEM_UPDATE`) on system-update only; doing the same fixed it
-  ([`infra/docker-compose.yaml` L502-L507](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/docker-compose.yaml#L502-L507)).
+  ([`infra/docker-compose.yaml` L502-L507](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/docker-compose.yaml#L502-L507)).
 - Our broker has auto-create off, and GMS still consumes the legacy topic `MetadataChangeEvent_v4` (and its failed /
   audit topics), which system-update does not create. `infra/init_infra.py` creates them
-  ([`infra/init_infra.py` L16-L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/init_infra.py#L16-L18)).
+  ([`infra/init_infra.py` L16-L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/init_infra.py#L16-L18)).
 - DataHub (GMS 1 GB heap, OpenSearch 512 MB) fits next to batch + orch only without the Spark Thrift Server (see
   [airflow.md](airflow.md)); in the 8 GB Docker VM, swapping made Docker's DNS fail.
 - `acryl-datahub-airflow-plugin` 1.6.x needs Airflow 3; 1.5.0.6 pins a `sqlglotc` build no longer on PyPI; 1.5.0.17
   works with Airflow 2.10 and the v1.5.0.6 server
-  ([`infra/airflow/Dockerfile` L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L54-L57)).
+  ([`infra/airflow/Dockerfile` L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/airflow/Dockerfile#L54-L57)).

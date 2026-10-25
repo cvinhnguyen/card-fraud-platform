@@ -7,7 +7,7 @@ validate stage (Great Expectations on Spark) that stops the run before a bad bat
 
 | | |
 |---|---|
-| Code | [`pipelines/airflow/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow), [`pipelines/spark/validate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/validate.py), [`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile) |
+| Code | [`pipelines/airflow/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow), [`pipelines/spark/validate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/validate.py), [`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/airflow/Dockerfile) |
 | Runs on | compose profile `orch`: Airflow 2.10.5 (LocalExecutor), UI http://127.0.0.1:8082 (user `admin`, password `AIRFLOW_ADMIN_PASSWORD` in `infra/.env`); Spark drivers in the scheduler container, executors on the standalone Spark cluster |
 | Reads | core banking Postgres (6 tables), the nightly export in `s3://core-banking-export/transactions/`, Flink's raw authorization files |
 | Writes | `bronze.raw_*` (the export through the lakeFS branch `dp1_<ds>`), `silver.stg_*`, gold dims, `fact_transaction` and `label_transaction`, `gold.feat_card_txn_stats_daily`; validation results in `s3://lakehouse/_validation/` |
@@ -30,7 +30,7 @@ docker exec airflow-scheduler airflow dags backfill dp1_source_to_bronze -s 2026
 ## DAGs
 
 Three of the DAGs in
-[`pipelines/airflow/dags/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags)
+[`pipelines/airflow/dags/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags)
 are the data pipelines, each with an ingest stage and a validate stage. The other four are `datahub_metadata`
 ([datahub.md](datahub.md)), for Layer 2 `feast_materialize` ([feature_store.md](feature_store.md)) and
 `drift_monitoring` ([drift.md](drift.md)), and for Layer 3 `rag_ingest` ([rag_pipeline.md](rag_pipeline.md)).
@@ -47,7 +47,7 @@ are the data pipelines, each with an ingest stage and a validate stage. The othe
   `spark_lakehouse`). Standalone has no cluster deploy mode for Python, so the driver runs inside the scheduler
   container. The Airflow image therefore carries the same JRE and `/opt/spark` as the Spark image (copied from it in
   the Dockerfile,
-  [`infra/airflow/Dockerfile` L38-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L38-L46)),
+  [`infra/airflow/Dockerfile` L38-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/infra/airflow/Dockerfile#L38-L46)),
   so the driver has the cluster's Spark 4.1.3 and the executors' Python 3.10. The scheduler runs as
   uid 185 (the Spark user) and mounts the same `spark-defaults.conf` and the `spark_ivy` volume, where event logs land
   for the history server (:18080), so a run started by Airflow can be opened there like any other. The Delta / S3A /
@@ -55,12 +55,12 @@ are the data pipelines, each with an ingest stage and a validate stage. The othe
 - The scheduler is on two networks (the default one and `airflow-docker` for DockerOperator), and its hostname
   resolves to the `airflow-docker` address first. A driver bound there refuses the executors, which reach it on the
   default network, so every Spark task sets `spark.driver.bindAddress` to `0.0.0.0`
-  ([`pipelines/airflow/dags/common.py` L46-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L46-L48)).
+  ([`pipelines/airflow/dags/common.py` L46-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L46-L48)).
 - The pool `spark` has 1 slot. The worker has 3 GB: one executor (1.5 GB for DAG tasks) at a time, with room left
   for the Thrift Server's 1 GB executor when it is up. Every Spark task takes the pool slot, so Spark applications
   from overlapping DAG runs queue in Airflow instead of waiting for executors inside Spark.
 - Connections and variables live in Airflow. `airflow-init` creates them from `infra/.env`
-  ([`pipelines/airflow/setup_airflow.py` L62-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/setup_airflow.py#L62-L72),
+  ([`pipelines/airflow/setup_airflow.py` L62-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/setup_airflow.py#L62-L72),
   which also creates the `spark` pool); passwords are stored encrypted with the Fernet key. The DAG code holds no host
   name or credential: tasks render them at run time (`{{ conn.lakehouse_s3.password }}`), and Spark jobs read them from
   their environment (`CORE_DB_URL`, `CORE_DB_USER`, `AWS_ACCESS_KEY_ID`, `LAKEFS_ACCESS_KEY_ID`, ...). The task logs
@@ -68,7 +68,7 @@ are the data pipelines, each with an ingest stage and a validate stage. The othe
 
 Every Spark task of the three DAGs comes from one helper that sets the connection, the S3 environment and the
 `spark` pool
-([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L52-L59)):
+([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L52-L59)):
 
 ```python
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
@@ -82,7 +82,7 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
 ```
 
 The connections and variables the DAGs use, as `setup_airflow.py` creates them
-([`pipelines/airflow/setup_airflow.py` L14-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/setup_airflow.py#L14-L60)):
+([`pipelines/airflow/setup_airflow.py` L14-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/setup_airflow.py#L14-L60)):
 
 | Connection | Type | Used by |
 |---|---|---|
@@ -103,12 +103,12 @@ The connections and variables the DAGs use, as `setup_airflow.py` creates them
 - dbt runs as a Spark application too. In DP2, dbt uses its `session` target: it opens its own Spark session in
   the task (same `spark-defaults.conf`, so OpenLineage sees its SQL, and the same Spark settings as `spark_job()`,
   driver bind address included), queued in the `spark` pool
-  ([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L30-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py#L30-L52)).
+  ([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L30-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py#L30-L52)).
   The Spark Thrift Server (target `local`) is for interactive use: it holds a 1 GB driver and a 1 GB executor all the
   time, which next to DataHub pushed the 8 GB Docker VM into swap; Docker's DNS then failed (`Unable to execute HTTP
   request: seaweedfs`) and tasks failed at random.
 - Every task has `depends_on_past`
-  ([`pipelines/airflow/dags/common.py` L18-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L18-L20)).
+  ([`pipelines/airflow/dags/common.py` L18-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L18-L20)).
   All loads are incremental, so day D must not run before D-1 succeeded. The first backfill showed why: a Docker DNS
   error failed DP2 for 10-13, DP2 for 10-14 ran first, and its labels (as of 10-14) made the 10-13 label step a no-op,
   so the 10-13 validation would have failed with no rows labelled as of 10-13.
@@ -120,17 +120,17 @@ The connections and variables the DAGs use, as `setup_airflow.py` creates them
 ## DP1: source to bronze
 
 In
-[`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py),
+[`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py),
 `wait_for_export` (S3 sensor, reschedule mode) waits for `export_date = ds + 1`: the core banking system exports day
 `ds` the next night. Then three Spark tasks load the three sources, the validate stage checks them, and only then
 `merge_to_main` publishes the export and `trigger_dp2` starts DP2
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L45-L60)).
+([`pipelines/airflow/dags/dp1_source_to_bronze.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L45-L60)).
 Since 2026-10-24 the export goes through a lakeFS branch (Write-Audit-Publish, [novel_lakefs_wap.md](novel_lakefs_wap.md)):
 the run appends it on `dp1_<ds>`, the checks read that branch, and only a run that passed merges it into `main`, which
 `bronze.raw_transactions` points at.
 
 The order of the tasks
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L57-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L57-L60)):
+([`pipelines/airflow/dags/dp1_source_to_bronze.py` L57-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L57-L60)):
 
 ```python
     [wait, branch] >> exports
@@ -155,7 +155,7 @@ The order of the tasks
 ## DP2: bronze to silver to gold
 
 DP1 triggers
-[`pipelines/airflow/dags/dp2_bronze_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py)
+[`pipelines/airflow/dags/dp2_bronze_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py)
 with the same logical date:
 
 | Task | What it does |
@@ -169,13 +169,13 @@ with the same logical date:
 | `trigger_dp3` | starts DP3 |
 
 Silver is validated before dbt reads it
-([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L57-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py#L57-L60)),
+([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L57-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py#L57-L60)),
 so a bad silver batch never reaches gold.
 
 ## DP3: gold to features
 
 DP2 triggers
-[`pipelines/airflow/dags/dp3_gold_to_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp3_gold_to_features.py):
+[`pipelines/airflow/dags/dp3_gold_to_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp3_gold_to_features.py):
 
 | Task | What it does |
 |---|---|
@@ -185,19 +185,19 @@ DP2 triggers
 
 ## Validate stage
 
-[`pipelines/spark/validate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/validate.py)
+[`pipelines/spark/validate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/validate.py)
 runs Great Expectations 0.18 (`SparkDFDataset`, the same `expect_*` calls as the course's `ge.from_pandas`) inside a
 Spark driver, on the slice the run wrote, so its cost does not grow with the table
-([`pipelines/spark/validate.py` L126-L142](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/validate.py#L126-L142)).
+([`pipelines/spark/validate.py` L126-L142](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/validate.py#L126-L142)).
 In DP1 it gets `--txn-root` and reads `bronze.raw_transactions` from the run's lakeFS branch instead of `main`
-([`pipelines/spark/validate.py` L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/validate.py#L30-L34)).
+([`pipelines/spark/validate.py` L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/validate.py#L30-L34)).
 It writes `s3://lakehouse/_validation/<suite>/ds=<ds>/results.json` and exits 0; `publish_results` then fails the run
 if any expectation failed. Recording first and failing second means the reason of a stopped pipeline is always
 written down (and, from P8, sent to DataHub).
 
 The end of `publish_results` and the task group that runs it after the Spark check; `validate()` passes extra
 arguments to the Spark check, which is how DP1 hands over `--txn-root`
-([`pipelines/airflow/dags/common.py` L113-L127](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L113-L127)):
+([`pipelines/airflow/dags/common.py` L113-L127](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L113-L127)):
 
 ```python
     failed = [r for r in report["results"] if not r["success"]]
@@ -229,7 +229,7 @@ results sent to DataHub:
 
 `rewind_days.py --from 2026-10-12` deleted the last 4 export dates from bronze, silver and the fact and restored
 the label table to its 2026-09-30 version
-([`pipelines/spark/rewind_days.py` L40-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/rewind_days.py#L40-L51));
+([`pipelines/spark/rewind_days.py` L40-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/rewind_days.py#L40-L51));
 the backfill above then reloaded them day by day. Since 2026-10-24 `bronze.raw_transactions` is on lakeFS `main`,
 which takes only merges, so the script runs the bronze delete on a branch `rewind_<date>`, commits it and merges it
 into `main`, the same way a DP1 run publishes.

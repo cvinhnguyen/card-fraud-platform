@@ -6,7 +6,7 @@ runs in Airflow (summary in [In the Airflow pipeline](#in-the-airflow-pipeline),
 
 | | |
 |---|---|
-| Code | [`pipelines/spark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark), [`pipelines/airflow/dags/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags) |
+| Code | [`pipelines/spark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark), [`pipelines/airflow/dags/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags) |
 | Runs on | compose profile `batch` (jobs run inside the `spark-master` container); in the pipeline, Airflow DAGs `dp1_source_to_bronze` and `dp2_bronze_to_gold` |
 | Reads | the export bucket `s3a://core-banking-export/transactions/`, `bronze.raw_transactions`, `bronze.raw_merchants`, `silver.stg_transactions` |
 | Writes | `bronze.raw_transactions` (on a lakeFS run branch), `silver.stg_transactions`; the skew benchmark writes to the `noop` sink |
@@ -14,9 +14,9 @@ runs in Airflow (summary in [In the Airflow pipeline](#in-the-airflow-pipeline),
 
 | Problem | Job | Airflow task | Section |
 |---|---|---|---|
-| Merchant join skew: top 10 merchants have 70% of the rows | [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py) (benchmark of 4 join methods, run by hand); the pipeline applies the winner, broadcast, to its own joins | `dp2_bronze_to_gold.build_silver`, `dp2_bronze_to_gold.build_labels` | [Merchant join skew](#merchant-join-skew) |
-| Schema evolution: `auth_method`, `three_ds_version` appear in the exports on 2024-07-01 | [`pipelines/spark/ingest_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/ingest_bronze.py) (DP1) | `dp1_source_to_bronze.ingest_exports` | [Schema evolution](#schema-evolution) |
-| Duplicates: 2% of the exported rows, from export re-runs | [`pipelines/spark/build_silver.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_silver.py) (DP2) | `dp2_bronze_to_gold.build_silver` | [Duplicates](#duplicates) |
+| Merchant join skew: top 10 merchants have 70% of the rows | [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py) (benchmark of 4 join methods, run by hand); the pipeline applies the winner, broadcast, to its own joins | `dp2_bronze_to_gold.build_silver`, `dp2_bronze_to_gold.build_labels` | [Merchant join skew](#merchant-join-skew) |
+| Schema evolution: `auth_method`, `three_ds_version` appear in the exports on 2024-07-01 | [`pipelines/spark/ingest_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/ingest_bronze.py) (DP1) | `dp1_source_to_bronze.ingest_exports` | [Schema evolution](#schema-evolution) |
+| Duplicates: 2% of the exported rows, from export re-runs | [`pipelines/spark/build_silver.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_silver.py) (DP2) | `dp2_bronze_to_gold.build_silver` | [Duplicates](#duplicates) |
 
 ## Run it
 
@@ -41,12 +41,12 @@ docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spa
 ## In the Airflow pipeline
 
 Every Spark job of the pipeline is an Airflow task made by one helper, `spark_job()` in
-[`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py):
+[`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py):
 a `SparkSubmitOperator` to the standalone master, in the pool `spark` (1 slot, so Spark applications queue in Airflow
 instead of fighting for the 3 GB worker), with the same Spark settings for every job (`SPARK_CONF`,
-[`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L41-L49)).
+[`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L41-L49)).
 The helper
-([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/common.py#L52-L59)):
+([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/common.py#L52-L59)):
 
 ```python
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
@@ -66,12 +66,12 @@ DAG reads it:
 |---|---|---|---|
 | Schema evolution | `dp1_source_to_bronze.ingest_exports`, after the S3 sensor `wait_for_export` and `create_branch` | `ingest_bronze.py --part exports --until <ds+1> --txn-root s3a://bronze/dp1_<ds>`: reads only the new export folders, `mergeSchema` on read and append, on the run's lakeFS branch | `validate_dp1`, on the branch before `merge_to_main` |
 | Duplicates | `dp2_bronze_to_gold.build_silver` | `build_silver.py`: `row_number()` per `transaction_id` (latest `created_ts`), MERGE into `silver.stg_transactions` | `validate_dp2_silver`: row count = distinct ids of the bronze slice, `transaction_id` unique |
-| Skew (join with a small table) | `build_silver` and `build_labels` | broadcast joins: the 34-unit mapping ([`pipelines/spark/build_silver.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_silver.py#L30)) and the card owner table ([`pipelines/spark/build_labels.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_labels.py#L46)); AQE stays on (Spark's default, not overridden in `spark-defaults.conf`) | `validate_dp2_gold` |
+| Skew (join with a small table) | `build_silver` and `build_labels` | broadcast joins: the 34-unit mapping ([`pipelines/spark/build_silver.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_silver.py#L30)) and the card owner table ([`pipelines/spark/build_labels.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_labels.py#L46)); AQE stays on (Spark's default, not overridden in `spark-defaults.conf`) | `validate_dp2_gold` |
 
 DP1 wires them like this: the sensor and the run's lakeFS branch gate the export append, while the Postgres snapshot
 and the landing load run in parallel. The append is committed on the branch and `validate_dp1` checks it there. Only a
 run that passed is merged into `main`, and DP2 starts after the merge
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp1_source_to_bronze.py#L45-L60)):
+([`pipelines/airflow/dags/dp1_source_to_bronze.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp1_source_to_bronze.py#L45-L60)):
 
 ```python
     wait = S3KeySensor(task_id="wait_for_export", aws_conn_id="lakehouse_s3", bucket_name="{{ var.value.export_bucket }}",
@@ -99,7 +99,7 @@ The lakeFS tasks are explained in [novel_lakefs_wap.md](novel_lakefs_wap.md). Th
 ![Airflow graph of dp1_source_to_bronze, run of 2026-11-07: wait_for_export and create_branch gate ingest_exports; snapshot_core_banking, ingest_stream_landing and ingest_exports then commit_branch run before validate_dp1, merge_to_main and trigger_dp2, all success](images/airflow_dp1_graph.png)
 
 DP2 runs the dedup first, validates silver, then builds gold with dbt and the labels in parallel
-([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/airflow/dags/dp2_bronze_to_gold.py#L45-L60)):
+([`pipelines/airflow/dags/dp2_bronze_to_gold.py` L45-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/airflow/dags/dp2_bronze_to_gold.py#L45-L60)):
 
 ```python
 with DAG("dp2_bronze_to_gold", schedule=None, start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
@@ -131,15 +131,15 @@ and the backfill of 4 days through all three DAGs, are in [airflow.md](airflow.m
 ## Merchant join skew
 
 The benchmark
-[`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py)
+[`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py)
 runs `stg_transactions JOIN merchants ON merchant_id` on full transaction rows and writes the result to the `noop`
 sink. The biggest merchant (an e-wallet top-up) has 23.9% of the rows and the top 10 have 70%. Setup: 1 worker,
 8 cores, 2 GB executor; the data is unioned 4 times (32M rows, 2 GB of shuffle) so tasks are long enough to measure
-([`pipelines/spark/skew_join.py` L133-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L133-L136)).
+([`pipelines/spark/skew_join.py` L133-L136](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L133-L136)).
 Each method runs once to warm up, then 3 times; the table shows the median
-([`pipelines/spark/skew_join.py` L104-L118](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L104-L118)).
+([`pipelines/spark/skew_join.py` L104-L118](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L104-L118)).
 Task numbers come from the slowest stage of the last run (Spark REST API,
-[`pipelines/spark/skew_join.py` L63-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L63-L79)).
+[`pipelines/spark/skew_join.py` L63-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L63-L79)).
 
 | Method | What changes | Median (s) | Runs (s) | Slowest task | Median task |
 |---|---|---:|---|---:|---:|
@@ -153,7 +153,7 @@ Broadcast's 23.9 s is roughly the cost of reading the data, so the join itself c
 22 s with salting, 14 s with AQE and almost nothing with broadcast.
 
 The four methods differ only in these session settings and in the join call
-([`pipelines/spark/skew_join.py` L38-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L38-L60)):
+([`pipelines/spark/skew_join.py` L38-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L38-L60)):
 
 ```python
 def configure(spark: SparkSession, method: str) -> None:
@@ -216,7 +216,7 @@ The task metrics show the even split: the slowest task runs 0.5 s and reads 17.3
    to show the problem.
 2. AQE for large-to-large joins: configuration only, no code change. Its defaults (a partition is skewed above
    256 MB and 5 times the median) target big data; at 1 GB the threshold had to be lowered to 8 MB
-   ([`pipelines/spark/skew_join.py` L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L31)).
+   ([`pipelines/spark/skew_join.py` L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L31)).
    At the 100 GB target the hot partition is several GB and the defaults apply.
 3. Salting only when AQE cannot help: skew inside an aggregation or a window (AQE splits join partitions only),
    join types AQE does not split (full outer), or a key so hot that the split pieces are still too big. It costs code,
@@ -233,7 +233,7 @@ everything else.
 ### Skew level sweep
 
 `--top-shares 0.3,0.6,0.8` re-assigns `merchant_id` in memory so the top 10 merchants get 30%, 60% or 80% of the rows
-([`pipelines/spark/skew_join.py` L82-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/skew_join.py#L82-L89);
+([`pipelines/spark/skew_join.py` L82-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py#L82-L89);
 rows moved into the top group are spread evenly over the 10, so the biggest merchant is smaller than in the generated
 data). The re-assignment is recomputed in every run and changes the plan (broadcast is about 4.5 s faster than on the
 generated data), so compare methods within a row, not across rows. Median of 3 runs, seconds; 8 cores, 32M rows.
@@ -264,7 +264,7 @@ up to that day has 12 columns, every later file has 14:
 
 ### Baseline: the columns vanish on read, or the append fails
 
-[`pipelines/spark/schema_evolution_read.py` L18-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/schema_evolution_read.py#L18-L23)
+[`pipelines/spark/schema_evolution_read.py` L18-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/schema_evolution_read.py#L18-L23)
 reads every export file at once, without and with `mergeSchema`, in 28 s (every export file in the bucket on
 2026-10-25, more than at the first load below):
 
@@ -299,7 +299,7 @@ has no auth columns, the 2024-07-02 file has `auth_method` and `three_ds_version
 ### Fix: `mergeSchema` on the read and on the Delta append
 
 DP1 reads only the new export folders and sets `mergeSchema` on both sides
-([`pipelines/spark/ingest_bronze.py` L92-L97](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/ingest_bronze.py#L92-L97)):
+([`pipelines/spark/ingest_bronze.py` L92-L97](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/ingest_bronze.py#L92-L97)):
 
 ```python
     df = (spark.read.options(basePath=EXPORTS, mergeSchema=str(merge_schema).lower())
@@ -326,7 +326,7 @@ exported after the cutoff and NULL before it:
 
 DP2 then maps the NULLs to `unknown_pre_regulation` instead of guessing a method (1,426,881 rows in silver after
 dedup), so a NULL never reads as "no authentication"
-([`pipelines/spark/build_silver.py` L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_silver.py#L60)).
+([`pipelines/spark/build_silver.py` L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_silver.py#L60)).
 The Trino queries show both, bronze by export date and the `unknown_pre_regulation` rows in silver:
 
 ![Trino: bronze rows after 2024-07-01 all have auth_method, rows before have none; silver has 1,426,881 rows unknown_pre_regulation](images/spark_schema_trino.png)
@@ -358,12 +358,12 @@ copy 31 minutes to 2 h 45 min after the first:
 
 ### Fix: keep the latest `created_ts`, MERGE on `transaction_id`
 
-[`pipelines/spark/build_silver.py` L58-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_silver.py#L58-L59)
+[`pipelines/spark/build_silver.py` L58-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_silver.py#L58-L59)
 keeps one row per `transaction_id`, the one with the latest `created_ts` (`row_number()` over a window partitioned by
 `transaction_id`). The job then MERGEs the new export dates into `silver.stg_transactions`: an id already in silver is
 replaced only by a row with a later `created_ts`, so a re-run, or a duplicate that lands in a later export, cannot
 double count
-([`pipelines/spark/build_silver.py` L83-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/build_silver.py#L83-L91)):
+([`pipelines/spark/build_silver.py` L83-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/build_silver.py#L83-L91)):
 
 ```python
     if not exists:
@@ -387,7 +387,7 @@ After: silver has one row per id (8,167,316 rows, 8,167,316 ids), and the same t
 
 In Airflow the dedup is the DP2 task `build_silver`, followed by `validate_dp2_silver`: for the new export date, the
 silver row count must equal the distinct ids of the bronze slice and `transaction_id` must be unique
-([`pipelines/spark/validate.py` L80-L82](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/pipelines/spark/validate.py#L80-L82)).
+([`pipelines/spark/validate.py` L80-L82](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/validate.py#L80-L82)).
 
 ## Limits
 
