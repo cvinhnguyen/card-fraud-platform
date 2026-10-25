@@ -7,7 +7,7 @@ An outage of any dependency gives a safe fallback decision instead of an error.
 
 | | |
 |---|---|
-| Code | [`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api), [`services/predictor/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/services/predictor), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/kserve-card-fraud.yaml) |
+| Code | [`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api), [`services/predictor/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/services/predictor), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/kserve-card-fraud.yaml) |
 | Runs on | KServe: kind namespace `serving`; Scoring API: compose service `scoring-api` (profile `ml`, port 8000) |
 | Reads | Feast feature service `fraud_model_v1` (Redis online store); the model image built from the MLflow alias `production` |
 | Writes | Kafka `fraud_predictions` (every request, response and feature vector) |
@@ -37,17 +37,17 @@ Replace `<version>` with the model version in the MLflow registry; the image tag
 
 ## Model server (KServe)
 
-[`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/kserve-card-fraud.yaml)
+[`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/kserve-card-fraud.yaml)
 defines one InferenceService in namespace `serving`, KServe 0.21 in Standard mode (formerly called RawDeployment): a
 plain Deployment + Service, no Knative, so it fits the 8 GB machine. The predictor is a custom KServe `Model`
-([`services/predictor/predictor.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/predictor/predictor.py))
+([`services/predictor/predictor.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/predictor/predictor.py))
 with the booster inside the image.
 
 One image = one model version: the running version is the image tag, a rollback is the previous tag, and a pod
 never starts without its model (no download at start-up that can fail). Instances are sent as dicts and reordered by
 the booster's own feature names, so a caller never depends on column order; a missing feature is NaN, as in
 training. The response carries `model_version`
-([`services/predictor/predictor.py` L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/predictor/predictor.py#L38-L43)):
+([`services/predictor/predictor.py` L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/predictor/predictor.py#L38-L43)):
 
 ```python
 def predict(self, payload: dict, headers: dict | None = None) -> dict:
@@ -59,7 +59,7 @@ def predict(self, payload: dict, headers: dict | None = None) -> dict:
 ```
 
 The InferenceService
-([`infra/k8s/kserve-card-fraud.yaml` L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/kserve-card-fraud.yaml#L4-L22)):
+([`infra/k8s/kserve-card-fraud.yaml` L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/kserve-card-fraud.yaml#L4-L22)):
 
 ```yaml
 apiVersion: serving.kserve.io/v1beta1
@@ -86,9 +86,9 @@ spec:
 ## Fraud Scoring API
 
 The API in
-[`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api)
+[`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api)
 has four endpoints
-([`services/scoring_api/app/main.py` L50-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/main.py#L50-L79)):
+([`services/scoring_api/app/main.py` L50-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/main.py#L50-L79)):
 
 | Endpoint | Purpose |
 |---|---|
@@ -105,7 +105,7 @@ Async end to end: Feast `get_online_features_async`, `httpx.AsyncClient` (one po
 The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step-up (OTP), else approve. The thresholds
 come from configuration (`T_LOW`, `T_HIGH`), not from the model, so risk can tune them without a release; the model
 version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR)
-([`services/scoring_api/app/policy.py` L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/policy.py#L20-L37)):
+([`services/scoring_api/app/policy.py` L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/policy.py#L20-L37)):
 
 ```python
     def decide(self, score: float) -> Decision:
@@ -133,7 +133,7 @@ where KServe is reached through the kind NodePort). A timeout or failure of the 
 `FallbackPolicy`: approve below 2,000,000 VND, step-up from it, never decline without evidence. The response says
 `fallback: true` and the counter `fraud_fallbacks_total{cause}` records why (`features_timeout`, `model_error`, ...).
 A payment is never blocked by an outage of the fraud system
-([`services/scoring_api/app/scorer.py` L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/scorer.py#L35-L60)):
+([`services/scoring_api/app/scorer.py` L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/scorer.py#L35-L60)):
 
 ```python
     async def score(self, req: ScoreRequest) -> ScoreResponse:
@@ -168,7 +168,7 @@ A payment is never blocked by an outage of the fraud system
 
 Every request + response + the feature vector goes to Kafka `fraud_predictions`, keyed by card, without waiting for
 the broker ack. If Kafka is down the API keeps scoring and only stops logging
-([`services/scoring_api/app/clients.py` L83-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/clients.py#L83-L109)).
+([`services/scoring_api/app/clients.py` L83-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/clients.py#L83-L109)).
 
 ### Design
 
@@ -176,7 +176,7 @@ The scorer depends on three small interfaces (`FeatureSource`, `ModelSource`, `P
 `build_scorer`; tests pass fakes, the app passes the real clients. The two policies are interchangeable strategies
 behind one `decide` call. `create_app` is an app factory so tests build an app with fake collaborators and their own
 metrics registry
-([`services/scoring_api/app/main.py` L25-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/main.py#L25-L35)).
+([`services/scoring_api/app/main.py` L25-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/main.py#L25-L35)).
 
 ## Run on 2026-10-19 (model v1)
 
@@ -238,11 +238,11 @@ The first replay at 100 requests/s fell back on 96% of the payments. Two separat
    the abandoned call ends under httpx's own timeouts and returns its connection. Measured: 1,000 requests at
    concurrency 32, then serial requests are back at 25 ms with no fallback (before the fix: 100% fallback).
    `test_model_budget_does_not_cancel_the_http_call`
-   ([`services/scoring_api/tests/test_clients.py` L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/tests/test_clients.py#L36))
+   ([`services/scoring_api/tests/test_clients.py` L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/tests/test_clients.py#L36))
    fails on the old code.
 
 The fix
-([`services/scoring_api/app/clients.py` L65-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/services/scoring_api/app/clients.py#L65-L75)):
+([`services/scoring_api/app/clients.py` L65-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/services/scoring_api/app/clients.py#L65-L75)):
 
 ```python
     async def predict(self, features: dict[str, float | None]) -> tuple[float, str]:

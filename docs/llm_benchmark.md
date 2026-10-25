@@ -2,13 +2,13 @@
 
 The model server behind the agents is llama.cpp (build b11755) serving Qwen3-8B Q4_K_M on the host's GTX 1070 (8 GB,
 Pascal: no vLLM), reached through agentgateway, the llm-d router and the InferencePool `qwen3-8b` (the Layer 3
-platform, installed by [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/k8s/llm-platform.sh),
+platform, installed by [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/k8s/llm-platform.sh),
 see [llm_platform.md](llm_platform.md)). This page measures that server under the agents' kind of load, tries three
 configurations, and keeps the one that holds the speed without the memory growth.
 
 | | |
 |---|---|
-| Code | [`infra/benchmark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark) |
+| Code | [`infra/benchmark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark) |
 | Runs on | load generator: Docker container `fraud/inference-perf:0.7.0` on the `kind` network; llama.cpp as a host process (`:8085`) |
 | Reads | speculative decoding run: the eval questions (`agents/eval/dataset.jsonl`) and their bank documents (`generator/knowledge/`) |
 | Writes | `infra/benchmark/results/<run>/` (inference-perf reports, `memory.csv`), `infra/benchmark/results/spec-<name>.json`, `docs/images/llm_benchmark.png` |
@@ -30,19 +30,19 @@ Replace `<name>` with a name for the run, and `...` with the key `LLM_API_KEY` f
 
 `run.sh` pipes the config into the container, so the API key never lands on disk, and deletes the copy of the config
 that inference-perf keeps with its reports
-([`infra/benchmark/run.sh` L19-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/run.sh#L19-L25)).
+([`infra/benchmark/run.sh` L19-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/run.sh#L19-L25)).
 
 ## Setup
 
 The harness is in
-[`infra/benchmark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark):
+[`infra/benchmark/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark):
 
 - The load generator is [`inference-perf`](https://github.com/kubernetes-sigs/inference-perf) 0.7.0, the harness
   llm-d's own benchmark CLI drives. `Dockerfile` installs the PyPI release (the published image is only tagged by
   commit, and its `uvloop` dependency does not install on Windows;
-  [`infra/benchmark/Dockerfile` L3-L6](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/Dockerfile#L3-L6)).
+  [`infra/benchmark/Dockerfile` L3-L6](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/Dockerfile#L3-L6)).
 - The workload
-  ([`infra/benchmark/agentic.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/agentic.yaml))
+  ([`infra/benchmark/agentic.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/agentic.yaml))
   uses a shared prefix with 3 groups = the 3 agents. Each group has its own 1,500-token system prompt shared by all
   its calls, then a 100-token question and exactly 150 output tokens (`ignore_eos`). The sizes come from llama.cpp's
   counters on real agent traffic: 79 % of prompt tokens were prefix-cache hits, the longest prompt was 1.8k tokens.
@@ -57,7 +57,7 @@ The harness is in
   machine it adds one hop and no speed.
 
 The workload part of the config
-([`infra/benchmark/agentic.yaml` L17-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/agentic.yaml#L17-L31)):
+([`infra/benchmark/agentic.yaml` L17-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/agentic.yaml#L17-L31)):
 
 ```yaml
 data:
@@ -131,14 +131,14 @@ memory during each run:
 Agent answers quote the bank documents that `search_policy` put in their context. llama.cpp's n-gram drafter looks
 the last tokens up in the prompt, proposes the tokens that followed them there, and the model checks the whole
 draft in one forward pass: every accepted token is a decode step saved, with no draft model and no extra VRAM.
-[`infra/benchmark/spec_decoding.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/spec_decoding.py)
+[`infra/benchmark/spec_decoding.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/spec_decoding.py)
 sends the 20 eval questions with their document as context straight to llama.cpp (temperature 0.8 as the agents,
 seeded, 2 passes) and reads llama.cpp's own `timings` (tokens drafted / accepted, decode tokens/s); answers are scored
 with the eval gate's check (`correct` imported from
-[`agents/eval/run_eval.py` L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/agents/eval/run_eval.py#L31),
-[`infra/benchmark/spec_decoding.py` L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/spec_decoding.py#L18)).
+[`agents/eval/run_eval.py` L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/agents/eval/run_eval.py#L31),
+[`infra/benchmark/spec_decoding.py` L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/spec_decoding.py#L18)).
 The measuring loop
-([`infra/benchmark/spec_decoding.py` L41-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/spec_decoding.py#L41-L48)):
+([`infra/benchmark/spec_decoding.py` L41-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/spec_decoding.py#L41-L48)):
 
 ```python
     for rep in range(REPEATS):
@@ -178,7 +178,7 @@ server in the InferencePool, which is also where the llm-d router starts to choo
   compose services stopped (Docker VM from 8 to 2 GB), so only llama.cpp and the load generator used memory.
 - An inference-perf `vllm` server type is its OpenAI-compatible client; `api_key` is sent as a bearer token, and
   `ignore_eos` works on llama.cpp, so every answer is exactly 150 tokens
-  ([`infra/benchmark/agentic.yaml` L9-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/agentic.yaml#L9-L14)).
+  ([`infra/benchmark/agentic.yaml` L9-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/agentic.yaml#L9-L14)).
 - llama.cpp's per-request `cached_tokens` is what inference-perf reports as "cached", so the share above is the
   server's own measurement (`summarize.py` divides it by the prompt tokens,
-  [`infra/benchmark/summarize.py` L13-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/benchmark/summarize.py#L13-L14)).
+  [`infra/benchmark/summarize.py` L13-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/benchmark/summarize.py#L13-L14)).

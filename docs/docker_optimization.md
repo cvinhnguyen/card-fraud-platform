@@ -7,7 +7,7 @@ that the slim images still run the pipelines.
 
 | | |
 |---|---|
-| Code | [`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/flink/Dockerfile), [`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile), [`infra/spark/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/spark/Dockerfile), [`infra/hive/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/hive/Dockerfile) |
+| Code | [`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/flink/Dockerfile), [`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile), [`infra/spark/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/spark/Dockerfile), [`infra/hive/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/hive/Dockerfile) |
 | Runs on | built by compose: `fraud/spark` and `fraud/hive-metastore` in profile `batch`, `fraud/flink` in `stream`, `fraud/airflow` in `orch` |
 | Related | [flink_jobs.md](flink_jobs.md), [airflow.md](airflow.md), [spark_jobs.md](spark_jobs.md) |
 
@@ -29,7 +29,7 @@ docker history fraud/flink:2.2.1 --format "table {{.Size}}\t{{.CreatedBy}}" | cu
 | `fraud/spark:4.1.3` | `apache/spark:4.1.3-scala2.13-java17-python3-ubuntu` | Spark with the lakehouse jars baked in (Delta, S3A, Postgres JDBC, OpenLineage); new in P9 |
 | `fraud/flink:2.2.1` | `flink:2.2.1-scala_2.12-java17` | PyFlink 2.2.1 + Kafka connector for the `stream` profile |
 | `fraud/airflow:2.10.5` | `apache/airflow:2.10.5-python3.10` | Spark client (JRE + Spark 4.1.3), GE, dbt, DataHub plugin and CLI |
-| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | newer Postgres driver (SCRAM) + S3A jars ([`infra/hive/Dockerfile` L5-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/hive/Dockerfile#L5-L9)); 3 small layers, nothing to trim |
+| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | newer Postgres driver (SCRAM) + S3A jars ([`infra/hive/Dockerfile` L5-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/hive/Dockerfile#L5-L9)); 3 small layers, nothing to trim |
 
 ## Sizes
 
@@ -51,9 +51,9 @@ layers (4.50 minus the jars), hence the -29%.
 On 2026-10-21 Docker reports the sizes below, and Flink and Spark match the table. The Airflow image is bigger by then
 (7.58 GB) because layers were added to it after this measurement: Layer 2 put a Feast venv in it (Feast, MLflow,
 XGBoost, scikit-learn, kfp, deltalake,
-[`infra/airflow/Dockerfile` L23-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L23-L27))
+[`infra/airflow/Dockerfile` L23-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L23-L27))
 and Layer 3 the Docker provider for the RAG DAG
-([`infra/airflow/Dockerfile` L56-L58](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L56-L58)).
+([`infra/airflow/Dockerfile` L56-L58](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L56-L58)).
 `docker history` of the Flink image shows what the multi-stage build adds on top of the base image: the venv copied
 from the build stage (434 MB), the apt layer and the Kafka connector jar:
 
@@ -102,12 +102,12 @@ directory. After a day of Airflow runs the worker's container layer held 94 GB o
 
 ### Flink: multi-stage build, duplicate jars linked
 
-[`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/flink/Dockerfile)
+[`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/flink/Dockerfile)
 has a `build` stage with `python3-venv` that installs PyFlink into `/opt/venv`, replaces `pyflink/lib` (the same
 Flink 2.2.1 jars as `/opt/flink/lib`) with a symlink, and deletes `__pycache__` / `tests` and pip. The final stage
 only installs the `python3` runtime (37.6 MB layer) and copies the venv (434 MB layer, was 893 MB). `PATH` points
 `python` (the default `python.executable` of the Python workers) at the venv
-([`infra/flink/Dockerfile` L4-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/flink/Dockerfile#L4-L20)):
+([`infra/flink/Dockerfile` L4-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/flink/Dockerfile#L4-L20)):
 
 ```dockerfile
 FROM flink:2.2.1-scala_2.12-java17 AS build
@@ -131,18 +131,18 @@ ENV PATH=/opt/venv/bin:$PATH
 
 ### Airflow: venvs built in a stage, only what a Spark client needs
 
-[`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile)
+[`infra/airflow/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile)
 builds the venvs in a `venvs` stage and copies into the final stage only the parts of Spark a client needs:
 
 | Layer | Before | After | How |
 |---|---:|---:|---|
 | JRE + Spark | 282 + 518 MB | 282 + 484 MB | copy `bin/`, `jars/`, `python/lib` only (no `examples/`, `R/`, `data/`, `tests/`) |
-| Spark provider | 367 MB | (in 34 MB) | `--no-deps`: its `pyspark` dependency (342 MB) is never imported by `SparkSubmitOperator` ([`infra/airflow/Dockerfile` L53-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L53-L60)) |
-| DataHub CLI venv | 1.71 GB | | no `delta-lake` extra (it brought `deltalake` 135 MB and a second `pyspark` 343 MB) ([`infra/airflow/Dockerfile` L19-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L19-L22)) |
+| Spark provider | 367 MB | (in 34 MB) | `--no-deps`: its `pyspark` dependency (342 MB) is never imported by `SparkSubmitOperator` ([`infra/airflow/Dockerfile` L53-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L53-L60)) |
+| DataHub CLI venv | 1.71 GB | | no `delta-lake` extra (it brought `deltalake` 135 MB and a second `pyspark` 343 MB) ([`infra/airflow/Dockerfile` L19-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L19-L22)) |
 | GE + dbt + DataHub venvs | 2.46 GB together | 1.29 GB | built in the `venvs` stage, copied without `__pycache__`, `tests` and pip |
 
 The final stage copies the JRE, the parts of Spark a client needs and the venvs
-([`infra/airflow/Dockerfile` L36-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L36-L50)):
+([`infra/airflow/Dockerfile` L36-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L36-L50)):
 
 ```dockerfile
 FROM apache/airflow:2.10.5-python3.10
@@ -164,7 +164,7 @@ COPY --from=venvs --chown=airflow:0 /opt/venvs /opt/venvs
 
 ### Spark: jars baked into a new image
 
-[`infra/spark/Dockerfile` L6-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/spark/Dockerfile#L6-L21)
+[`infra/spark/Dockerfile` L6-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/spark/Dockerfile#L6-L21)
 resolves the packages once in a build stage and copies only the 13 jars Spark does not ship into `/opt/spark/jars`,
 plus the `delta-spark` Python module. The whole Ivy directory is not copied because Ivy also pulls an older jackson
 that breaks Spark on the classpath. The image is 1.3 GB bigger than `apache/spark`, once, instead of 600 MB per
@@ -172,7 +172,7 @@ application. Nothing is downloaded at run time any more, `spark.jars.packages` /
 `spark-defaults.conf`, and the Thrift Server no longer needs its 13-jar `extraClassPath` workaround (which also
 carried a Git Bash path-conversion artifact since P4). The worker also cleans up finished applications' directories
 (`SPARK_WORKER_OPTS`,
-[`infra/docker-compose.yaml` L224-L227](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/docker-compose.yaml#L224-L227)).
+[`infra/docker-compose.yaml` L224-L227](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/docker-compose.yaml#L224-L227)).
 
 ## Checks after the rebuild
 
@@ -209,7 +209,7 @@ would have needed a musl JRE and would break the manylinux wheels of pyarrow, nu
   (`'get_where_subquery' is undefined`, `No materialization 'test'`). numpy 2 has the same trap: it imports
   `numpy._core.tests._natype` at run time. The cleanup now skips the `dbt` and `numpy` packages (a few hundred KB
   kept,
-  [`infra/airflow/Dockerfile` L28-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/1416656ca28dbf52a0663508c5f0a81fb869faed/infra/airflow/Dockerfile#L28-L34)).
+  [`infra/airflow/Dockerfile` L28-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/a593ac7ac74f781dc50824b14e97f2620198be46/infra/airflow/Dockerfile#L28-L34)).
 
 ## Limits
 
