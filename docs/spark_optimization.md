@@ -203,15 +203,17 @@ up to that day has 12 columns, every later file has 14:
 
 `pipelines/spark/schema_evolution_read.py` reads every export file at once, without and with `mergeSchema`
 ([`pipelines/spark/schema_evolution_read.py` L18-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/35d4295a1e5a409fa242bc6aa9eff9b06038c111/pipelines/spark/schema_evolution_read.py#L18-L23)),
-in 33 s:
+in 28 s (every export file in the bucket on 2026-10-25, more than at the first load below):
 
 | Read | Columns | Rows | Rows with `auth_method` |
 |---|---:|---:|---:|
-| without `mergeSchema` | 12 (auth columns missing) | 8,159,516 | 0 |
-| with `mergeSchema` | 14 | 8,159,516 | 6,704,100 |
+| without `mergeSchema` (before) | 12 (auth columns missing) | 8,445,032 | 0 |
+| with `mergeSchema` (after) | 14 | 8,445,032 | 6,989,616 |
 
 Without `mergeSchema` Spark takes the schema of one file (the oldest), so the two columns vanish for all rows, with no
 error.
+
+![schema_evolution_read.py: without mergeSchema 12 columns and 0 rows with auth_method, with mergeSchema 14 columns and 6,989,616](images/spark_schema_read.png)
 
 On the write side Delta enforces the table schema. Appending to `bronze.raw_transactions` in three steps with
 `ingest_bronze.py`:
@@ -223,6 +225,12 @@ On the write side Delta enforces the table schema. Appending to `bronze.raw_tran
 | 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows (132 s; 510 s on a run where the machine was short of RAM) |
 
 The failure in step 2 is the safe default: a source that changes its schema cannot silently corrupt the table.
+
+For the screenshots, steps 1 and 2 ran again on a scratch path (`--txn-root s3a://lakehouse/tmp/schema_demo`; the real
+table is on lakeFS main, which takes merges only). The error prints both schemas: the table loaded up to 2024-07-01
+has no auth columns, the 2024-07-02 file has `auth_method` and `three_ds_version`. Nothing is written.
+
+![Baseline: appending 2024-07-02 without mergeSchema fails with DELTA_METADATA_MISMATCH; the table schema has no auth columns, the data schema has both](images/spark_schema_fail.png)
 
 ### Fix: `mergeSchema` on the read and on the Delta append
 
@@ -238,16 +246,24 @@ DP1 reads only the new export folders and sets `mergeSchema` on both sides
          partition_by="export_date", mergeSchema=str(merge_schema).lower())
 ```
 
-The table gains the two columns once; older rows keep NULL. After step 3, Trino shows the auth columns filled for every
-row exported after the cutoff and NULL before it:
+The table gains the two columns once; older rows keep NULL. Step 3 on the scratch path, up to 2024-07-02 only: the
+append goes through, and the rows of 2024-06-29 to 2024-07-01 read NULL while every row of 2024-07-02 has
+`auth_method`:
+
+![Fix: with mergeSchema the 2024-07-02 append succeeds; 0 rows with auth_method up to 2024-07-01, 7,869 of 7,869 on 2024-07-02](images/spark_schema_merge.png)
+
+In the real table (lakeFS main, export dates up to 2026-11-06), Trino shows the auth columns filled for every row
+exported after the cutoff and NULL before it:
 
 | Export date | Rows | With `auth_method` |
 |---|---:|---:|
 | up to 2024-07-01 | 1,455,416 | 0 |
-| after 2024-07-01 | 6,704,100 | 6,704,100 |
+| after 2024-07-01 | 6,875,248 | 6,875,248 |
 
 DP2 (`build_silver.py`) then maps the NULLs to `unknown_pre_regulation` instead of guessing a method (1,426,881 rows
 in silver after dedup), so a NULL never reads as "no authentication".
+
+![Trino: bronze rows after 2024-07-01 all have auth_method, rows before have none; silver has 1,426,881 rows unknown_pre_regulation](images/spark_schema_trino.png)
 
 In Airflow the append is the DP1 task `ingest_exports` (`ingest_bronze.py --part exports --until <ds+1>`, with
 `mergeSchema`), and `validate_dp1` checks the bronze table before DP2 runs ([airflow.md](airflow.md)).
@@ -259,13 +275,18 @@ transaction: same `transaction_id`, later `created_ts`. Bronze keeps them, as th
 
 ### Baseline: the settled spend is overcounted
 
+Both tables up to export date 2026-11-06, counted with `spark-sql`:
+
 | Measure | Bronze (before) | Silver (after) |
 |---|---:|---:|
-| Rows | 8,159,516 | 7,999,526 |
-| Distinct `transaction_id` | 7,999,526 | 7,999,526 |
-| Settled spend (VND) | 3,625,268,094,000 | 3,554,102,498,000 |
+| Rows | 8,330,664 | 8,167,316 |
+| Distinct `transaction_id` | 8,167,316 | 8,167,316 |
+| Settled spend (VND) | 3,697,581,455,000 | 3,624,992,633,000 |
 
-Read from bronze, the settled spend is 2.00% too high.
+Read from bronze, the settled spend is 2.00% too high. In the export of 2026-11-06, three ids come twice, the second
+copy 31 minutes to 2 h 45 min after the first:
+
+![Before: bronze has 8,330,664 rows for 8,167,316 ids; three ids of export 2026-11-06 appear twice with different created_ts](images/spark_dup_bronze.png)
 
 ### Fix: keep the latest `created_ts`, MERGE on `transaction_id`
 
@@ -275,6 +296,11 @@ partitioned by `transaction_id`), and MERGEs the new export dates into `silver.s
 an id already in silver is replaced only by a row with a later `created_ts`, so a re-run, or a duplicate that lands in
 a later export, cannot double count. Deleting the last 6 export dates from silver (47,226 rows) and re-running the job
 merged exactly 47,226 rows back (7,999,526 total, 64 s). Full before/after report: [spark_jobs.md](spark_jobs.md#before--after-full-build-146-s).
+
+After: silver has one row per id (8,167,316 rows, 8,167,316 ids), and the same three ids keep the copy with the latest
+`created_ts`:
+
+![After: silver has 8,167,316 rows for 8,167,316 ids; each of the three ids once, with its latest created_ts](images/spark_dup_silver.png)
 
 The window shuffles and sorts every row. At 100 GB a probe estimated about 4 days (Docker disk then on a USB HDD), so
 the 100 GB run dedups in

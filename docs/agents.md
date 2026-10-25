@@ -151,7 +151,7 @@ One chart, [`services/card_support_mcp/chart`](../services/card_support_mcp/char
 ([`values-card-data.yaml`](../services/card_support_mcp/chart/values-card-data.yaml),
 [`values-fraud-score.yaml`](../services/card_support_mcp/chart/values-fraud-score.yaml),
 [`values-policy-rag.yaml`](../services/card_support_mcp/chart/values-policy-rag.yaml)), gives three releases in
-namespace `card-support`. Each runs 2 replicas with `RollingUpdate` (`maxSurge: 1`, `maxUnavailable: 0`,
+namespace `card-support`. Each runs 2 replicas (card-data 2 to 4, [autoscaled](#autoscaling-the-card-data-server-keda)) with `RollingUpdate` (`maxSurge: 1`, `maxUnavailable: 0`,
 `minReadySeconds: 5`, [`deployment.yaml` L11-L14](../services/card_support_mcp/chart/templates/deployment.yaml#L11-L14)):
 a new pod has to pass `/readyz` before an old one stops, so a server never drops below two serving pods. The pipeline
 installs the releases one after the other with `helm upgrade --install --atomic`: when the new pods do not become Ready
@@ -194,6 +194,65 @@ policies through the gateway: the upgrade took 29 s, the two pods were replaced 
 answered 200.
 
 ![Git Bash: a rolling update of policy-rag with calls running through the gateway; the rollout history and the new pods; every call answered 200](images/mcp3_rolling.png)
+
+### Autoscaling the card-data server (KEDA)
+
+card-data is the public Web API as well as an MCP server, so it is the one server whose traffic can outgrow two
+replicas. Agents reach the MCP servers only through the gateway, which allows 300 calls per minute per server for all
+agents together (5 per second); two replicas serve that with room. The REST API goes through NGINX, which limits each
+client IP to 5 requests per second but not the total, so many clients together can send more than two pods should
+take. Its release turns on a KEDA ScaledObject
+([`scaledobject.yaml`](../services/card_support_mcp/chart/templates/scaledobject.yaml),
+[`values-card-data.yaml`](../services/card_support_mcp/chart/values-card-data.yaml)). fraud-score and policy-rag
+keep a fixed 2 replicas (`autoscaling.enabled: false` in [`values.yaml`](../services/card_support_mcp/chart/values.yaml)),
+because only the gateway reaches them.
+
+- What KEDA counts: the server's own request rate, `http_requests_total` of its pods as Prometheus scrapes them
+  (`/healthz`, `/readyz` and `/metrics` are left out). Counted on the pods, it covers both paths, MCP calls through
+  the gateway and REST calls through NGINX; the gateway's own metric would see only the first.
+- Threshold: 15 requests per second per replica, between 2 and 4 replicas. In the test below a pod serving about 13
+  requests per second used about 100m CPU, which is its CPU request; two pods at 25 to 27 each used 140m to 210m. At
+  15 per replica each pod stays near the CPU the scheduler reserved for it. New pods were Ready about 20 s after KEDA
+  asked for them.
+- The Deployment leaves `replicas` unset when autoscaling is on, so a Helm upgrade does not reset what KEDA set.
+
+```yaml
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $as.prometheus }}
+        query: sum(rate(http_requests_total{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}"}[1m]))
+        threshold: {{ $as.requestsPerSecond | quote }}
+        ignoreNullValues: "true"
+```
+
+Test on 2026-10-25: the locust pod of the load test ([testing.md](testing.md#load-test-locust-1)) in `card-support`,
+10 users for 4 minutes against the Service, with `NEW_CONNECTION=1`
+([`locustfile.py`](../services/card_support_mcp/locustfile.py)): 12,830 requests, 53.6 per second, 0 failures, p95
+27 ms (MCP `get_card_data` p95 36 ms). Report: [`locust_card_data_scaling.html`](images/locust_card_data_scaling.html).
+
+| Moment | Requests/s (all pods) | Replicas | Per pod |
+|---|---:|---:|---|
+| before the load | 0 | 2 | idle |
+| 45 s into the load | about 50 | 2, then 4 (`above target`) | 25 to 27 requests/s, 140m to 210m CPU |
+| 3.5 minutes into the load | 54 | 4 | 13.0 to 13.8 requests/s, 76m to 107m CPU |
+| 5 minutes after the load | 0 | 4, then 3, then 2 (`All metrics below target`) | idle |
+
+During the load: the HPA that KEDA created reads 13,545m (13.5 requests per second per replica) against a target of
+15, with 4 pods each serving about 13 requests per second at 76m to 107m CPU, and the rescale event to 4:
+
+![Git Bash during the load: ScaledObject active, HPA 13545m/15 with 4 replicas, 4 pods, requests per second and CPU per pod from Prometheus, the SuccessfulRescale event to 4](images/mcp_keda_load.png)
+
+After the load: the locust summary, the HPA back at 2 and the scale-down events:
+
+![Git Bash after the load: locust summary with 0 failures, the HPA back at 2 replicas, the rescale events 4 to 3 to 2](images/mcp_keda_after.png)
+
+The first run kept locust's default keep-alive connections. KEDA scaled to 4 at the same point, but the two new pods
+stayed idle (3m CPU) while the two old ones carried the whole load: kube-proxy picks a pod when a connection opens,
+and each locust user kept the connection it opened at the start. With `NEW_CONNECTION=1` (one connection per request,
+like many separate clients) the load spread over all four pods. On the real paths NGINX sends each request to a pod
+endpoint itself, so new pods get traffic at once; the gateway reaches the server by its Service name, so its pooled
+connections go through kube-proxy too and reach a new pod only when the gateway opens new ones.
 
 ## The agents: replicas, autoscaling, sandbox
 
@@ -392,6 +451,10 @@ Each agent record names the servers it uses; the risk agent's raw record lists `
 ![agentregistry: the raw record of risk-agent 0.2.0 with its two MCP servers](images/registry_risk_agent.png)
 
 ## Gotchas
+
+- Turning autoscaling on removes `replicas` from the card-data Deployment. On that first upgrade Kubernetes set the
+  Deployment to its default of 1 replica, and the HPA set it back to 2 within seconds (event `Current number of
+  replicas below Spec.MinReplicas`); later upgrades leave the field alone.
 
 - After a reboot the Substrate Valkey cluster keeps its old pod IPs and the sandbox network components keep stale
   state: re-introduce the Valkey nodes (`CLUSTER MEET`), then restart `atenet-router`, `dns`, `ate-controller`,

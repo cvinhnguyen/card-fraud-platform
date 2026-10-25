@@ -1,7 +1,8 @@
 """Load test of the Web API that pulls data by id (MCP server card-data), in the mix an agent working a chat calls
 it: card lookups and policy chunks over REST, plus the same card lookup over MCP (JSON-RPC tools/call), so the MCP
 layer's overhead shows up next to the plain REST call (report: --html <file>). Card ids come from CARDS_FILE (one per
-line, real cards so Redis lookups hit) or are random.
+line, real cards so Redis lookups hit) or are random. NEW_CONNECTION=1 opens a new connection per request, like many
+separate clients: kube-proxy balances connections, so a kept-alive connection never reaches a pod added by KEDA.
 Usage: locust -f services/card_support_mcp/locustfile.py --host http://card-data-mcp:8000 --headless -u 10 -r 5 -t 2m
 """
 import os
@@ -12,6 +13,7 @@ from locust import HttpUser, between, task
 CARDS = open(os.environ["CARDS_FILE"]).read().split() if os.environ.get("CARDS_FILE") else []
 CHUNKS = ["card_terms%234.2", "faq%233", "fee_schedule%232", "dispute_policy%231.1", "authentication_rules%232.1"]
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+NEW_CONNECTION = os.environ.get("NEW_CONNECTION") == "1"
 
 
 def card():
@@ -23,6 +25,11 @@ class SupportAgent(HttpUser):
     """One agent working a chat: reads the card and the policy sections it needs by id."""
 
     wait_time = between(0.05, 0.3)
+
+    def on_start(self):
+        """With NEW_CONNECTION=1 the server closes the connection after each answer."""
+        if NEW_CONNECTION:
+            self.client.headers["Connection"] = "close"
 
     @task(4)
     def card_data(self):

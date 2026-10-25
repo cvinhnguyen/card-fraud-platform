@@ -1,0 +1,23 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $as := .Values.autoscaling }}
+# KEDA owns the replicas (the Deployment leaves them unset). The trigger is the server's own request rate, counted on
+# its pods (http_requests_total, without /healthz, /readyz, /metrics), so every path counts: MCP calls through the
+# gateway and REST calls through NGINX.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}
+  labels: {app: {{ .Release.Name }}}
+spec:
+  scaleTargetRef: {name: {{ .Release.Name }}}
+  minReplicaCount: {{ $as.minReplicas }}
+  maxReplicaCount: {{ $as.maxReplicas }}
+  pollingInterval: 15   # scale-down: the HPA's 5 min stabilization (cooldownPeriod applies only to scale-to-zero)
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $as.prometheus }}
+        query: sum(rate(http_requests_total{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}"}[1m]))
+        threshold: {{ $as.requestsPerSecond | quote }}
+        ignoreNullValues: "true"
+{{- end }}

@@ -10,11 +10,12 @@
 Same result in both modes. Event time is the Kafka timestamp; the watermark waits 31 minutes, longer than the latest
 POS event (30 min), so no window fires before all its events are in and phase 2 never receives a partial count twice
 (allowed_lateness would re-fire phase-1 windows and double count). Reads the 1-partition replay topic
-`card_auth_replay` with one source subtask, bounded; pipelines/flink/check_hot_key.py loads the replay, runs both modes and
-reads per-subtask records and busy / backpressured time from the Flink REST API.
+`card_auth_replay` with one source subtask, bounded (--live: unbounded); pipelines/flink/check_hot_key.py loads the
+replay, runs both modes and reads per-subtask records and busy / backpressured time from the Flink REST API.
 
 Usage (stream profile up, replay loaded):
   docker exec flink-jobmanager flink run -py /opt/flink/jobs/hot_key.py --mode hot
+  ... hot_key.py --mode hot --live    # unbounded, from the latest offset: feed it with producer.py --speed <events/s>
 """
 import argparse
 import csv
@@ -94,16 +95,19 @@ if __name__ == "__main__":
     ap.add_argument("--mode", choices=["hot", "two_phase"], required=True)
     ap.add_argument("--salts", type=int, default=SALTS, help="two_phase: partial keys per unit")
     ap.add_argument("--salt-all", action="store_true", help="salt every unit, not only the hot ones")
+    ap.add_argument("--live", action="store_true", help="unbounded, from the latest offset (fixed-rate producer)")
     args = ap.parse_args()
     mode, salts, hot = args.mode, args.salts, None if args.salt_all else HOT
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(PARALLELISM)
-    source = (KafkaSource.builder().set_bootstrap_servers(KAFKA).set_topics(TOPIC)
-              .set_group_id(f"hot_key_{mode}")
-              .set_starting_offsets(KafkaOffsetsInitializer.earliest())
-              .set_bounded(KafkaOffsetsInitializer.latest())
-              .set_value_only_deserializer(SimpleStringSchema()).build())
+    builder = (KafkaSource.builder().set_bootstrap_servers(KAFKA).set_topics(TOPIC).set_group_id(f"hot_key_{mode}")
+               .set_value_only_deserializer(SimpleStringSchema()))
+    if args.live:
+        builder = builder.set_starting_offsets(KafkaOffsetsInitializer.latest())
+    else:
+        builder = builder.set_starting_offsets(KafkaOffsetsInitializer.earliest()).set_bounded(KafkaOffsetsInitializer.latest())
+    source = builder.build()
     wm = WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_minutes(31))
     # One partition -> one source subtask (idle readers would hold the watermark back); rebalance spreads the parsing.
     auths = (env.from_source(source, wm, f"kafka {TOPIC}").set_parallelism(1).rebalance()

@@ -7,3 +7,8 @@ agent: card-data-agent
 secretName: card-data-mcp   # ML_DB_PASSWORD (Feast registry), REDIS_PASSWORD, VECTOR_DB_PASSWORD
 networkPolicy:
   public: true
+# The only server with traffic beyond the gateway's 300 calls per minute: the public REST API (NGINX limits each client
+# IP, not the total). 15 requests/s per replica: in the scaling test a pod at about 13 requests/s used about 100m CPU,
+# its CPU request (docs/agents.md).
+autoscaling:
+  enabled: true

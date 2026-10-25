@@ -5,9 +5,11 @@ metadata:
   name: {{ .Release.Name }}
   labels: {app: {{ .Release.Name }}, app.kubernetes.io/part-of: card-support-mcp}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicas }}
-  # Rolling update: a new pod must be Ready before an old one stops, so the tools never go below
-  # {{ .Values.replicas }} serving pods; a release whose pods never get Ready is rolled back by helm --atomic.
+  {{- end }}
+  # Rolling update: a new pod must be Ready before an old one stops, so the tools never go below the current number
+  # of serving pods; a release whose pods never get Ready is rolled back by helm --atomic.
   strategy:
     type: RollingUpdate
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}

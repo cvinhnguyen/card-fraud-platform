@@ -18,13 +18,20 @@ Each `check_*.py` loads a fixed slice of the generated stream into a replay topi
 job (from the earliest to the latest offset, then it stops), reads the output topic and recomputes the expected
 result from the Parquet files with pandas. The numbers below are those comparisons.
 
+A bounded job ends as FINISHED in the Flink UI (the dedup screenshot below): it stops at the offset that was the
+latest when it started, so its output is complete and can be compared with pandas row by row. The jobs that feed the
+platform are unbounded and stay RUNNING until they are cancelled: `rt_features.py --live` and `device_seen.py --live`
+read `card_authorizations` from their committed offsets and feed the Feast push jobs ([feature_store.md](feature_store.md)).
+`hot_key.py --live` runs the hot-key test the same way, fed at a fixed rate
+([screenshots](#at-a-fixed-input-rate-live-mode)).
+
 | Job | Input | Output |
 |---|---|---|
 | `auth_windows.py --mode baseline\|lateness\|dedup` | `card_auth_replay` | `auth_counts_<mode>`, late events `auth_late_<mode>` |
 | `rt_features.py` | `card_auth_replay` | `card_features_rt` (feature view `card_auth_realtime`) |
 | `ato_sequence.py --order arrival\|event` | `app_events_replay` | `ato_alerts_<order>` |
 | `ato_cep.py` (Flink SQL, MATCH_RECOGNIZE; [novel idea](novel_flink_cep.md)) | `app_events_replay` | `ato_alerts_cep` |
-| `hot_key.py --mode hot\|two_phase` (parallelism 4) | `card_auth_replay` | `unit_counts_<mode>` |
+| `hot_key.py --mode hot\|two_phase [--live]` (parallelism 4) | `card_auth_replay` | `unit_counts_<mode>` |
 | `raw_landing.py` (Flink SQL) | `card_authorizations` | `s3://lakehouse/landing/card_authorizations/auth_date=*/` |
 
 ## What each optimization changed (before → after)
@@ -34,10 +41,10 @@ result from the Parquet files with pandas. The numbers below are those compariso
 | Late events: offline POS terminals send 5 to 30 min late | `auth_windows.py` | late events dropped from their window; card windows exact | 483 dropped; 96.08% | `allowed_lateness(30 min)` + side output: 0 dropped; 98.47%; replay 305 s → 348 s |
 | Duplicates: network retries resend the same `auth_id` | `auth_windows.py` | card windows overcounted; exact | 301 overcounted; 98.47% (`lateness` mode) | dedup on `auth_id` before the window: 0; **100.00%** |
 | Out-of-order app events within a session | `ato_sequence.py` | account takeovers caught | 461 / 658 (70.1%) in arrival order | 658 / 658 (**100%**) in event-time order, +30 s per alert |
-| Hot key: Ho Chi Minh is 60% of the authorizations | `hot_key.py`, parallelism 4 | job time; records on the busiest counting subtask; Flink UI data skew and backpressure | 71.4 s; 84%; skew 100%, upstream backpressured 88% | two-phase salting: **50.7 s** (about 14,000 → 19,700 records/s); 33%; skew 28%, upstream 48% |
+| Hot key: Ho Chi Minh is 60% of the authorizations | `hot_key.py`, parallelism 4 | replay: job time; records on the busiest counting subtask; Flink UI data skew and backpressure. Live at 16,000 events/s: records/s processed, Kafka lag, BackPressure status | 71.4 s; 84%; skew 100%, upstream backpressured 88%. Live: about 13,300/s, lag grows, HIGH | two-phase salting: **50.7 s** (about 14,000 → 19,700 records/s); 33%; skew 28%, upstream 48%. Live: **16,000/s, lag 0, OK** |
 
 Backpressure and busy time measure throughput, so they are the before / after of the hot key, a load problem
-([Flink UI before and after](#flink-ui-before-and-after)). Late events, duplicates and out-of-order events are
+([Flink UI before and after](#flink-ui-before-and-after), [at a fixed input rate](#at-a-fixed-input-rate-live-mode)). Late events, duplicates and out-of-order events are
 correctness problems: their before / after is the comparison with the pandas recomputation, and in the Flink UI it
 shows as the `late events` sink metric (443 → 0 late events at the same point of the replay,
 [screenshots](#in-the-flink-ui-late-events-before-and-after)) and as records per operator (20,000 in, 19,699 after
@@ -270,9 +277,55 @@ The measurements show it: subtasks holding many small units process about 4,500 
 event minute (fewer key switches) changed nothing (99.8 s vs 102.0 s for 4 salts), which rules out key switching as
 the cost.
 
-The source stays backpressured in both modes: the Python operators remain the limit of this job. Two-phase removes
-the hot spot; it does not make Python faster. `key_by(card_id)` would also spread the load, but it answers a
-different question (per card, not per unit).
+### At a fixed input rate (live mode)
+
+In a replay the source is backpressured in both modes. It reads a backlog that Kafka serves faster than the operators
+after it can take, so it waits for the slowest one, here the Python operators. Two-phase removes the hot spot, and the
+Python operators stay as slow as they were. `key_by(card_id)` would also spread the load, but it answers a different question (per card,
+not per unit).
+
+A live job has to keep up with the rate at which authorizations arrive. `--live` makes
+the job unbounded (RUNNING, from the latest offset), and the producer sends a fixed 16,000 events/s, more than `hot`
+can process:
+
+```bash
+docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/hot_key.py --mode hot --live      # then --mode two_phase
+python generator/producer.py --replay-from "2025-01-01 00:00" --limit 2000000 --speed 16000 --target card_auth_replay
+```
+
+Same input for both modes, screenshots 75 to 95 s after the producer started:
+
+| At 16,000 events/s | `hot` (before) | `two_phase` (after) |
+|---|---:|---:|
+| Records/s through the job (REST API, 60 s average) | about 13,300 | 16,000 |
+| Records read by the source, job running about 82 s | 681,325 | 944,783 |
+| Kafka lag of the source (`pendingRecords`) | rises in steps to about 100,000 | 0 |
+| Source backpressured (max) | 98% | 1% |
+| `to unit` BackPressure tab | **HIGH** (30-68% per subtask) | **OK** (0% on all four) |
+| `count per key` busy (max) / data skew | 100% / 100% | 71% / 29% |
+
+With `hot` the job falls behind: it counts about 13,300 of the 16,000 authorizations per second, so the lag grows for
+as long as the rate lasts and the per-unit counts arrive later and later. With two-phase the job keeps up: the source
+no longer waits and the lag stays at 0. Two-phase replayed at about 19,700 records/s, so above that rate it would fall
+behind too; the next step there is more parallelism, or moving the count out of Python (a Flink SQL aggregation runs
+in the JVM).
+
+Before, `hot`: the lag of the Kafka source rises, `to unit` is backpressured (HIGH), the counting vertex is busy 100%
+with data skew 100%:
+
+![hot, live at 16,000 events/s: pendingRecords of the Kafka source rising to about 100,000](images/flink_hot_key_live_hot_lag.png)
+
+![hot: BackPressure tab of to unit, status HIGH, subtasks backpressured 30-68%](images/flink_hot_key_live_hot_backpressure.png)
+
+![hot: job RUNNING, source backpressured 98%, counting vertex busy 100% with data skew 100%](images/flink_hot_key_live_hot_overview.png)
+
+After, `two_phase`: lag 0, `to unit` OK, source backpressured 1%:
+
+![two_phase, live at 16,000 events/s: pendingRecords of the Kafka source flat at 0](images/flink_hot_key_live_two_phase_lag.png)
+
+![two_phase: BackPressure tab of to unit, status OK, 0% on all four subtasks](images/flink_hot_key_live_two_phase_backpressure.png)
+
+![two_phase: job RUNNING, source backpressured 1%, counting vertex busy 71% with data skew 29%](images/flink_hot_key_live_two_phase_overview.png)
 
 ## Raw events to bronze (`pipelines/flink/raw_landing.py` + `pipelines/spark/ingest_bronze.py`)
 

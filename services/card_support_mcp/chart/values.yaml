@@ -9,7 +9,14 @@
 image:
   repository: registry:5000/card-support-mcp   # one image, three servers (MCP_SERVER picks one)
   tag: "0.2.0"
-replicas: 2
+replicas: 2       # when autoscaling is off
+# KEDA (templates/scaledobject.yaml): replicas follow the server's request rate per replica, counted on its pods
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  requestsPerSecond: "15"
+  prometheus: http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090
 resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {memory: 768Mi}
