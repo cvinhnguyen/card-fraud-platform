@@ -112,7 +112,7 @@ Every box is a deployable unit: a compose container or a workload on the kind cl
 them, so it has no box). Arrows follow the data and carry it as their label; a call without data (B1, M7) points from
 caller to callee:
 
-![System architecture: deployable units and the numbered data flows between them](docs/images/platform-architecture.png)
+![System architecture: deployable units and the numbered data flows between them](docs/images/platform-system-layers-1-2.png)
 
 Each flow has its own colour, letter and numbering:
 
@@ -134,7 +134,7 @@ the host GPU. The card-data MCP server takes a card's features from the same Fea
 fraud-score server asks the Scoring API, and the policy-rag server searches the policy chunks and vectors the RAG
 pipeline writes into a second Feast project (pgvector):
 
-![Layer 3 system architecture: agents, gateway, model servers, RAG ingest, CI/CD and observability, numbered per flow](docs/images/platform-layer3.png)
+![Layer 3 system architecture: agents, gateway, model servers, RAG ingest, CI/CD and observability, numbered per flow](docs/images/platform-system-layer-3.png)
 
 | Flow | Who / when | Path |
 |---|---|---|

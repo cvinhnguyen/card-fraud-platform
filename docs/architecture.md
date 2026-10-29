@@ -97,7 +97,7 @@ the model server, AKS running the same model image from ACR), destroyed after th
 The system diagram of Layers 1-2: every box is a deployable unit, and the arrows carry the data, numbered per flow
 (S payment scoring, R streaming features, B batch data, T training and deploy, M monitoring and retraining):
 
-![System architecture of Layers 1-2: deployable units with numbered arrows in five flows, S, R, B, T and M, one colour each](images/platform-architecture.png)
+![System architecture of Layers 1-2: deployable units with numbered arrows in five flows, S, R, B, T and M, one colour each](images/platform-system-layers-1-2.png)
 
 The rules of the README diagram, and how the picture follows them:
 
@@ -115,41 +115,42 @@ letter in each badge carries the flow. One crossing is left (M7 over T2), drawn 
 
 | # | Flow | Data / call |
 |---|---|---|
-| S1 | Payment scoring | The switch sends each authorization to the API (card, amount, channel, device) |
+| S1 | Payment scoring | The card network's switch sends each payment authorization to POST /v1/score (card, amount, channel, device) |
 | S2 | Payment scoring | Feast reads the card's stored features from Redis (feature service fraud_model_v1) |
 | S3 | Payment scoring | Feature vector to the model server (KServe V1 protocol, NodePort 31080) |
 | S4 | Payment scoring | Probability of fraud from the production XGBoost booster |
 | S5 | Payment scoring | Decision by the two thresholds; rule fallback when the model is late or down |
 | S6 | Payment scoring | Every decision is logged to Kafka topic fraud_predictions (scoring never waits on monitoring) |
-| R1 | Streaming features | Every authorization (retries included) to Kafka topic card_authorizations |
-| R2 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events (account takeover patterns -> ato_alerts_cep) |
-| R3 | Streaming features | Realtime features to card_features_rt, first (card, device) pairs to card_device_seen |
-| R4 | Streaming features | raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1's Spark task loads them into bronze.raw_card_authorizations (Delta) |
-| R5 | Streaming features | push job A consumes card_features_rt and card_device_seen |
-| R6 | Streaming features | Writes them to the Redis online store through Feast push (offsets committed after the write) |
-| R7 | Streaming features | push job B consumes the same two topics |
-| R8 | Streaming features | Appends them to gold.feat_card_auth_rt / gold.feat_card_device: the offline copy for training |
-| B1 | Batch data | Airflow runs DP1 -> DP2 -> DP3 on the Spark cluster (call, no data); dbt and GE validate stages |
+| R1 | Streaming features | Every authorization (retries included) to Kafka topic card_authorizations (generator/producer.py replays the generated stream in arrival order) |
+| R2 | Streaming features | The mobile banking app's events (login, password reset, new payee, transfer, biometric check) to Kafka topic app_events, replayed the same way; about 15 % arrive after the next event of their session |
+| R3 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events (account takeover patterns -> ato_alerts_cep) |
+| R4 | Streaming features | Realtime features to card_features_rt, first (card, device) pairs to card_device_seen; ato_cep writes one alert per matched pattern to ato_alerts_cep |
+| R5 | Streaming features | raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1 (ingest to bronze) loads them into bronze.raw_card_authorizations (Delta) |
+| R6 | Streaming features | push-online reads card_features_rt and card_device_seen |
+| R7 | Streaming features | Writes them to the Redis online store through Feast push (offsets committed after the write) |
+| R8 | Streaming features | push-offline reads the same two topics |
+| R9 | Streaming features | Appends them to gold.feat_card_auth_rt / gold.feat_card_device: the offline copy for training |
+| B1 | Batch data | Airflow submits the Spark jobs of DP1, DP2 and DP3 (a call, no data); each pipeline ends with Great Expectations checks |
 | B2 | Batch data | DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes) |
 | B3 | Batch data | DP1 loads the new daily export folders from s3://core-banking-export |
-| B4 | Batch data | Delta tables bronze -> silver -> gold (dbt) -> feat_* in s3://lakehouse; bronze.raw_transactions through lakeFS: a branch per DP1 run, merged into main after the checks |
+| B4 | Batch data | DP1 writes bronze, DP2 silver and gold (dbt), DP3 the feat_* tables, all Delta in s3://lakehouse; bronze.raw_transactions goes through lakeFS: a branch per DP1 run, merged into main after the checks |
 | B5 | Batch data | Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table lives (bronze.raw_transactions: catalog lakefs, branch main) |
-| B6 | Batch data | DAG feast_materialize (after DP3) reads feat_card_txn_stats_daily through the Feast offline store |
+| B6 | Batch data | The incremental materialize pipeline (DAG feast_materialize, after DP3) reads feat_card_txn_stats_daily through the Feast offline store |
 | B7 | Batch data | ... and loads the newest row per card into Redis (feast materialize-incremental) |
 | T1 | Training and deploy | The notebook builds the training set: labels + Feast point-in-time features |
 | T2 | Training and deploy | Metrics, plots and both models of the notebook run |
-| T3 | Training and deploy | Pipeline steps 1-2 read the labels as of label_as_of and the point-in-time features |
-| T4 | Training and deploy | Step 2 MERGEs the run's rows into ml/training_set_fraud_model_v1 (one Delta version per run) |
-| T5 | Training and deploy | Steps 5-7 log params, data versions, metrics and the booster; alias challenger when the gate passes |
+| T3 | Training and deploy | Steps 1 and 2 (load labels, build the training set) read the labels as of label_as_of and the point-in-time features |
+| T4 | Training and deploy | Step 2 MERGEs the run's rows into ml/training_set_fraud_model_v1, one Delta version per run, so every model can be traced back to the exact rows it learned from |
+| T5 | Training and deploy | Steps 5 to 7 (train, evaluate, register) log params, data versions, metrics and the model; alias challenger when it passes the evaluation gate |
 | T6 | Training and deploy | ML engineer: fetch_model.py --alias production, docker build + push of fraud/predictor:<v> |
 | T7 | Training and deploy | kubectl apply of the InferenceService; the node pulls the image from the registry |
 | M1 | Monitoring and retraining | The forwarder consumes the prediction log |
 | M2 | Monitoring and retraining | Batches to POST /v1/events |
 | M3 | Monitoring and retraining | Bin counts per feature and minute in Redis db 1; GET /v1/drift returns the PSI vs the training profile |
-| M4 | Monitoring and retraining | DAG drift_monitoring: last 7 days of payments, ground truth, point-in-time features |
+| M4 | Monitoring and retraining | Data drift pipeline (DAG drift_monitoring, daily): the last 7 days of payments, their labels and point-in-time features |
 | M5 | Monitoring and retraining | Loads the production model to score them |
 | M6 | Monitoring and retraining | Logs PR-AUC, recall and PSI as a run of experiment card_fraud_monitoring |
-| M7 | Monitoring and retraining | On drift: a KFP run of train_fraud_model with label_as_of = the DAG's day (call, no data) |
+| M7 | Monitoring and retraining | On drift: a training pipeline run (train_fraud_model) through the Kubeflow Pipelines API, label_as_of = the DAG's day (a call, no data) |
 
 ## Layer 3 system diagram
 
@@ -158,7 +159,7 @@ staff's question, the only flow that starts with a person at a screen. K is the 
 each release of its image. C is the developer's push through Jenkins, and O is the platform's monitoring and the
 agents' autoscaling:
 
-![Layer 3 system architecture: agents, gateway, model servers, MCP servers, RAG ingest, CI/CD and observability, with the numbered flows A, K, C and O](images/platform-layer3.png)
+![Layer 3 system architecture: agents, gateway, model servers, MCP servers, RAG ingest, CI/CD and observability, with the numbered flows A, K, C and O](images/platform-system-layer-3.png)
 
 | Rule | In the picture |
 |---|---|
@@ -187,7 +188,7 @@ server (C4) are there for that reason.
 | A11 | Agent conversation | card-data-mcp, get_policy_chunk: one policy chunk by id from pgvector (Feast project card_support_kb) |
 | A12 | Agent conversation | policy-rag-mcp, search_policy: the question's vector from Qwen3-Embedding-0.6B |
 | A13 | Agent conversation | fraud-score-mcp, score_payment: the Layer 2 Scoring API answers with the fraud score and its decision |
-| A14 | Agent conversation | Route /v1: key check, request and token limits, PII masked, then the InferencePool qwen3-8b |
+| A14 | Agent conversation | Route /v1: the agent's API key is checked, request and token limits applied, personal data masked, then the InferencePool qwen3-8b |
 | A15 | Agent conversation | The endpoint picker chooses a pod; its bridge forwards the prompt to llama.cpp on the host GPU |
 | A16 | Agent conversation | policy-rag-mcp, search_policy: the chunks nearest to the question vector from pgvector, re-ranked by cosine |
 | K1 | Knowledge ingest | rag_ingest reads the 5 bank documents from s3://bank-documents |
