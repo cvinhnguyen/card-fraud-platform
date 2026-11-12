@@ -570,7 +570,7 @@ from the agent card. Its only override is a debug setting that redirects the con
 add a path or a key. So the kagent UI at `agents.<domain>` stays as the admin and test console, and support users use
 the support chat.
 
-Checked on 2026-11-12. The local LLM was off on that day, so the check stops at the model call:
+Checked on 2026-11-12. The local LLM was off for these first checks, so they stop at the model call:
 
 - `https://support.<domain>/` answers 401 without the login and the page with it. A GET on `/a2a/coordinator` gets
   403, and another gateway path such as `/v1/chat/completions` gets 404 from the page's nginx.
@@ -582,6 +582,22 @@ Checked on 2026-11-12. The local LLM was off on that day, so the check stops at 
   `coordinator:8080` directly times out, and so does the support-chat pod.
 - A message sent through the kagent controller, the kagent UI's path, left no `a2a-coordinator` line in the gateway
   log. Only the coordinator's model calls showed there.
+
+Later the same evening the chat model was started (the embedding server stayed off to keep memory free on this
+machine) and one question went the whole way through `https://support.<domain>/a2a/coordinator`: "A customer with
+card card_d10f799f says a card payment of 2,500,000 VND at an online electronics shop was declined. What does the
+card's recent activity look like, and how risky would that payment score?" The answer came back in 13.4 s with
+HTTP 200 and task state `completed`:
+
+> The card d10f799f has not been used in the last hour, with 0 payments in the last 10 minutes. It was issued on
+> April 5, 2016, and is a credit card through Napas. In the last 30 days, there have been 3 payments, averaging about
+> 383,800 VND. The risk agent is currently unable to provide the risk score for the payment. Please try again later
+> or contact our support team for further assistance.
+
+The card part came from card-data-agent through `/mcp/card-data` (Redis). The risk part failed because of how the
+test was set up: the risk agent loads both of its tool servers, and `/mcp/policy-rag` answered 500 because policy-rag needs
+the embedding server. The coordinator still answered with what it had and said the score was missing, instead of
+making one up.
 
 ## Chat with the agents (kagent UI)
 
