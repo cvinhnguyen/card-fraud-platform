@@ -29,6 +29,23 @@ WEIGHT = "sample_weight"
 ROW_HASH = "row_hash"   # training-set table only: hash of every column but the key (incremental MERGE)
 
 
+# `VERSION AS OF` must still work when a registered model is old: Delta refuses time travel to a version older than
+# deletedFileRetentionDuration (7 days by default). Same setting as pipelines/spark/build_labels.py.
+KEEP_HISTORY = {"deletedFileRetentionDuration": "interval 365 days", "logRetentionDuration": "interval 365 days"}
+
+
+def keep_history(spark: SparkSession, path: str) -> None:
+    """Keep a year of versions: the default for a table created from here on, and set once on an existing one (an
+    ALTER is a commit of its own, so it runs before the run's MERGE, whose version is the one recorded)."""
+    for k, v in KEEP_HISTORY.items():
+        spark.conf.set(f"spark.databricks.delta.properties.defaults.{k}", v)
+    if DeltaTable.isDeltaTable(spark, path):
+        props = DeltaTable.forPath(spark, path).detail().first()["properties"]
+        if any(props.get(f"delta.{k}") != v for k, v in KEEP_HISTORY.items()):
+            pairs = ", ".join(f"'delta.{k}' = '{v}'" for k, v in KEEP_HISTORY.items())
+            spark.sql(f"ALTER TABLE delta.`{path}` SET TBLPROPERTIES ({pairs})")
+
+
 def delta_version(spark: SparkSession, path: str) -> int:
     """Current version of a Delta table."""
     return DeltaTable.forPath(spark, path).history(1).first()["version"]
@@ -106,6 +123,7 @@ class TrainingDataService:
         cols = [c for c in df.columns if c != KEY]
         # ponytail: 64-bit hash; a collision between a row's old and new values would miss that one update
         sdf = self.spark.createDataFrame(df).withColumn(ROW_HASH, F.xxhash64(*cols))
+        keep_history(self.spark, path)
         if not DeltaTable.isDeltaTable(self.spark, path):
             sdf.write.format("delta").option("delta.enableDeletionVectors", "true").save(path)
         else:

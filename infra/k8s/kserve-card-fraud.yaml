@@ -1,6 +1,32 @@
 # The model server: model-inside-image (fraud/predictor:<model version>, built from the MLflow alias
-# `production`). Standard (raw Deployment) mode: no Knative, so it fits the local cluster. The Scoring API (compose) calls
-# it through NodePort 31080 (infra/k8s/nodeports.yaml): http://fraud-control-plane:31080/v1/models/card-fraud:predict
+# `production`). Standard (raw Deployment) mode: no Knative Serving, so it fits the local cluster. The Scoring API
+# (compose) calls it through NodePort 31080 (infra/k8s/nodeports.yaml): http://fraud-control-plane:31080/v1/models/card-fraud:predict
+# Drift feed, the KServe way: the payload logger (KServe agent sidecar, port 9081, in front of the model on 8080) sends
+# every request and response as a CloudEvent to the Knative Broker below; the Trigger delivers them to the Drift API,
+# our drift detector. Outlier or adversarial detectors would be more Triggers on the same Broker. Logging is
+# asynchronous: the caller does not wait for the Broker. Knative Eventing itself is installed by platform.sh.
+# Apply: sed 's/MODEL_VERSION/<version>/' infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: default
+  namespace: serving
+---
+# Both event types (org.kubeflow.serving.inference.request / .response) of card-fraud only. The Drift API runs in
+# compose; the broker's filter pod reaches it by name because the kind node is on the compose network (up.sh).
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: drift-detector
+  namespace: serving
+spec:
+  broker: default
+  filter:
+    attributes:
+      inferenceservicename: card-fraud
+  subscriber:
+    uri: http://drift-api:8000/v1/inference-events
+---
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
@@ -12,6 +38,9 @@ spec:
   predictor:
     minReplicas: 1
     maxReplicas: 3
+    logger:
+      mode: all
+      url: http://broker-ingress.knative-eventing.svc.cluster.local/serving/default   # the Broker above
     containers:
       - name: kserve-container
         image: localhost:5001/fraud/predictor:MODEL_VERSION

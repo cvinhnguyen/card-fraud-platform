@@ -1,5 +1,5 @@
 # Flink 2.2 with PyFlink (same version) and the Kafka connector, for the `stream` profile.
-# Multi-stage (docs/docker_optimization.md): PyFlink is installed into a venv in a build stage that has pip and venv;
+# Multi-stage (docs/performance/docker_optimization.md): PyFlink is installed into a venv in a build stage that has pip and venv;
 # the final image gets the venv and the Python runtime only.
 FROM flink:2.2.1-scala_2.12-java17 AS build
 USER root

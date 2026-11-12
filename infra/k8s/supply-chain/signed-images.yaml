@@ -1,4 +1,4 @@
-# Supply-chain policy (novel idea, docs/novel_supply_chain.md): a Pod in card-support runs only images of the
+# Supply-chain policy (novel idea, docs/operations/novel_supply_chain.md): a Pod in card-support runs only images of the
 # platform's registry, and only when they carry a cosign signature made with the CI's key (the MCP server pipeline
 # signs every image it pushes). Checked at admission: an unsigned or re-tagged image is refused before it runs, and
 # the admitted image is pinned to the digest that was verified.

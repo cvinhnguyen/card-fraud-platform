@@ -9,6 +9,6 @@ networkPolicy:
   public: true
 # The only server with traffic beyond the gateway's 300 calls per minute: the public REST API (NGINX limits each client
 # IP, not the total). 15 requests/s per replica: in the scaling test a pod at about 13 requests/s used about 100m CPU,
-# its CPU request (docs/agents.md).
+# its CPU request (docs/llm-platform/agents.md).
 autoscaling:
   enabled: true

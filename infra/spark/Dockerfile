@@ -1,6 +1,6 @@
 # Spark 4.1.3 with the lakehouse jars baked in (Delta, S3A, Postgres JDBC, OpenLineage), for every Spark container
 # and, through COPY --from, the Airflow image.
-# Multi-stage (docs/docker_optimization.md): the build stage resolves the Maven packages once with Ivy; the final
+# Multi-stage (docs/performance/docker_optimization.md): the build stage resolves the Maven packages once with Ivy; the final
 # image gets only the jars Spark does not already ship. Before, `spark.jars.packages` resolved them at every
 # spark-submit and the standalone worker copied them (~600 MB) into each application's work dir: 94 GB after a day.
 FROM apache/spark:4.1.3-scala2.13-java17-python3-ubuntu AS jars

@@ -8,7 +8,7 @@
 
 Event time is the Kafka message timestamp (the producer sets it to auth_ts), so watermarks are generated inside the
 Kafka source. Reads the replay topic `card_auth_replay` (1 partition) from the earliest to the latest offset
-(bounded), so a run over a fixed replay is reproducible. Two replay effects are neutralized, see docs/flink_jobs.md:
+(bounded), so a run over a fixed replay is reproducible. Two replay effects are neutralized, see docs/data-platform/flink_jobs.md:
   - a replay packs days of event time into seconds; watermarks every 10 ms and a Python bundle of 1 element keep one
     watermark step to a few events, as with live traffic
   - with 6 partitions read at uneven speed the watermark (minimum over partitions) lagged days behind, so the replay

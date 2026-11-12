@@ -1,6 +1,6 @@
 # Airflow 2.10 (same minor as the course) + a Spark client identical to the cluster, so SparkSubmitOperator can run
 # drivers in the scheduler container (client mode; standalone has no cluster mode for Python).
-# Multi-stage (docs/docker_optimization.md):
+# Multi-stage (docs/performance/docker_optimization.md):
 #   spark  the image the workers run: the final stage copies its JRE and only the Spark parts a client needs
 #   venvs  Great Expectations, dbt, the DataHub CLI and (Layer 2) Feast, each in its own venv (pins clash with Airflow's),
 #          built here and copied without pip, bytecode caches and test suites

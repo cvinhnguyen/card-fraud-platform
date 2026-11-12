@@ -7,7 +7,7 @@ Every source is a Delta table of the lakehouse, read by the Spark offline store:
   card_device           gold.feat_card_device           Flink device_seen.py -> push jobs A / B    TTL none
   fraud_request_features  on demand: the payment being scored (request) + the views above
 
-TTL = how old a value may be and still describe the card (docs/feature_store.md). One fact shapes the choices:
+TTL = how old a value may be and still describe the card (docs/ml-platform/feature_store.md). One fact shapes the choices:
 Feast's Redis lookup returns the stored value however old it is (TTL bounds the point-in-time join and the
 materialization window, not online reads). Any ageing the model must see is therefore done in the on-demand view,
 from the value's own timestamp, so training and serving age it the same way:

@@ -21,21 +21,18 @@ class HistogramStore:
         """The current minute bucket (epoch minutes), minus offset minutes."""
         return int(self.clock()) // 60 - offset
 
-    async def add(self, events) -> int:
-        """Count every event's score and features into the current minute; returns the number counted."""
-        minute, pipe, n = self._minute(), self.redis.pipeline(transaction=False), 0   # pragma: no mutate (MULTI or not: same counts)
-        for e in events:
-            if e.fallback:   # no model output: says nothing about the model's inputs drifting
-                continue
-            values = {**(e.features or {}), SCORE: e.score}
-            for name, edges in self.edges.items():
+    async def add(self, rows: list[dict[str, float | None]]) -> int:
+        """Count each row's inputs into the current minute; returns the number of rows.
+        A row carries only the inputs its event knows: the features of a request, or the score of a response."""
+        minute, pipe = self._minute(), self.redis.pipeline(transaction=False)   # pragma: no mutate (MULTI or not: same counts)
+        for row in rows:
+            for name, value in row.items():
                 key = f"drift:{minute}:{name}"
-                pipe.hincrby(key, bin_of(values.get(name), edges), 1)
+                pipe.hincrby(key, bin_of(value, self.edges[name]), 1)
                 pipe.expire(key, self.ttl_s)
-            n += 1
-        if n:
+        if rows:
             await pipe.execute()
-        return n
+        return len(rows)
 
     async def window(self, minutes: int) -> dict[str, dict[str, int]]:
         """input -> bin -> count over the last `minutes` minutes (current minute included)."""

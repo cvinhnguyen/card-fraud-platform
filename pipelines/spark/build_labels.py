@@ -24,6 +24,21 @@ from pyspark.sql import functions as F
 TABLE = "gold.label_transaction"
 PATH = "s3a://lakehouse/gold/label_transaction"
 MATURITY_DAYS = 60   # the longest dispute delay in the source
+# A training run reads the labels as known on its day (VERSION AS OF). Delta refuses time travel to a version older
+# than deletedFileRetentionDuration (7 days by default), and a registered model must stay traceable to its labels.
+KEEP_HISTORY = {"deletedFileRetentionDuration": "interval 365 days", "logRetentionDuration": "interval 365 days"}
+
+
+def keep_history(spark: SparkSession, table: str) -> None:
+    """Keep a year of versions: the default for tables created from here on, and set once on an existing table
+    (an ALTER is a commit of its own, so it runs before the run's commit is tagged)."""
+    for k, v in KEEP_HISTORY.items():
+        spark.conf.set(f"spark.databricks.delta.properties.defaults.{k}", v)
+    if spark.catalog.tableExists(table):
+        props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
+        if any(props.get(f"delta.{k}") != v for k, v in KEEP_HISTORY.items()):
+            pairs = ", ".join(f"'delta.{k}' = '{v}'" for k, v in KEEP_HISTORY.items())
+            spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ({pairs})")
 
 
 def build(spark: SparkSession, as_of: dt.date) -> None:
@@ -48,6 +63,7 @@ def build(spark: SparkSession, as_of: dt.date) -> None:
            .withColumn("label_as_of", F.lit(as_of))
            .withColumn("event_month", F.date_format("event_timestamp", "yyyy-MM")))
 
+    keep_history(spark, TABLE)
     spark.conf.set("spark.databricks.delta.commitInfo.userMetadata", f"label_as_of={as_of}")
     if not exists:
         src.repartition("event_month").write.format("delta").partitionBy("event_month").save(PATH)

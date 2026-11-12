@@ -22,4 +22,5 @@ metadata: {name: card-fraud-nodeport, namespace: serving}
 spec:
   type: NodePort
   selector: {serving.kserve.io/inferenceservice: card-fraud}
-  ports: [{name: http, port: 80, targetPort: 8080, nodePort: 31080}]
+  # 9081: the KServe agent (payload logger), which forwards to the model on 8080; 8080 directly would skip the logger
+  ports: [{name: http, port: 80, targetPort: 9081, nodePort: 31080}]

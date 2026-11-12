@@ -1,4 +1,4 @@
-"""Entity-relationship diagrams of the lakehouse zones for docs/schema_design.md, drawn from the tables in this file.
+"""Entity-relationship diagrams of the lakehouse zones for docs/data-platform/schema_design.md, drawn from the tables in this file.
 
   bronze  the 8 raw_* tables, copies of the sources: the lines are the source's keys, not constraints
   silver  stg_transactions and stg_customers (new and renamed columns marked) and the bronze tables that link them

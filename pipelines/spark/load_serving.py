@@ -6,7 +6,7 @@ Rows are written in txn_ts order, as a daily append would, so a BRIN index on tx
 Indexes and the EXPLAIN before/after live in infra/sql/serving_indexes.sql.
 ponytail: same Postgres instance as core_banking to save RAM on the laptop; a real setup gives serving its own server.
 
-Usage (repo root; the `serving` database must exist, see docs/storage_optimization.md):
+Usage (repo root; the `serving` database must exist, see docs/performance/storage_optimization.md):
   docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/load_serving.py
 """
 import os

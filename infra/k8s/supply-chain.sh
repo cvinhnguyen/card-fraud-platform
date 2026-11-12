@@ -1,5 +1,5 @@
 #!/bin/sh
-# Signed images (novel idea, docs/novel_supply_chain.md): cosign signatures on the platform's images and a Kyverno
+# Signed images (novel idea, docs/operations/novel_supply_chain.md): cosign signatures on the platform's images and a Kyverno
 # admission policy that lets only signed images of the platform registry run in card-support.
 #   sh infra/k8s/supply-chain.sh                      install / update (Kyverno, policy, the node's registry:5000)
 #   sh infra/k8s/supply-chain.sh sign <repo> <tag>    sign a pushed image, e.g. card-support-mcp 265b1ba

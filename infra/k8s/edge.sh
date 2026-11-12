@@ -4,7 +4,8 @@
 # rate limits. Idempotent.
 #   domain  DUCKDNS_DOMAIN from infra/.env (e.g. cardfraud-vin.duckdns.org, pointed at 127.0.0.1), else localtest.me
 #   https   on once the wildcard certificate secret nginx-ingress/wildcard-tls exists (tls.sh)
-# Open: https://agents.<domain> (and registry, grafana, logs, traces, api) - user admin, EDGE_ADMIN_PASSWORD
+# Open: https://support.<domain> (support chat), https://agents.<domain> (kagent UI) and registry, grafana, logs,
+#   traces, api - user admin, EDGE_ADMIN_PASSWORD
 set -e
 cd "$(dirname "$0")"
 NIC=2.7.3

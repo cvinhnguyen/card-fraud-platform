@@ -5,7 +5,7 @@ and 03:00, so the run waits for that folder before reading it. `ds + 1`, not `da
 validation checks (pipelines/spark/validate.py), also for a manual run, whose data interval ends on ds itself.
 
 The export is the one source another department delivers as files, so it goes through Write-Audit-Publish
-(docs/novel_lakefs_wap.md): bronze.raw_transactions lives in the lakeFS repository `bronze`, the run appends the new
+(docs/data-platform/novel_lakefs_wap.md): bronze.raw_transactions lives in the lakeFS repository `bronze`, the run appends the new
 export on its own branch `dp1_<ds>`, the checks read that branch, and only a run that passed is merged into main, which
 the metastore table (silver, Trino) reads. A failed run leaves main as it was and its branch in place to inspect.
 
@@ -19,18 +19,20 @@ the metastore table (silver, Trino) reads. A failed run leaves main as it was an
 | `commit_branch` | lakeFS commit on the branch: the state the checks read and the merge publishes |
 | `validate_dp1` | GE on Spark over the new export (on the branch) + every snapshot table, then publish results and gate |
 | `merge_to_main` | lakeFS merge of the branch into main: the export becomes visible to silver and Trino in one step; branch deleted |
-| `trigger_dp2` | starts `dp2_bronze_to_gold` for the same logical date |
+| `publish_bronze` | Airflow dataset event `lakehouse://bronze` for day `ds`: bronze has a new checked version |
 
+DP1 starts no other pipeline. `dp2_bronze_to_silver` is scheduled on the bronze dataset, so it runs after any
+publish of bronze, and it can also be run by hand at any time (it reads the last committed Delta version).
 Every load is incremental by what bronze already holds, so a retry or a rerun of an old date adds nothing twice.
 """
 from datetime import datetime
 
 from airflow import DAG
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from datahub_airflow_plugin.entities import Dataset
 
-from common import CORE_DB_ENV, DEFAULT_ARGS, commit_branch, create_branch, merge_to_main, spark_job, validate
+from common import (BRONZE, CORE_DB_ENV, DEFAULT_ARGS, commit_branch, create_branch, merge_to_main, publish, spark_job,
+                    validate)
 
 BRANCH = "dp1_{{ ds_nodash }}"
 TXN_ROOT = "s3a://bronze/" + BRANCH   # the run's lakeFS branch; readers use s3a://bronze/main
@@ -51,10 +53,8 @@ with DAG("dp1_source_to_bronze", schedule="@daily", start_date=datetime(2026, 10
                         ["--part", "exports", "--until", "{{ macros.ds_add(ds, 1) }}", "--txn-root", TXN_ROOT],
                         inlets=[EXPORT], outlets=[LAKEFS_TXN])
     landing = spark_job("ingest_stream_landing", "ingest_bronze.py", ["--part", "landing"])
-    trigger = TriggerDagRunOperator(task_id="trigger_dp2", trigger_dag_id="dp2_bronze_to_gold",
-                                    logical_date="{{ logical_date }}", reset_dag_run=True)
 
     [wait, branch] >> exports
     checks = validate("dp1", ["--txn-root", TXN_ROOT])   # reads the export on the run's branch
-    publish = merge_to_main.override(inlets=[LAKEFS_TXN], outlets=[TABLE])(BRANCH)
-    [snapshot, exports >> commit_branch(BRANCH), landing] >> checks >> publish >> trigger
+    merge = merge_to_main.override(inlets=[LAKEFS_TXN], outlets=[TABLE])(BRANCH)
+    [snapshot, exports >> commit_branch(BRANCH), landing] >> checks >> merge >> publish(BRONZE)

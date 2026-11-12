@@ -30,6 +30,16 @@ networkPolicy:
   enabled: true
   tracingNamespace: monitoring
 
+# Support chat (templates/support-chat.yaml), on in the coordinator's release: the page support users open at
+# support.<domain> (infra/k8s/edge). Its nginx sends the questions to agentgateway, route a2a-<agent>, with the
+# support-app key, so the gateway is the first hop in front of the agent.
+supportChat:
+  enabled: false
+  agent: coordinator                 # a public agent (its route a2a-<agent> exists)
+  image: nginxinc/nginx-unprivileged:1.29.1-alpine
+  keySecret: a2a-key-support-app     # Authorization: Bearer <support-app key>, from Vault (infra/k8s/secrets.sh)
+  ingressNamespace: nginx-ingress    # the NGINX Ingress Controller is the page's only client
+
 # Agent Substrate (warm-up, agent fleet): a <name>-sandbox SandboxAgent per agent, all sharing the worker pool.
 # Egress only to the gateway (LLM, MCP, A2A) and the kagent controller (sessions).
 sandbox:

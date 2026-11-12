@@ -25,4 +25,8 @@ if __name__ == "__main__":
     (a.out / "metadata.json").write_text(json.dumps(meta, indent=2), newline="\n")
     # the drift API's reference (same model, its validation period): compose mounts it into the drift API
     mlflow.artifacts.download_artifacts(run_id=mv.run_id, artifact_path="reference_profile.json", dst_path=str(a.out))
+    # the drift API reads positional instances in the profile's input order: it must be the booster's feature order
+    ref = json.loads((a.out / "reference_profile.json").read_text())
+    if [n for n in ref["inputs"] if n != "score"] != booster.feature_names:
+        raise SystemExit(f"reference_profile.json inputs {list(ref['inputs'])} != model features {booster.feature_names}")
     print(f"{NAME} v{mv.version} ({a.alias}) -> {a.out}")

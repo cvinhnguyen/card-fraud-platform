@@ -1,7 +1,8 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $gw := .Values.gateway }}
 # The gateway is not only configured as the agents' path, it is the only one the network allows:
-#   in   A2A on 8080 only from the gateway proxy (agent -> agent) and kagent-controller (UI chat, its control path)
+#   in   A2A on 8080 only from the gateway proxy (agent -> agent, and the support chat's questions on /a2a/<agent>)
+#        and kagent-controller (the kagent UI's chat, an admin and test console; kagent sends it straight to the agent)
 #   out  DNS, the gateway (LLM, MCP, A2A), kagent-controller (sessions) and Jaeger (spans); an agent cannot reach
 #        the MCP server, the model server or another agent directly
 apiVersion: networking.k8s.io/v1

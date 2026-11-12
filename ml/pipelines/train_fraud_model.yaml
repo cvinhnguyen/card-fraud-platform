@@ -12,41 +12,6 @@
 #    negative_rate: float [Default: 0.02]
 #    num_workers: int [Default: 2.0]
 components:
-  comp-condition-1:
-    dag:
-      tasks:
-        register:
-          cachingOptions: {}
-          componentRef:
-            name: comp-register
-          inputs:
-            parameters:
-              feature_service:
-                componentInputParameter: pipelinechannel--feature_service
-              label_as_of:
-                componentInputParameter: pipelinechannel--label_as_of
-              model_dir:
-                componentInputParameter: pipelinechannel--train-Output
-              run_id:
-                componentInputParameter: pipelinechannel--load-labels-Output
-              test_path:
-                componentInputParameter: pipelinechannel--time-split-test
-          taskInfo:
-            name: register
-    inputDefinitions:
-      parameters:
-        pipelinechannel--evaluate-Output:
-          parameterType: BOOLEAN
-        pipelinechannel--feature_service:
-          parameterType: STRING
-        pipelinechannel--label_as_of:
-          parameterType: STRING
-        pipelinechannel--load-labels-Output:
-          parameterType: STRING
-        pipelinechannel--time-split-test:
-          parameterType: STRING
-        pipelinechannel--train-Output:
-          parameterType: STRING
   comp-evaluate:
     executorLabel: exec-evaluate
     inputDefinitions:
@@ -112,6 +77,8 @@ components:
           parameterType: STRING
         model_dir:
           parameterType: STRING
+        passed:
+          parameterType: BOOLEAN
         run_id:
           parameterType: STRING
         test_path:
@@ -255,10 +222,10 @@ deploymentSpec:
         image: localhost:5001/fraud/ml-train:latest
         resources:
           cpuLimit: 2.0
-          memoryLimit: 5.36870912
+          memoryLimit: 6.442450944
           memoryRequest: 1.073741824
           resourceCpuLimit: '2'
-          resourceMemoryLimit: 5Gi
+          resourceMemoryLimit: 6Gi
           resourceMemoryRequest: 1Gi
     exec-load-labels:
       container:
@@ -316,11 +283,12 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef register(run_id: str, model_dir: str, test_path: str, label_as_of:\
-          \ str, feature_service: str) -> int:\n    \"\"\"Step 7: MLflow model version,\
-          \ alias challenger (production on the first run).\"\"\"\n    from fraud_ml\
-          \ import steps\n    return steps.register(run_id, model_dir, test_path,\
-          \ True, label_as_of, feature_service)\n\n"
+          \ *\n\ndef register(run_id: str, model_dir: str, test_path: str, passed:\
+          \ bool, label_as_of: str, feature_service: str) -> int:\n    \"\"\"Step\
+          \ 7: MLflow model version for every run; alias challenger only if it passed\
+          \ (production on the first run).\"\"\"\n    from fraud_ml import steps\n\
+          \    return steps.register(run_id, model_dir, test_path, passed, label_as_of,\
+          \ feature_service)\n\n"
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
@@ -453,41 +421,6 @@ pipelineInfo:
 root:
   dag:
     tasks:
-      condition-1:
-        componentRef:
-          name: comp-condition-1
-        dependentTasks:
-        - evaluate
-        - load-labels
-        - time-split
-        - train
-        inputs:
-          parameters:
-            pipelinechannel--evaluate-Output:
-              taskOutputParameter:
-                outputParameterKey: Output
-                producerTask: evaluate
-            pipelinechannel--feature_service:
-              componentInputParameter: feature_service
-            pipelinechannel--label_as_of:
-              componentInputParameter: label_as_of
-            pipelinechannel--load-labels-Output:
-              taskOutputParameter:
-                outputParameterKey: Output
-                producerTask: load-labels
-            pipelinechannel--time-split-test:
-              taskOutputParameter:
-                outputParameterKey: test
-                producerTask: time-split
-            pipelinechannel--train-Output:
-              taskOutputParameter:
-                outputParameterKey: Output
-                producerTask: train
-        taskInfo:
-          name: condition-1
-        triggerPolicy:
-          condition: inputs.parameter_values['pipelinechannel--evaluate-Output'] ==
-            true
       evaluate:
         cachingOptions: {}
         componentRef:
@@ -555,6 +488,39 @@ root:
               componentInputParameter: negative_rate
         taskInfo:
           name: load-labels
+      register:
+        cachingOptions: {}
+        componentRef:
+          name: comp-register
+        dependentTasks:
+        - evaluate
+        - load-labels
+        - time-split
+        - train
+        inputs:
+          parameters:
+            feature_service:
+              componentInputParameter: feature_service
+            label_as_of:
+              componentInputParameter: label_as_of
+            model_dir:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: train
+            passed:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: evaluate
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: load-labels
+            test_path:
+              taskOutputParameter:
+                outputParameterKey: test
+                producerTask: time-split
+        taskInfo:
+          name: register
       time-split:
         cachingOptions: {}
         componentRef:

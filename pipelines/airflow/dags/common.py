@@ -1,4 +1,4 @@
-"""Pieces shared by the DP1-DP3 DAGs: Spark tasks and the validate stage.
+"""Pieces shared by the DP1-DP3 DAGs: Spark tasks, the validate stage and how one pipeline's output starts the next.
 
 Nothing here names a host or holds a credential. Hosts and secrets are Airflow connections (spark_lakehouse,
 lakehouse_s3, core_banking_db, spark_thrift), paths are Airflow variables; both are rendered at run time, so parsing
@@ -7,6 +7,7 @@ a DAG never touches the metadata database. Data never goes through XCom, only th
 import json
 from datetime import datetime, timedelta, timezone
 
+from airflow.datasets import Dataset as Published
 from airflow.decorators import task
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException
@@ -18,6 +19,32 @@ from airflow.utils.task_group import TaskGroup
 # depends_on_past: every load is incremental (labels as of ds, MERGE by export date), so day D must not run before
 # day D-1 succeeded. Without it a failed D-1 let D run first and D-1's labels were then skipped as already written.
 DEFAULT_ARGS = {"owner": "data-platform", "retries": 1, "retry_delay": timedelta(minutes=2), "depends_on_past": True}
+
+# How the pipelines start. No pipeline starts another one. Each ends with publish(<zone>), an Airflow dataset event
+# that says "this zone has a new checked version for business day D", and the pipeline that reads the zone is
+# scheduled on that dataset. So a pipeline depends on the table it reads, never on the pipeline that writes it: any
+# writer that publishes the zone starts it, and it can also be started by hand at any time, because it reads the last
+# committed Delta version and never a half-written one.
+BRONZE, SILVER, GOLD, FEATURES = (Published(f"lakehouse://{zone}") for zone in ("bronze", "silver", "gold", "features"))
+# Business day of a run: the day carried by the dataset event that started it, or the run's own ds when it is
+# scheduled (DP1) or started by hand. Each published version starts its own run; only versions published within one
+# scheduler loop share a run, which then takes the newest day (the loads are incremental, so no row is skipped).
+# The day is rendered into shell commands and Spark arguments, and a dataset event can also be posted through the
+# Airflow API with any text in it. ds_format parses the value as YYYY-MM-DD and writes it back, so anything that is
+# not a date fails the task while it renders, before a command runs.
+DAY_EXPR = ("macros.ds_format(((triggering_dataset_events.values() | first | last).extra['ds'] "
+            "if triggering_dataset_events else ds), '%Y-%m-%d', '%Y-%m-%d')")
+DAY = "{{ " + DAY_EXPR + " }}"
+
+
+def publish(zone: Published):
+    """Last task of a pipeline: tell Airflow the zone has a new checked version; the business day travels on the event."""
+    @task(task_id=f"publish_{zone.uri.rstrip('/').rsplit('/', 1)[-1]}", outlets=[zone])   # Airflow may add a final /
+    def announce(day: str, *, outlet_events=None) -> str:
+        """Attach the business day to the dataset event the scheduler creates when this task succeeds."""
+        outlet_events[zone].extra = {"ds": day}
+        return day
+    return announce(DAY)
 
 # The Spark driver runs in the scheduler container and reads S3 / JDBC credentials from its environment.
 # bronze.raw_transactions is in the lakeFS repository `bronze` (bucket s3a://bronze/ in spark-defaults.conf): lakeFS keys.
@@ -96,10 +123,11 @@ def emit_assertions(report: dict, run_id: str) -> int:
 
 
 @task
-def publish_results(suite: str, ds: str | None = None, run_id: str | None = None) -> str:
+def publish_results(suite: str, day: str | None = None, ds: str | None = None, run_id: str | None = None) -> str:
     """Read the suite's GE results, log one line per expectation, send them to DataHub (when [datahub] enabled,
-    i.e. with the gov profile), then fail the run if any failed.
-    Returns the results path (the only thing that goes to XCom)."""
+    i.e. with the gov profile), then fail the run if any failed. `day` is the business day the checks ran for
+    (default: the run's own ds). Returns the results path (the only thing that goes to XCom)."""
+    ds = day or ds
     key = f"{Variable.get('validation_prefix')}/{suite}/ds={ds}/results.json"
     report = json.loads(S3Hook(aws_conn_id="lakehouse_s3").read_key(key, Variable.get("lakehouse_bucket")))
     for r in report["results"]:
@@ -121,13 +149,13 @@ def validate(suite: str, args: list[str] | None = None) -> TaskGroup:
     """Validate stage: GE expectations run in Spark (pipelines/spark/validate.py), then the results are published and gate
     the pipeline. The publish step is separate so the results are recorded even when the data is bad."""
     with TaskGroup(f"validate_{suite}") as group:
-        run = spark_job("run_expectations", "validate.py", ["--suite", suite, "--ds", "{{ ds }}", *(args or [])],
+        run = spark_job("run_expectations", "validate.py", ["--suite", suite, "--ds", DAY, *(args or [])],
                         conf={"spark.pyspark.driver.python": GE_PYTHON})
-        run >> publish_results(suite)
+        run >> publish_results(suite, DAY)
     return group
 
 
-# Write-Audit-Publish on lakeFS (EDAI-1 novel idea, docs/novel_lakefs_wap.md): a DP1 run appends the nightly export on its
+# Write-Audit-Publish on lakeFS (EDAI-1 novel idea, docs/data-platform/novel_lakefs_wap.md): a DP1 run appends the nightly export on its
 # own branch, the checks read that branch, and only a run that passed is merged into main, where the metastore table
 # bronze.raw_transactions points.
 LAKEFS_REPO = "bronze"

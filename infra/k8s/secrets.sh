@@ -7,7 +7,8 @@
 #   agentgateway-system  llm-upstream (llama.cpp key: model server pods -> llama.cpp), llm-groq (Groq API key: LLM
 #                        version B of the A/B test, only when GROQ_API_KEY is set)
 #   kagent               agentgateway-key (agents' LLM key, ModelConfig), mcp-key-<agent> (RemoteMCPServer headers),
-#                        a2a-key-coordinator (headers of its agent tools)
+#                        a2a-key-coordinator (headers of its agent tools), a2a-key-support-app (key the support
+#                        chat's proxy adds to its calls to the gateway)
 #   card-support         card-data-mcp (store passwords), policy-rag-mcp (pgvector password + embedder key)
 #   monitoring           grafana-admin (Grafana login)
 #   agentregistry        agentregistry-db (catalog database URL on ml-db)
@@ -60,6 +61,7 @@ secret kagent agentgateway-key Opaque key="$(val AGW_API_KEY)"
 secret kagent mcp-key-card-data-agent Opaque Authorization="Bearer $(val MCP_KEY_CARD_DATA_AGENT)"
 secret kagent mcp-key-risk-agent Opaque Authorization="Bearer $(val MCP_KEY_RISK_AGENT)"
 secret kagent a2a-key-coordinator Opaque Authorization="Bearer $(val A2A_KEY_COORDINATOR)"
+secret kagent a2a-key-support-app Opaque Authorization="Bearer $(val A2A_KEY_SUPPORT_APP)"
 # each MCP server gets only what its tools read (fraud-score reads no store: no secret)
 secret card-support card-data-mcp Opaque ML_DB_PASSWORD="$(val ML_DB_PASSWORD)" REDIS_PASSWORD="$(val REDIS_PASSWORD)" \
   VECTOR_DB_PASSWORD="$(val VECTOR_DB_PASSWORD)"

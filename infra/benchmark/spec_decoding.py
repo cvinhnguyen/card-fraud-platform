@@ -4,7 +4,7 @@ quote the document, so an n-gram drafter that looks the next tokens up in the pr
 model verifies them in one pass. llama.cpp reports per request how many tokens were drafted and accepted.
 
   LLM_URL=http://127.0.0.1:8085 LLM_API_KEY=... python infra/benchmark/spec_decoding.py <name>
-  -> infra/benchmark/results/spec-<name>.json; run once per llama-server configuration (see docs/llm_benchmark.md)
+  -> infra/benchmark/results/spec-<name>.json; run once per llama-server configuration (see docs/llm-platform/llm_benchmark.md)
 """
 import json
 import os

@@ -1,7 +1,8 @@
 # agentgateway as the A2A gateway: agents never call each other directly.
 #   agent -> agent: kagent's proxy.url sends every agent-as-tool call to the gateway with header
 #                   x-kagent-host: <agent>.<namespace>; route <release>-internal, key users a2aCallers only
-#   client -> agent: /a2a/<agent> for agents marked public; route a2a-<agent>, key user support-app only
+#   client -> agent: /a2a/<agent> for agents marked public; route a2a-<agent>, key user support-app only (the
+#                    support chat, support-chat.yaml, and other A2A clients)
 # The gateway rewrites each agent card's URL to its own address, so A2A clients keep going through it.
 # A/B test (abTests): the tested agent's calls are split by weight between it and its variant; header
 # x-agent-variant: a|b pins a call to one of them (evaluations, tests).

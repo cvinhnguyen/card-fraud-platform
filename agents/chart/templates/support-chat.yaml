@@ -1,0 +1,167 @@
+{{/* The support chat's page and proxy config: ConfigMap data, also hashed into the pod so a change rolls it. */}}
+{{- define "card-support.support-chat-config" -}}
+{{- $agent := .Values.supportChat.agent }}
+{{- $gw := .Values.gateway -}}
+default.conf.template: |
+  server {
+    listen 8080;
+    location = /healthz { return 200 "ok\n"; }
+    location / { root /usr/share/nginx/html; }
+    # only the agent's JSON-RPC endpoint, only POST: the page cannot reach any other gateway route
+    location = /a2a/{{ $agent }} {
+      limit_except POST { deny all; }
+      proxy_pass http://{{ $gw.name }}.{{ $gw.namespace }}.svc.cluster.local;
+      # replaces the browser's basic-auth header (from the edge) with the gateway key
+      proxy_set_header Authorization "${SUPPORT_APP_KEY}";
+      proxy_http_version 1.1;
+      proxy_read_timeout 300s;   # an answer can take a few minutes (the gateway route allows 300 s)
+    }
+  }
+index.html: |
+  <!doctype html>
+  <html lang="en">
+  <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Card support</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 46rem; margin: 0 auto; padding: 1rem; color: #222; background: #fff; }
+    #log p { white-space: pre-wrap; padding: .6rem .8rem; border-radius: 6px; margin: .5rem 0; }
+    .you { background: #e8f0fe; } .agent { background: #f2f2f2; } .err { background: #fde8e8; }
+    form { display: flex; gap: .5rem; } textarea { flex: 1; font: inherit; height: 4rem; }
+  </style>
+  </head>
+  <body>
+  <h1>Card support</h1>
+  <div id="log"></div>
+  <form id="f">
+    <textarea id="q" required placeholder="Ask about a card, a payment or the bank's card rules"></textarea>
+    <button>Send</button>
+  </form>
+  <script>
+  // A2A 0.3 JSON-RPC (message/send) to the {{ $agent }} agent, through this page's nginx and agentgateway.
+  // contextId keeps follow-up questions in the same conversation.
+  let contextId;
+  const log = document.getElementById('log'), form = document.getElementById('f'), q = document.getElementById('q');
+  const say = (cls, text) => { const p = document.createElement('p'); p.className = cls; p.textContent = text; log.append(p); return p; };
+  const texts = parts => (parts || []).filter(p => p.kind === 'text').map(p => p.text).join('\n');
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const text = q.value.trim();
+    if (!text) return;
+    q.value = '';
+    say('you', text);
+    const p = say('agent', '...');
+    form.querySelector('button').disabled = true;
+    try {
+      const r = await fetch('/a2a/{{ $agent }}', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({jsonrpc: '2.0', id: Date.now(), method: 'message/send', params: {
+          configuration: {blocking: true},
+          message: {kind: 'message', role: 'user', messageId: Date.now() + '-' + Math.random().toString(16).slice(2),
+                    contextId, parts: [{kind: 'text', text}]}}})});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const {result, error} = await r.json();
+      if (error) throw new Error(error.message);
+      contextId = result.contextId;
+      // a task: the answer is in its artifacts, or in its status message (input-required, failed)
+      const status = result.status || {};
+      const answer = result.kind === 'message' ? texts(result.parts)
+        : (result.artifacts || []).map(a => texts(a.parts)).join('\n') || texts(status.message && status.message.parts);
+      p.textContent = answer || '(no answer, task ' + status.state + ')';
+    } catch (err) {
+      p.className = 'agent err';
+      p.textContent = 'Error: ' + err.message;
+    }
+    form.querySelector('button').disabled = false;
+  };
+  </script>
+  </body>
+  </html>
+{{- end }}
+{{- with .Values.supportChat }}{{ if .enabled }}
+{{- $gw := $.Values.gateway }}
+# Support chat: the page support users open (host support.<domain>, infra/k8s/edge). One nginx serves the page and
+# forwards its A2A calls to agentgateway, route a2a-{{ .agent }} (API key, rate limit, policies), so a question reaches
+# the agent only through the gateway. nginx adds the support-app key from Secret {{ .keySecret }}, so the browser never
+# sees it. The nginx image renders /etc/nginx/templates/*.template with envsubst at start (the key comes from env).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: support-chat
+  namespace: {{ $.Release.Namespace }}
+data:
+  {{- include "card-support.support-chat-config" $ | nindent 2 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: support-chat
+  namespace: {{ $.Release.Namespace }}
+spec:
+  selector: {app: support-chat}
+  ports: [{port: 8080, targetPort: 8080, protocol: TCP}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: support-chat
+  namespace: {{ $.Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: support-chat}
+  template:
+    metadata:
+      labels: {app: support-chat, app.kubernetes.io/part-of: card-support}
+      annotations:
+        checksum/config: {{ include "card-support.support-chat-config" $ | sha256sum }}
+    spec:
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: nginx
+          image: {{ .image }}
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - name: SUPPORT_APP_KEY   # "Bearer <key>"
+              valueFrom: {secretKeyRef: {name: {{ .keySecret }}, key: Authorization}}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/nginx/templates, readOnly: true}
+            - {name: page, mountPath: /usr/share/nginx/html, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: support-chat, items: [{key: default.conf.template, path: default.conf.template}]}
+        - name: page
+          configMap: {name: support-chat, items: [{key: index.html, path: index.html}]}
+{{- if $.Values.networkPolicy.enabled }}
+---
+# in: only the NGINX Ingress Controller. out: only DNS and the gateway, so this pod cannot call an agent directly
+# (the agents' own policy in networkpolicy.yaml refuses it too).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: support-chat
+  namespace: {{ $.Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: {app: support-chat}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .ingressNamespace }}}}
+      ports: [{port: 8080, protocol: TCP}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $gw.namespace }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: {{ $gw.name }}}}
+      ports: [{port: 80, protocol: TCP}]
+{{- end }}
+{{- end }}{{ end }}

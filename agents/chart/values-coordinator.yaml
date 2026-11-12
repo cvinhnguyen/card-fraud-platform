@@ -10,3 +10,6 @@ agents:
         name: Card support
         description: Answers a customer's question about their card, a payment or the bank's card rules.
         examples: ["My online payment of 45 million was declined on card card_00006087, why?"]
+# the support users' page: their questions go through agentgateway (route a2a-coordinator) to the coordinator
+supportChat:
+  enabled: true

@@ -1,5 +1,5 @@
 """Put bronze.raw_transactions (the nightly core banking export) under lakeFS once (EDAI-1 novel idea,
-docs/novel_lakefs_wap.md). Idempotent.
+docs/data-platform/novel_lakefs_wap.md). Idempotent.
 
   1. repository `bronze` (new objects in s3://lakefs-data/bronze, default branch main)
   2. zero-copy import of s3://lakehouse/bronze/raw_transactions/ into main: lakeFS records the objects, nothing is

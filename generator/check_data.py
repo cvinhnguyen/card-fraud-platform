@@ -1,6 +1,6 @@
 """Verify that the generated source data really contains the injected problems.
 
-Every check is an assert with a tolerance. The printed metrics feed docs/data_characteristics.md.
+Every check is an assert with a tolerance. The printed metrics feed docs/data-platform/data_characteristics.md.
 ponytail: pandas in memory, ~4.3 GB RAM and ~1 min at the 1 GB volume; the 100 GB run (P9) checks with Spark.
 Usage: python generator/check_data.py [--config generator/config.yaml]
 """

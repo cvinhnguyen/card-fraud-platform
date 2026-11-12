@@ -74,7 +74,7 @@ spec:
     - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: b}]}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}]
       timeouts: {request: 300s}
-    # Canary stopped on 2026-10-21 (docs/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
+    # Canary stopped on 2026-10-21 (docs/llm-platform/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
     # free tier's output tokens a minute). B stays reachable with the header; raise its weight again on a paid tier.
     - matches: [{path: {type: PathPrefix, value: /v1}}]
       backendRefs:

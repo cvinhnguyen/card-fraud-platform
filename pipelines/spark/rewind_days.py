@@ -1,11 +1,11 @@
-"""Remove the last business days from the lakehouse, so an Airflow backfill can load them again (docs/airflow.md).
+"""Remove the last business days from the lakehouse, so an Airflow backfill can load them again (docs/data-platform/airflow.md).
 
   bronze.raw_transactions, silver.stg_transactions, gold.fact_transaction   DELETE export_date > --from
   gold.label_transaction                                                    RESTORE the last version labelled before --from
 
 The deletes drop whole export_date partitions (bronze, silver: metadata only). Postgres snapshots and features are
 rebuilt in full by every run, so they need nothing. Delta keeps the removed files, so `RESTORE` undoes this too.
-bronze.raw_transactions is on lakeFS main, which takes only merges (docs/novel_lakefs_wap.md): its delete runs on a
+bronze.raw_transactions is on lakeFS main, which takes only merges (docs/data-platform/novel_lakefs_wap.md): its delete runs on a
 branch `rewind_<date>` that is committed and merged, the same way a DP1 run publishes.
 
 Usage (repo root):

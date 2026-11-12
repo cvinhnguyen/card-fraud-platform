@@ -1,20 +1,5 @@
-"""Events (what the scoring API logs to Kafka `fraud_predictions`) and drift reports."""
-from pydantic import BaseModel, Field
-
-
-class PredictionEvent(BaseModel):
-    """One scored authorization; only the fields drift detection needs, the rest is ignored."""
-
-    auth_id: str = Field(min_length=1, max_length=64)
-    score: float | None = Field(None, ge=0, le=1)
-    fallback: bool = False
-    features: dict[str, float | None] | None = None
-
-
-class EventBatch(BaseModel):
-    """A batch of events (ml/jobs/drift_forwarder.py posts up to 1,000 at a time)."""
-
-    events: list[PredictionEvent] = Field(min_length=1, max_length=1000)
+"""Drift reports. The input events are the KServe payload logger's CloudEvents, read in app/main.py."""
+from pydantic import BaseModel
 
 
 class FeatureDrift(BaseModel):

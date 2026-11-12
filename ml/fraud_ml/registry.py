@@ -1,6 +1,8 @@
 """MLflow: one run per pipeline run (steps resume it by id), model registry `card_fraud_xgb` with aliases.
 
-  challenger  set by the pipeline when a model passes evaluation
+Every pipeline run registers its model as a new version, tagged `passed` = True / False, so no trained model is lost.
+
+  challenger  set by the pipeline when a model passes evaluation (a model that did not pass gets no alias)
   production  set by a reviewer (or bootstrap: the first model ever); the serving image is built from it.
               Rollback = move the alias back to the previous version.
 """
@@ -55,8 +57,10 @@ class ModelRegistry:
         with mlflow.start_run(run_id=run_id):
             mlflow.log_figure(fig, name)
 
-    def register(self, run_id: str, booster: xgb.Booster, example: pd.DataFrame, extra: dict) -> int:
-        """Log the booster with signature + input example, register it, set alias challenger; returns the version."""
+    def register(self, run_id: str, booster: xgb.Booster, example: pd.DataFrame, extra: dict, passed: bool = True) -> int:
+        """Log the booster with signature + input example and register it as a new version; returns the version.
+        Every trained model is kept, so a rejected one can still be inspected, compared or promoted by hand later.
+        Only a model that passed evaluation gets an alias; tag `passed` says which kind a version is."""
         x = example[booster.feature_names].astype("float64")
         signature = infer_signature(x, booster.inplace_predict(x.to_numpy(), missing=np.nan))
         with mlflow.start_run(run_id=run_id):
@@ -64,8 +68,10 @@ class ModelRegistry:
                                             registered_model_name=MODEL_NAME, model_format="json")
             mlflow.log_text(json.dumps(extra, indent=2, default=str), "model_card.json")
         version = int(info.registered_model_version)
-        for k, v in extra.items():
+        for k, v in {**extra, "passed": passed}.items():
             self.client.set_model_version_tag(MODEL_NAME, str(version), k, str(v))
+        if not passed:
+            return version
         self.client.set_registered_model_alias(MODEL_NAME, "challenger", str(version))
         if self.version_of("production") is None:   # bootstrap: the first model ever serves until a better one
             self.client.set_registered_model_alias(MODEL_NAME, "production", str(version))

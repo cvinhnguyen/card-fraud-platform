@@ -2,7 +2,7 @@
 
 Builds the same five tables as pipelines/dbt/models/gold (same logic, same columns) into the database `gold_pyspark`, then
 runs the same 22 checks as `dbt build` (unique / not_null / relationships / SCD2 / reconciliation) as assertions.
-docs/dbt_gold.md compares the two: rows equal to dbt's tables, lines of code, checks, run time, and the work needed
+docs/data-platform/dbt_gold.md compares the two: rows equal to dbt's tables, lines of code, checks, run time, and the work needed
 to add one more dimension.
 
 Usage (repo root; same resources as the Thrift Server dbt runs on):

@@ -1,4 +1,4 @@
-"""P9: the silver dedup of build_silver.py at scale, on export dates of the 100 GB dataset (docs/scale_100g.md).
+"""P9: the silver dedup of build_silver.py at scale, on export dates of the 100 GB dataset (docs/performance/scale_100g.md).
 
 Scope, --batch-days:
   0 (global)  every selected export date in one job, as a one-shot backfill would run it

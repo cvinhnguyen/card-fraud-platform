@@ -160,7 +160,7 @@ services:
       start_period: 20s
 
   # Write-Audit-Publish for the nightly export (EDAI-1 novel idea): bronze.raw_transactions is in the repository `bronze`;
-  # DP1 appends each export on its own branch, validates it there and merges it into main (docs/novel_lakefs_wap.md).
+  # DP1 appends each export on its own branch, validates it there and merges it into main (docs/data-platform/novel_lakefs_wap.md).
   # API, UI and S3 gateway on port 8000.
   lakefs:
     image: treeverse/lakefs:1.88.0
@@ -247,7 +247,7 @@ services:
       - "127.0.0.1:18080:18080"
     volumes: *spark-volumes
 
-  # SQL endpoint for dbt-spark (docs/dbt_gold.md). Own profile: while up it holds 2 cores / 1 GB on the worker,
+  # SQL endpoint for dbt-spark (docs/data-platform/dbt_gold.md). Own profile: while up it holds 2 cores / 1 GB on the worker,
   # so stop it during Spark benchmarks.  docker compose ... --profile dbt up -d spark-thrift
   spark-thrift:
     image: fraud/spark:4.1.3
@@ -366,8 +366,10 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      # Layer 2's live period (generate_drift.py) is dated after the machine clock: DP1's TriggerDagRunOperator runs of
-      # DP2 / DP3 / feast_materialize (schedule None) carry those future logical dates, which the scheduler skips without it
+      # Added for Layer 2's live period (generate_drift.py), dated after the machine clock, when DP1 triggered DP2 / DP3 /
+      # feast_materialize (schedule None) with its own future logical date. They now run on dataset events, whose runs
+      # are dated when the event happens; the setting only applies to schedule None DAGs (today rag_ingest). Kept until
+      # a run of the live days through the dataset events shows it is no longer needed.
       AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE: "true"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
       # 1 gunicorn worker, 10 min to start: with 4 workers and the 120 s default it failed to start on a busy machine
@@ -532,7 +534,7 @@ services:
       ENTITY_SERVICE_ENABLE_RETENTION: "true"
       ALTERNATE_MCP_VALIDATION: "true"
       STRICT_URN_VALIDATION_ENABLED: "true"
-      # OpenLineage endpoint (/openapi/openlineage/api/v1/lineage): Spark jobs post their lineage here (docs/openlineage.md)
+      # OpenLineage endpoint (/openapi/openlineage/api/v1/lineage): Spark jobs post their lineage here (docs/data-platform/openlineage.md)
       DATAHUB_OPENLINEAGE_ENV: PROD
       DATAHUB_OPENLINEAGE_CAPTURE_COLUMN_LEVEL_LINEAGE: "true"
     ports:
@@ -722,7 +724,8 @@ services:
       interval: 15s
       retries: 5
 
-  # Drift Detection API + the forwarder that feeds it from the prediction log.
+  # Drift Detection API. Fed by the KServe payload logger: InferenceService card-fraud -> Knative Broker in kind ->
+  # Trigger drift-detector -> http://drift-api:8000/v1/inference-events (infra/k8s/kserve-card-fraud.yaml).
   drift-api:
     build: {context: ../services/drift_api, target: runtime}
     image: fraud/drift-api:latest
@@ -736,13 +739,6 @@ services:
       - ../services/predictor/model/reference_profile.json:/config/reference_profile.json:ro
     ports:
       - "127.0.0.1:8002:8000"   # 8001 is lakeFS (profile batch)
-
-  drift-forwarder:
-    image: fraud/ml-train:latest
-    profiles: [ml]
-    container_name: drift-forwarder
-    command: [python3, /opt/ml/jobs/drift_forwarder.py, --api, "http://drift-api:8000"]
-    restart: unless-stopped
 
   # Image registry for the kind cluster: host pushes to 127.0.0.1:5001, the node pulls registry:5000.
   registry:

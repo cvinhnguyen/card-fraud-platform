@@ -15,7 +15,7 @@ COPY --chown=185:0 ml/tools /opt/ml/tools
 ENV PYTHONPATH=/opt/ml:/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip \
     FEAST_REPO=/opt/ml/feature_repo FEAST_KB_REPO=/opt/ml/feature_repo_kb
 
-# unit tests of the jobs (push jobs, RAG ingest); the bank's documents are the RAG tests' fixture
+# unit tests: push jobs, RAG ingest, model registry (fraud_ml/registry.py); the bank's documents are the RAG tests' fixture
 FROM code AS test
 USER 0
 RUN python3 -m pip install --no-cache-dir pytest==9.1.1

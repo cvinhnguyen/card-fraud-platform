@@ -7,7 +7,7 @@ basicAuthSecret: edge-basic-auth   # htpasswd (user admin, EDGE_ADMIN_PASSWORD),
 
 # auth: basic auth at NGINX (Grafana has its own login). rate / burst: per client IP (limit_req).
 routes:
-  - name: agent-ui            # UI to chat with and test the agents (kagent)
+  - name: agent-ui            # kagent UI: admin and test console of the agents (talks to them through kagent, not the gateway)
     namespace: kagent
     host: agents
     service: {name: kagent-ui, port: 8080}
@@ -15,6 +15,14 @@ routes:
     rate: 20r/s
     burst: 60
     streaming: true            # chat answers stream (SSE): no buffering, long reads
+  - name: support-chat        # chat page of the support users: questions go through agentgateway to the coordinator
+    namespace: kagent         # (agents/chart, templates/support-chat.yaml)
+    host: support
+    service: {name: support-chat, port: 8080}
+    auth: true
+    rate: 5r/s
+    burst: 20
+    streaming: true            # an answer can take a few minutes: no buffering, long reads
   - name: agent-registry      # UI of the agent registry
     namespace: agentregistry
     host: registry

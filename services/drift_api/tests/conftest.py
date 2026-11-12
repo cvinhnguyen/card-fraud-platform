@@ -1,4 +1,7 @@
-"""Fixtures: an in-memory async Redis (just the commands the store uses), a reference profile, a test client."""
+"""Fixtures: an in-memory async Redis (just the commands the store uses), a reference profile, a test client,
+and helpers that post the KServe payload logger's CloudEvents."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
@@ -68,5 +71,18 @@ def client(redis):
         yield c
 
 
-def event(amount=250_000.0, score=0.005, fallback=False, auth_id="a1"):
-    return {"auth_id": auth_id, "score": score, "fallback": fallback, "features": {"amount": amount}}
+REQUEST, RESPONSE = "org.kubeflow.serving.inference.request", "org.kubeflow.serving.inference.response"
+
+
+def cloudevent(client, ce_type, body, ce_id="e1"):
+    """POST one logger CloudEvent in binary mode, as the Knative broker delivers it."""
+    raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+    return client.post("/v1/inference-events", content=raw, headers={
+        "ce-specversion": "1.0", "ce-type": ce_type, "ce-id": ce_id, "ce-source": "http://localhost:9081/",
+        "ce-inferenceservicename": "card-fraud", "content-type": "application/json"})
+
+
+def scored(client, pairs):
+    """Log (amount, score) pairs the way the predictor's agent does: one request event, one response event."""
+    cloudevent(client, REQUEST, {"instances": [{"amount": a} for a, _ in pairs]})
+    cloudevent(client, RESPONSE, {"predictions": [s for _, s in pairs], "model_version": "7"})

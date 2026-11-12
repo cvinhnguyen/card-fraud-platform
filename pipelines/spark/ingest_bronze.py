@@ -9,7 +9,7 @@ Bronze keeps every source problem (duplicates, old province names, missing auth 
 Every row gets `_ingested_at` and `_source`.
 
 The nightly export is the one source another department delivers as files, so bronze.raw_transactions lives in the
-lakeFS repository `bronze` (docs/novel_lakefs_wap.md): readers (metastore, silver, Trino) see branch main, and DP1
+lakeFS repository `bronze` (docs/data-platform/novel_lakefs_wap.md): readers (metastore, silver, Trino) see branch main, and DP1
 appends a new export with `--txn-root s3a://bronze/<run branch>`, validates that branch and only then merges it.
 
 Usage (repo root):

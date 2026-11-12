@@ -79,10 +79,10 @@ def evaluate(run_id: str, model_dir: str, val_path: str, test_path: str, feature
 
 
 @component
-def register(run_id: str, model_dir: str, test_path: str, label_as_of: str, feature_service: str) -> int:
-    """Step 7: MLflow model version, alias challenger (production on the first run)."""
+def register(run_id: str, model_dir: str, test_path: str, passed: bool, label_as_of: str, feature_service: str) -> int:
+    """Step 7: MLflow model version for every run; alias challenger only if it passed (production on the first run)."""
     from fraud_ml import steps
-    return steps.register(run_id, model_dir, test_path, True, label_as_of, feature_service)
+    return steps.register(run_id, model_dir, test_path, passed, label_as_of, feature_service)
 
 
 def env(task, memory: str = "2Gi", cpu: str = "1"):
@@ -104,13 +104,14 @@ def train_fraud_model(label_as_of: str = "2026-10-15", negative_rate: float = 0.
                       feature_service: str = "fraud_model_v1", num_workers: int = 2, executors: int = 2,
                       max_depth: int = 6, learning_rate: float = 0.08, n_estimators: int = 400,
                       min_pr_auc_gain: float = 0.005):
-    """Wire the 7 steps; register only runs when evaluation passed."""
+    """Wire the 7 steps. Register always runs: a model that did not pass is kept as a version without an alias."""
     # steps 1-2 join ~8M-row tables in a local[2] Spark: with 1 CPU / 2 GiB step 1 spilled for over 50 minutes.
     # 3-7 hold the 1.07M-row training set (or val + test) in pandas; 3-4 read it with Spark (deletion vectors), 5 runs
     # the Spark driver of the distributed training.
     s1 = env(load_labels(label_as_of=label_as_of, negative_rate=negative_rate, feature_service=feature_service,
                          kfp_run_id=dsl.PIPELINE_JOB_ID_PLACEHOLDER), "3Gi", "2")
-    s2 = env(get_training_data(run_id=s1.output, label_as_of=label_as_of, feature_service=feature_service), "5Gi", "2")
+    # 6 GiB: the point-in-time join peaks right at 5 GiB (2026-11-12: one run passed, two were OOMKilled at 5Gi)
+    s2 = env(get_training_data(run_id=s1.output, label_as_of=label_as_of, feature_service=feature_service), "6Gi", "2")
     s3 = env(validate_data(run_id=s1.output, version=s2.output, feature_service=feature_service), "4Gi")
     s4 = env(time_split(run_id=s1.output, version=s2.output, label_as_of=label_as_of,
                         feature_service=feature_service).after(s3), "4Gi")
@@ -119,9 +120,8 @@ def train_fraud_model(label_as_of: str = "2026-10-15", negative_rate: float = 0.
                    max_depth=max_depth, learning_rate=learning_rate, n_estimators=n_estimators), "3Gi")
     s6 = env(evaluate(run_id=s1.output, model_dir=s5.output, val_path=s4.outputs["val"], test_path=s4.outputs["test"],
                       feature_service=feature_service, min_pr_auc_gain=min_pr_auc_gain), "3Gi")
-    with dsl.If(s6.outputs["Output"] == True):  # noqa: E712 (KFP condition, not a Python comparison)
-        env(register(run_id=s1.output, model_dir=s5.output, test_path=s4.outputs["test"], label_as_of=label_as_of,
-                     feature_service=feature_service), "2Gi")
+    env(register(run_id=s1.output, model_dir=s5.output, test_path=s4.outputs["test"], passed=s6.outputs["Output"],
+                 label_as_of=label_as_of, feature_service=feature_service), "2Gi")
 
 
 if __name__ == "__main__":

@@ -242,11 +242,9 @@ def evaluate(run_id: str, model_dir: str, val_path: str, test_path: str, feature
 
 
 def register(run_id: str, model_dir: str, test_path: str, passed: bool, label_as_of: str, feature_service: str) -> int:
-    """Step 7. Register the booster if it passed; returns the version (0 = not registered)."""
+    """Step 7. Register the booster as a new model version, whether it passed or not; alias challenger only if it
+    passed. Returns the version."""
     from fraud_ml.registry import ModelRegistry
-    if not passed:
-        print("evaluation did not pass: nothing registered")
-        return 0
     booster, _ = load_models(model_dir)
     with s3().open_input_stream(f"{model_dir.removeprefix('s3a://')}/evaluation.json") as f:
         ev = json.loads(f.read())
@@ -254,7 +252,8 @@ def register(run_id: str, model_dir: str, test_path: str, passed: bool, label_as
              "t_high": ev["thresholds"]["t_high"], "test_pr_auc": round(ev["test"]["pr_auc"], 4), "run_id": run_id}
     example = read_parquet(test_path).head(100)
     reg = ModelRegistry()
-    version = reg.register(run_id, booster, example, extra)
+    version = reg.register(run_id, booster, example, extra, passed)
+    print(f"model version {version}: " + ("passed, alias challenger" if passed else "did not pass, kept without alias"))
     with s3().open_input_stream(f"{model_dir.removeprefix('s3a://')}/reference_profile.json") as f:
         profile = {**json.loads(f.read()), "model_version": str(version)}
     reg.log(run_id, files={"reference_profile.json": json.dumps(profile)})   # fetch_model.py ships it with the model
