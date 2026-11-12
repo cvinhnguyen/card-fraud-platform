@@ -625,7 +625,24 @@ Run on the chat model on the evening of 2026-11-12:
 | final rule (also: no policy knowledge of its own) | ok: "could not check the payment risk or dispute period" | ok: "the foreign transaction fee could not be checked right now" |
 
 With a working risk agent ("low risk", "60 days (dispute_policy#2)") the final prompt still passes both facts and the
-citation through. A full answer with a real score and policy chunk through the support chat still needs a run where
+citation through.
+
+Then the fix went through the real chat. The coordinator was deployed with prompt v2 from Langfuse (the pipeline's
+`helm upgrade ... --set promptVersions.coordinator=2`), policy-rag was left down as in the failed run, and the same
+question went through `https://support.<domain>/a2a/coordinator`. The local chat model could not run next to the
+cluster that night (the PC crashed when it did), so for this test the `llm` route sent every model call to version
+B of the [LLM A/B test](ab_testing.md), Qwen3.8-27B on Groq (weights 0/100 for the test, then back to 100/0 from
+`infra/k8s/agentgateway.yaml`). The task completed in 32 s and the reply kept the card data and reported the rest:
+
+> **Risk score and the dispute policy — not available right now**
+> I wasn't able to complete the fraud/risk check on that payment, so I can't tell you how that 2,500,000 VND
+> transaction would score or the specific reason it was declined. For the same reason I can't give you the policy
+> details on disputing a declined payment (eligibility, deadline, or process) — I don't want to quote a number or
+> rule I haven't verified. Please check back with us in a little while so we can run that check for you.
+
+Two earlier tries on Groq did not count: one was cut off by a lower output cap set for the free tier's rate limit,
+and in the other the model misspelled the risk agent's tool name when retrying it, so Groq rejected the call. The
+real chat with the local Qwen3-8B and the risk agent down is still untested. A full answer with a real score and policy chunk through the support chat still needs a run where
 all three MCP servers are ready before the question goes in.
 
 ## Chat with the agents (kagent UI)
