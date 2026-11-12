@@ -596,8 +596,37 @@ HTTP 200 and task state `completed`:
 
 The card part came from card-data-agent through `/mcp/card-data` (Redis). The risk part failed because of how the
 test was set up: the risk agent loads both of its tool servers, and `/mcp/policy-rag` answered 500 because policy-rag needs
-the embedding server. The coordinator still answered with what it had and said the score was missing, instead of
-making one up.
+the embedding server. In this run the coordinator answered with what it had and said the score was missing.
+
+A second try with the embedding server running (on the GPU) came too early: the policy-rag pods had not passed
+their readiness check yet, so `/mcp/policy-rag` still answered 500 and the risk agent failed again. This time the
+coordinator did not say so. It wrote that the risk "may be high" and that a declined payment can be disputed
+"within 7 days", although no score was computed and the dispute policy gives 60 days.
+
+The fix is in the coordinator's prompt
+([`agents/chart/prompts/coordinator.md`](../../agents/chart/prompts/coordinator.md)): every fact must come from a
+specialist, the coordinator does not know the bank's policies itself, and when a specialist fails, everything that
+specialist covers (for the risk agent: the payment's risk and every fee, deadline and rule) is reported as not
+checked, with no number or rule. A check for it is `run_eval.py --mode down`: it gives the coordinator's prompt the
+card data agent's answer and a failed risk agent, sends it to the model over `/v1`, and counts an answer as correct
+only when it says the part failed and contains no risk level, percentage or deadline of its own (the card's own
+"last 30 days" is allowed).
+
+```sh
+GATEWAY=http://<gateway> AGW_KEY=... python agents/eval/run_eval.py --mode down
+```
+
+Run on the chat model on the evening of 2026-11-12:
+
+| Prompt | Declined payment, "how long to dispute?" | "What is the foreign transaction fee?" |
+|---|---|---|
+| before the fix | fail | fail |
+| first rule only ("say the part could not be checked") | fail: said the risk could not be checked, then wrote "14 days ... as per document#section 12.3" | ok |
+| final rule (also: no policy knowledge of its own) | ok: "could not check the payment risk or dispute period" | ok: "the foreign transaction fee could not be checked right now" |
+
+With a working risk agent ("low risk", "60 days (dispute_policy#2)") the final prompt still passes both facts and the
+citation through. A full answer with a real score and policy chunk through the support chat still needs a run where
+all three MCP servers are ready before the question goes in.
 
 ## Chat with the agents (kagent UI)
 
