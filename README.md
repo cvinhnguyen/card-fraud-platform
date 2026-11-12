@@ -97,10 +97,10 @@ Flink compute the realtime features within seconds of each payment.
 | Part | What it does | Docs |
 |---|---|---|
 | DP1, data pipeline: ingest to bronze | Spark copies the `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged, then validates them. The export lands on a lakeFS branch and is merged into `main` only after its checks pass (novel idea 2), so a broken export never reaches readers | [spark_jobs.md](docs/data-platform/spark_jobs.md), [novel_lakefs_wap.md](docs/data-platform/novel_lakefs_wap.md) |
-| DP2, data pipeline: bronze to silver and gold | Silver: removes duplicates, maps the 63 old province names to the 34 units, fills `auth_method` for rows before 2024-07-01 (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/pipelines/spark/skew_join.py)). Gold: dbt-spark builds the `dim_*` / `fact_*` star schema with the SCD2 `dim_customer` and an incremental fact, checked by 22 dbt tests; Spark writes the fraud labels as they were known on each day. Each zone is validated before the next step reads it | [spark_jobs.md](docs/data-platform/spark_jobs.md), [dbt_gold.md](docs/data-platform/dbt_gold.md) |
+| DP2, data pipeline: bronze to silver and gold | Silver: removes duplicates, maps the 63 old province names to the 34 units, fills `auth_method` for rows before 2024-07-01 (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/skew_join.py)). Gold: dbt-spark builds the `dim_*` / `fact_*` star schema with the SCD2 `dim_customer` and an incremental fact, checked by 22 dbt tests; Spark writes the fraud labels as they were known on each day. Each zone is validated before the next step reads it | [spark_jobs.md](docs/data-platform/spark_jobs.md), [dbt_gold.md](docs/data-platform/dbt_gold.md) |
 | DP3, feature pipeline: gold to features | `feat_*` tables of per-card statistics over 30, 90 and 180 days, with `event_timestamp` and `created`, which make them the Feast offline store for Layer 2 | [spark_jobs.md](docs/data-platform/spark_jobs.md#dp3-features) |
 | Streaming jobs (Flink) | Read the payments from Kafka with watermarks, late events, dedup and windows; write the raw events as `landing/` JSON files (DP1 loads them into bronze) and the realtime features to `card_features_rt`; find account takeover patterns in the app events with `MATCH_RECOGNIZE` (novel idea 1) | [flink_jobs.md](docs/data-platform/flink_jobs.md), [novel_flink_cep.md](docs/data-platform/novel_flink_cep.md) |
-| Push jobs | Two always-on containers: `push-online` writes the realtime features into Redis for scoring, `push-offline` appends them to Delta for training ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/jobs/push_job.py)). Jenkins tests, builds and redeploys them | [feature_store.md](docs/ml-platform/feature_store.md), [cicd.md](docs/operations/cicd.md) |
+| Push jobs | Two always-on containers: `push-online` writes the realtime features into Redis for scoring, `push-offline` appends them to Delta for training ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py)). Jenkins tests, builds and redeploys them | [feature_store.md](docs/ml-platform/feature_store.md), [cicd.md](docs/operations/cicd.md) |
 | Trino | SQL over every zone (`delta.<zone>.<table>`, the export as `lakefs.bronze.raw_transactions`): it finds a table's location in the Hive Metastore and reads its Delta files from S3 | [schema_design.md](docs/data-platform/schema_design.md) |
 | Airflow | Runs the pipelines below; connections and variables live in Airflow | [airflow.md](docs/data-platform/airflow.md) |
 | DataHub | The tables of every zone, the lineage every Spark job sends through OpenLineage (which pipeline wrote which table), and the validation results as assertions | [datahub.md](docs/data-platform/datahub.md), [openlineage.md](docs/data-platform/openlineage.md) |
@@ -131,8 +131,8 @@ last committed version, never a half-written one.
 
 | Part | What it does | Docs |
 |---|---|---|
-| Feast feature store ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/feature_repo)) | One definition of the model's 20 features, used twice: the offline store (the lakehouse Delta tables, read with Spark and point-in-time joins) builds training sets, the online store (Redis) answers the Scoring API. Daily features arrive through the materialize pipeline, realtime and device features through the push jobs | [feature_store.md](docs/ml-platform/feature_store.md) |
-| Notebook | Explores the data and trains the first model step by step, calling the same seven step functions as the training pipeline, and ends with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/notebooks/fraud_model.ipynb)) | [ml_training.md](docs/ml-platform/ml_training.md) |
+| Feast feature store ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo)) | One definition of the model's 20 features, used twice: the offline store (the lakehouse Delta tables, read with Spark and point-in-time joins) builds training sets, the online store (Redis) answers the Scoring API. Daily features arrive through the materialize pipeline, realtime and device features through the push jobs | [feature_store.md](docs/ml-platform/feature_store.md) |
+| Notebook | Explores the data and trains the first model step by step, calling the same seven step functions as the training pipeline, and ends with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb)) | [ml_training.md](docs/ml-platform/ml_training.md) |
 | Training pipeline (Kubeflow Pipelines on kind) | `train_fraud_model`, one pod per step: (1) load the labels as of a date, (2) build the training set with a Feast point-in-time join and save it as a new Delta version, so the model can be traced back to its exact rows, (3) validate the data, (4) split by time, (5) train a logistic-regression baseline and a distributed XGBoost on Spark executor pods, (6) evaluate against the baseline and the `production` model, (7) register the model in MLflow as a new version, tagged `passed` True or False; only a model that passed gets the alias `challenger` | [ml_training.md](docs/ml-platform/ml_training.md) |
 | MLflow | Experiment runs with their data versions; the model registry, where alias `challenger` marks a new candidate and `production` the model being served | [ml_training.md](docs/ml-platform/ml_training.md#evaluation-and-promotion) |
 | KServe | InferenceService (Standard mode) serving the `production` model baked into the image | [serving.md](docs/ml-platform/serving.md) |
@@ -143,11 +143,11 @@ Five classes carry the ML logic:
 
 | Class | File | Job |
 |---|---|---|
-| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/data.py#L38) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
-| `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
-| `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
-| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/ml/fraud_ml/registry.py#L24) | MLflow logging, model versions and aliases |
-| `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
+| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L55) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
+| `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
+| `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
+| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py#L26) | MLflow logging, model versions and aliases |
+| `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
 
 ### Layer 3: LLM and agent platform
 
@@ -347,7 +347,7 @@ Start with the [architecture](docs/architecture.md): every diagram explained, ar
 grouped by area; each one opens with what that part does and why the bank needs it, then how it works, how to run it
 and what was measured.
 
-**Layer 1, data platform** ([docs/data-platform/](docs/data-platform/))
+**Layer 1, data platform** ([docs/data-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/data-platform))
 
 | Doc | What it tells you |
 |---|---|
@@ -362,7 +362,7 @@ and what was measured.
 | Novel idea 1: [Flink CEP](docs/data-platform/novel_flink_cep.md) | account takeover patterns found in seconds with `MATCH_RECOGNIZE` |
 | Novel idea 2: [Write-Audit-Publish](docs/data-platform/novel_lakefs_wap.md) | the nightly export is checked on a lakeFS branch, so a broken export never reaches readers |
 
-**Performance** ([docs/performance/](docs/performance/))
+**Performance** ([docs/performance/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/performance))
 
 | Doc | What it tells you |
 |---|---|
@@ -371,7 +371,7 @@ and what was measured.
 | [Docker optimization](docs/performance/docker_optimization.md) | smaller images that start faster, and the jars baked in |
 | [The 100 GB run](docs/performance/scale_100g.md) | what breaks at bank scale and how the jobs were changed to finish |
 
-**Layer 2, ML platform** ([docs/ml-platform/](docs/ml-platform/))
+**Layer 2, ML platform** ([docs/ml-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/ml-platform))
 
 | Doc | What it tells you |
 |---|---|
@@ -380,7 +380,7 @@ and what was measured.
 | [Serving](docs/ml-platform/serving.md) | how a payment gets its decision in milliseconds: Scoring API, KServe, thresholds, fallback |
 | [Drift](docs/ml-platform/drift.md) | how the platform sees the model getting worse, and when it retrains |
 
-**Layer 3, LLM and agent platform** ([docs/llm-platform/](docs/llm-platform/))
+**Layer 3, LLM and agent platform** ([docs/llm-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/llm-platform))
 
 | Doc | What it tells you |
 |---|---|
@@ -391,7 +391,7 @@ and what was measured.
 | [A/B testing](docs/llm-platform/ab_testing.md) | how a new model or model config is tried on part of the traffic first |
 | Novel idea 1: [Eval gate](docs/llm-platform/novel_eval_gate.md) | every agent release answers a test set; below 0.6 accuracy it rolls back |
 
-**Operations** ([docs/operations/](docs/operations/))
+**Operations** ([docs/operations/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/operations))
 
 | Doc | What it tells you |
 |---|---|

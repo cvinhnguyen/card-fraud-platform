@@ -8,7 +8,7 @@ in plain words; pipelines are frames with their tasks inside, in the order they 
 
 | | |
 |---|---|
-| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/612ffdc2aa8a38f9098d6190f54bd46c2ea70315/docs/diagrams/platform.py) |
+| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/diagrams/platform.py) |
 | Runs on | host process (Python stdlib; headless Chrome or Edge renders the PNGs) |
 | Writes | `docs/images/platform-*.svg` and the PNGs next to them; prints the arrow tables below |
 | Related | [airflow.md](data-platform/airflow.md), [schema_design.md](data-platform/schema_design.md), [agents.md](llm-platform/agents.md), [cicd.md](operations/cicd.md), [iac.md](operations/iac.md) |
@@ -100,10 +100,10 @@ tables directly (an analyst in Trino, a training run, a run started by hand) can
 until the next good run. Putting silver and gold on lakeFS branches as well would close that gap; it is not done.
 
 No pipeline starts another one. DP1 runs every night
-([`pipelines/airflow/dags/dp1_source_to_bronze.py`](../pipelines/airflow/dags/dp1_source_to_bronze.py)).
+([`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py)).
 Each pipeline ends with a task that announces a new checked version of the zone it wrote (an Airflow dataset
 event that carries the business day), and the pipeline that reads that zone is scheduled on the dataset
-([`pipelines/airflow/dags/common.py`](../pipelines/airflow/dags/common.py)). So the DP2 silver pipeline depends
+([`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py)). So the DP2 silver pipeline depends
 on the bronze tables, never on DP1: anything that publishes bronze starts it, and it can be started by hand at
 any time, also while DP1 is writing, because a reader of a Delta table always gets the last committed version
 ([airflow.md](data-platform/airflow.md)).
@@ -116,7 +116,7 @@ The second row of the band is the streaming side, which runs all the time. The K
 come in and the topics the jobs write. The four streaming jobs are all Flink jobs written in PyFlink, on the same
 Flink cluster, so they are one box; each bullet names the Flink API that job uses.
 Two use the DataStream API with keyed state (the card features of each payment,
-[`pipelines/flink/rt_features.py`](../pipelines/flink/rt_features.py), and the first device of each card), and two
+[`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/rt_features.py), and the first device of each card), and two
 use Flink SQL through the Table API (the raw payments written as JSON files into `landing/` for DP1, and the
 account takeover alerts, novel idea 1, which uses SQL `MATCH_RECOGNIZE` to find three patterns in the app's
 events). Two push jobs, containers that Jenkins deploys, carry the feature topics on: `push-online` writes them
@@ -126,7 +126,7 @@ into Redis for scoring, `push-offline` appends them to Delta for training.
 
 Feast (the two blue stores at the end of the streaming row) is the hand-over between Layers 1 and 2. Layer 1
 writes into it, Layer 2 reads from it, so training and serving see the same 20 features (`fraud_model_v1`,
-[`ml/feature_repo/fraud_features.py`](../ml/feature_repo/fraud_features.py)).
+[`ml/feature_repo/fraud_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py)).
 Its offline store is the `feat_*` Delta tables, read with point-in-time joins for training; its online store is
 Redis, read by the Scoring API in milliseconds. DP3 and `push-offline` write the offline store, `push-online`
 writes the online store, and the arrow between the two stores is the materialize pipeline (DAG
@@ -139,7 +139,7 @@ The left side of the panel is serving, under the online store it reads; the righ
 offline store and the labels.
 
 Serving. The card network sends a payment to the Scoring API (S1,
-[`services/scoring_api/app/main.py`](../services/scoring_api/app/main.py)), which reads the payment's online
+[`services/scoring_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py)), which reads the payment's online
 features (S2), sends them to KServe for the score (S3, S4) and answers approve, step_up or decline (S5). It
 writes every decision to the Kafka topic `fraud_predictions`, the decision log (S6). So the decision log comes
 from the Scoring API. It holds what the model server never sees: the payment, the decision and the reason for a
@@ -153,7 +153,7 @@ per-minute counts in Redis and returns the PSI of each feature and of the score 
 the profile of the model's training data (no labels needed, [drift.md](ml-platform/drift.md)).
 
 Training. The training pipeline on Kubeflow Pipelines
-([`ml/pipelines/train_fraud_model.py`](../ml/pipelines/train_fraud_model.py)) runs seven steps as pods: load the
+([`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py)) runs seven steps as pods: load the
 labels, build the training set, check the data, split by time, train, evaluate, register. The overview draws
 them as six steps (the check and the split share one) and then the check "Better than production?". The training
 set is not a box of its own, because it is an artifact one step hands to the next. The words on each arrow inside
@@ -163,15 +163,15 @@ files, the model files, and the result of the evaluation (passed: true or false)
 exact rows it learned from. The labels come from `gold.label_transaction` and the features from the Feast offline
 store. The last step registers every trained model as a new MLflow version, also one that is not better than
 production, so it can still be inspected or compared later; only a better one gets the alias `challenger`
-([`ml/fraud_ml/registry.py`](../ml/fraud_ml/registry.py)). The model promoted to `production` is built into the
+([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py)). The model promoted to `production` is built into the
 KServe predictor image by an ML engineer. The first model was trained by hand in the JupyterLab notebook, the
 compose service `notebook` on the same training image as the pipeline steps
-([`ml/notebooks/fraud_model.ipynb`](../ml/notebooks/fraud_model.ipynb)). It calls the same seven functions, reads
+([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb)). It calls the same seven functions, reads
 the same Feast features and logs its runs and model to the same MLflow, so it is part of the platform and the
 overview draws it under the Drift API.
 
 The retraining decision is the drift pipeline (DAG `drift_monitoring`,
-[`pipelines/airflow/dags/drift_monitoring.py`](../pipelines/airflow/dags/drift_monitoring.py)). It runs every
+[`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/drift_monitoring.py)). It runs every
 day, scores the last 7 days with their labels and point-in-time features using the production model, and saves
 the drift report as an MLflow run whatever the result. When a PSI is above 0.25 or the PR-AUC fell more than
 0.05, it also starts a training pipeline run with the newest labels; otherwise the production model stays. The
@@ -185,7 +185,7 @@ and the model servers are above it; the agents and the MCP tool servers are unde
 The gateway is the first hop of a question. Support staff open the support chat (`https://support.<domain>`).
 NGINX checks the login over HTTPS (A1, A2). The chat page sends the question to the gateway and adds its API key
 on the server side, so the key never reaches the browser (A3,
-[`agents/chart/templates/support-chat.yaml`](../agents/chart/templates/support-chat.yaml)). The gateway checks
+[`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/support-chat.yaml)). The gateway checks
 that key, applies the rate limit and only then passes the question to the coordinator (A4). The coordinator
 splits the question; its sub-tasks go back through the gateway to the card-data and risk agents (A5 to A7), and
 the agents' tool calls and prompts go through it again (A8 to A10). The gateway decides which routes and tools a
@@ -194,11 +194,11 @@ controller) reach the coordinator, so nothing can call an agent past it. The kag
 for the agents and is not on the support path.
 
 The MCP tool servers box stands for three servers, one per tool family
-([`services/card_support_mcp/app/main.py`](../services/card_support_mcp/app/main.py)). card-data takes a card's features from the same Feast online store as Layer 2 (A11) and one policy chunk by
+([`services/card_support_mcp/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py)). card-data takes a card's features from the same Feast online store as Layer 2 (A11) and one policy chunk by
 id from the vector store (A12). policy-rag asks llama.cpp for the question's vector (A13) and searches the vector
 store with it (A17). fraud-score asks the Layer 2 Scoring API (A14). Prompts go through the llm-d router to
 llama.cpp on the host GPU (A15, A16). The RAG data pipeline at the bottom
-([`pipelines/airflow/dags/rag_ingest.py`](../pipelines/airflow/dags/rag_ingest.py)) fills the vector store: it
+([`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py)) fills the vector store: it
 splits the bank's five documents into chunks, embeds each chunk, and writes chunks and vectors into a second
 Feast project (`card_support_kb`).
 
@@ -208,7 +208,7 @@ read in bulk. The online store is PostgreSQL with the pgvector extension (contai
 chunks, with a vector index (cosine) that finds the chunks closest to a question in milliseconds. Delta and
 Parquet files on S3 have no such index, so a search there would read every vector for each question. The two are
 not joined to each other: Feast writes both from the same pipeline run
-([`ml/feature_repo_kb/feature_store.yaml`](../ml/feature_repo_kb/feature_store.yaml)).
+([`ml/feature_repo_kb/feature_store.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo_kb/feature_store.yaml)).
 
 Agent Substrate runs the same three agents a second time as sandboxes: each conversation gets its own gVisor sandbox
 restored from a warm snapshot, on a worker pool shared by all agents (one worker here), and the sandboxes call the
