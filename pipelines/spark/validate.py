@@ -1,7 +1,10 @@
 """Validate stage of DP1-DP3: Great Expectations on Spark DataFrames, one suite per pipeline.
 
-Each check reads only the slice the run wrote (the export of business day ds, the labels as of ds, the features of
-day ds), so the cost does not grow with the table. Results go to
+Each check reads only the slice the run wrote (the exports of business day ds, the labels as of ds, the features of
+day ds), so the cost does not grow with the table. A run can load more than one day: two versions published in
+one scheduler loop share a run, and DP1 unpaused after missed days loads every export since the last one. So the
+day slices cover every business day after the suite's last passed check, up to ds; after a pass the day before,
+that is ds alone. Results go to
   s3a://lakehouse/_validation/<suite>/ds=<ds>/results.json
 and the job always exits 0 when the checks ran: the Airflow task after it publishes the results (to S3 and
 DataHub) and then fails the run if any expectation failed, so the reason is recorded before the pipeline stops.
@@ -19,7 +22,6 @@ import json
 
 from great_expectations.dataset import SparkDFDataset
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 
 OUT = "s3a://lakehouse/_validation"
 TXN_ROOT = None   # --txn-root: read bronze.raw_transactions from this lakeFS branch instead of main (DP1 before merging)
@@ -39,9 +41,14 @@ def units(spark, _p):
     return sorted(r[0] for r in table(spark, "bronze.raw_ref_province_mapping").select("new_unit_name").distinct().collect())
 
 
+# The day slices: business day D is exported into export_date D + 1, and its features carry the timestamp D + 1.
+EXPORTS = "export_date > '{after_next}' AND export_date <= '{next_ds}'"
+FEATURE_DAYS = "to_date(event_timestamp) > date_add('{after}', 1) AND to_date(event_timestamp) <= date_add('{ds}', 1)"
+
+
 def distinct_ids(spark, p):
     """Unique transaction ids in the bronze slice: what silver must hold after dedup."""
-    return (table(spark, "bronze.raw_transactions").where(F.col("export_date") == p["next_ds"])
+    return (table(spark, "bronze.raw_transactions").where(EXPORTS.format(**p))
             .select("transaction_id").distinct().count())
 
 
@@ -53,7 +60,7 @@ def not_null(*cols):
 # suite -> [(table, filter or None, [(expectation, kwargs)])]; a kwarg value may be a function of (spark, params).
 SUITES = {
     "dp1": [
-        ("bronze.raw_transactions", "export_date = '{next_ds}'", [
+        ("bronze.raw_transactions", EXPORTS, [
             ("expect_table_row_count_to_be_between", {"min_value": 1}),
             *[("expect_column_to_exist", {"column": c}) for c in RAW_TXN],
             *not_null("transaction_id", "card_id", "merchant_id", "txn_ts", "amount_vnd", "created_ts"),
@@ -77,7 +84,7 @@ SUITES = {
         ("bronze.raw_card_authorizations", None, [*not_null("auth_id", "card_id", "auth_ts", "received_ts")]),
     ],
     "dp2_silver": [
-        ("silver.stg_transactions", "export_date = '{next_ds}'", [
+        ("silver.stg_transactions", EXPORTS, [
             ("expect_table_row_count_to_equal", {"value": distinct_ids}),   # dedup kept one row per id, lost none
             ("expect_column_values_to_be_unique", {"column": "transaction_id"}),
             ("expect_column_values_to_be_between", {"column": "amount_vnd", "min_value": 1}),
@@ -91,7 +98,7 @@ SUITES = {
                                         *not_null("customer_id", "updated_ts")]),
     ],
     "dp2_gold": [
-        ("gold.fact_transaction", "export_date = '{next_ds}'", [
+        ("gold.fact_transaction", EXPORTS, [
             ("expect_table_row_count_to_be_between", {"min_value": 1}),
             ("expect_column_values_to_be_unique", {"column": "transaction_id"}),
             *not_null("customer_sk", "date_key", "card_id", "merchant_id", "txn_unit"),
@@ -108,9 +115,9 @@ SUITES = {
         ]),
     ],
     "dp3": [
-        ("gold.feat_card_txn_stats_daily", "to_date(event_timestamp) = date_add('{ds}', 1)", [   # rows of activity on ds
+        ("gold.feat_card_txn_stats_daily", FEATURE_DAYS, [   # rows of activity on the days checked
             ("expect_table_row_count_to_be_between", {"min_value": 1}),
-            ("expect_column_values_to_be_unique", {"column": "card_id"}),   # one row per card and day
+            ("expect_compound_columns_to_be_unique", {"column_list": ["card_id", "event_timestamp"]}),   # one per card and day
             *not_null("card_id", "event_timestamp", "created", "txn_count_30d", "dispute_count_180d"),
             ("expect_column_values_to_be_between", {"column": "txn_count_30d", "min_value": 0}),
             ("expect_column_values_to_be_between", {"column": "distinct_merchants_30d", "min_value": 0}),
@@ -123,9 +130,28 @@ SUITES = {
 }
 
 
-def run(spark: SparkSession, suite: str, ds: dt.date) -> dict:
-    """Run every check of the suite; one result row per expectation."""
-    p = {"ds": ds.isoformat(), "next_ds": (ds + dt.timedelta(days=1)).isoformat()}
+def last_passed(spark: SparkSession, suite: str, ds: dt.date) -> dt.date | None:
+    """Newest business day before ds whose check of this suite passed (its results.json), or None."""
+    root = spark._jvm.org.apache.hadoop.fs.Path(f"{OUT}/{suite}")
+    fs = root.getFileSystem(spark._jsc.hadoopConfiguration())
+    if not fs.exists(root):
+        return None
+    days = sorted((n[3:] for n in (s.getPath().getName() for s in fs.listStatus(root)) if n.startswith("ds=")
+                   and n[3:] < ds.isoformat()), reverse=True)
+    for day in days:   # a failed day's slice is still unchecked (DP1 loads it again: it never reached main)
+        path = f"{OUT}/{suite}/ds={day}/results.json"
+        if fs.exists(spark._jvm.org.apache.hadoop.fs.Path(path)) and                 json.loads(spark.read.text(path, wholetext=True).first()[0])["success"]:
+            return dt.date.fromisoformat(day)
+    return None
+
+
+def run(spark: SparkSession, suite: str, ds: dt.date, after: dt.date | None = None) -> dict:
+    """Run every check of the suite on the business days after `after` up to ds (default: ds alone); one result row
+    per expectation."""
+    after = after or ds - dt.timedelta(days=1)
+    p = {"ds": ds.isoformat(), "next_ds": (ds + dt.timedelta(days=1)).isoformat(),
+         "after": after.isoformat(), "after_next": (after + dt.timedelta(days=1)).isoformat()}
+    print(f"{suite}: business days {(after + dt.timedelta(days=1)).isoformat()} to {p['ds']}")
     rows = []
     for table_name, where, expectations in SUITES[suite]:
         df = table(spark, table_name)
@@ -139,7 +165,8 @@ def run(spark: SparkSession, suite: str, ds: dt.date) -> dict:
                          "kwargs": kwargs, "success": r["success"], "observed_value": res.get("observed_value"),
                          "element_count": res.get("element_count"), "unexpected_count": res.get("unexpected_count")})
             print(f"{'ok  ' if r['success'] else 'FAIL'} {table_name} {expectation} {json.dumps(kwargs, default=str)[:90]}")
-    return {"suite": suite, "ds": p["ds"], "success": all(r["success"] for r in rows), "results": rows}
+    return {"suite": suite, "ds": p["ds"], "checked_after": p["after"], "success": all(r["success"] for r in rows),
+            "results": rows}
 
 
 def write_text(spark: SparkSession, path: str, text: str) -> None:
@@ -159,7 +186,7 @@ if __name__ == "__main__":
     TXN_ROOT = args.txn_root.rstrip("/") if args.txn_root else None
 
     spark = SparkSession.builder.appName(f"validate_{args.suite}").getOrCreate()
-    report = run(spark, args.suite, args.ds)
+    report = run(spark, args.suite, args.ds, last_passed(spark, args.suite, args.ds))
     path = f"{OUT}/{args.suite}/ds={args.ds}/results.json"
     write_text(spark, path, json.dumps(report, default=str, indent=1))
     failed = sum(not r["success"] for r in report["results"])

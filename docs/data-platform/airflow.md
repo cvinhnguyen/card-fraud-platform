@@ -82,11 +82,15 @@ are incremental the rows of the older day are loaded too. A toy pair of DAGs bui
 both points: the consumer ran for the day the event carried (`2026-11-20`, while its own logical date was the
 wall clock), and two days published 5 seconds apart gave two consumer runs with one event each.
 
-One gap remains when a run loads more than one day: the validate stage checks only the run's own day. That happens
-when two versions share a run as above, or when DP1 is unpaused after missed days (with `catchup=False`, the next
-run loads every export day since the last one). The older days then reach main and silver without their checks.
-Starting the pipeline by hand for each of those days checks them afterwards: its load finds nothing new and its
-validate stage reads that day.
+A run can therefore load more than one day: when two versions share a run as above, or when DP1 is unpaused after
+missed days (with `catchup=False`, the next run loads every export day since the last one). The validate stage
+covers that case. Before it runs the checks, it looks up the suite's newest passed check in
+`_validation/<suite>/`, and the day slices (exports, silver and gold rows, features) cover every business day after
+that one up to `ds`. After a pass on the day before, that is `ds` alone. A day whose check failed stays in the
+range, because DP1 loads it again (it never reached main) and DP2 keeps the failed rows until they are fixed. The
+labels are checked as of `ds` only, since each run rebuilds them as of its own day.
+`catchup=True` on DP1 would give each missed day its own run, but it would not help DP2 and DP3, whose shared runs
+come from dataset events.
 
 ## Run it
 
