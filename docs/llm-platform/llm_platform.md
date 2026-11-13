@@ -1,12 +1,12 @@
 # LLM inference platform and agent gateway
 
 The card support agents think and write with a large language model (LLM). Running one inside a bank raises three
-questions this page answers: where the model runs (a GTX 1070 on the host, so llama.cpp instead of vLLM), how the
-agents reach it without each one being wired to a server (one model config for all agents, pointing at one gateway),
-and how to stop the model from being misused or from seeing customers' personal data (the gateway checks who calls,
-limits how much, and masks card numbers, emails, phone numbers and citizen IDs). The benchmark and the optimizations
-it led to are in [llm_benchmark.md](llm_benchmark.md), the A/B test of two LLM versions in
-[ab_testing.md](ab_testing.md).
+questions. Where does the model run? On a GTX 1070 on the host, in llama.cpp, because vLLM does not support that card.
+How do the agents reach it without each one being wired to a server? Through one model config for all agents, which
+points at one gateway. How is the model kept from being misused or from seeing customers' personal data (PII)? The
+gateway checks who calls, limits how much, and masks card numbers, emails, phone numbers and citizen IDs. The
+benchmark and the optimizations it led to are in [llm_benchmark.md](llm_benchmark.md), the A/B test of two LLM
+versions in [ab_testing.md](ab_testing.md).
 
 | | |
 |---|---|
@@ -16,11 +16,15 @@ it led to are in [llm_benchmark.md](llm_benchmark.md), the A/B test of two LLM v
 
 ## Where it fits
 
-The agents ([agents.md](agents.md)) are the only callers. Every LLM call of theirs takes the same path: the agents'
-global model config points at agentgateway, the gateway checks the caller and hands the
-request to the llm-d router, which picks the model server that answers each prompt (its InferencePool), and that
-endpoint forwards the prompt to llama.cpp, the program that runs the model on the host GPU. The embedding model on the same
-host serves the RAG data pipeline and the policy search ([rag_pipeline.md](rag_pipeline.md)).
+The platform is arrows A15 and A16 of the Layer 3 picture
+([architecture.md](../architecture.md#layer-3-the-llm-and-agent-platform-left-panel),
+[numbered arrows](../architecture.md#numbered-arrows-layer-3)). The agents ([agents.md](agents.md)) are the only
+callers. Every LLM call of theirs takes the same path. The agents' global model config points at agentgateway. The
+gateway checks the caller and hands the request to the llm-d router, which picks the model server that answers each
+prompt (its InferencePool). That endpoint forwards the prompt to llama.cpp, the program that runs the model on the
+host GPU. The embedding model on the same host serves the RAG (retrieval-augmented generation) data pipeline and the
+policy search
+([rag_pipeline.md](rag_pipeline.md)).
 
 ## How it works
 
@@ -134,7 +138,7 @@ are small nginx bridges to llama.cpp on the host. A bridge adds the model server
 never hold it, and is Ready only while llama.cpp's `/health` answers 200, so the picker skips it while the model
 loads. On a GPU node the same pool would select real model server pods and the agents would not notice. With one GPU
 there is one endpoint: the picker has nothing to choose between, and its prefix-aware routing only pays off with two
-or more model servers (see the benchmark page).
+or more model servers ([llm_benchmark.md](llm_benchmark.md)).
 
 ## agentgateway: one entry point for LLM, MCP and A2A
 
@@ -155,15 +159,16 @@ The LLM route has one AgentgatewayPolicy (several policies on the same route ove
 | Setting | Value | Why |
 |---|---|---|
 | `apiKeyAuthentication: Strict` | keys from the ConfigMap `agentgateway-api-keys`, which holds only their SHA-256 hashes, each with a user id | only callers with a gateway key may spend GPU time; the user id is what the MCP and A2A policies authorize on |
+| `authorization` | user id `agents` only | the other keys (support app, coordinator, the MCP keys) belong to their own routes; checked on 2026-11-12: the support app's key gets 403 on `/v1`, the agents' key goes through |
 | `rateLimit` | 120 requests a minute with a burst of 20, and 60,000 tokens a minute | one GPU with two slots: a runaway agent loop must not starve the others |
 | `promptGuard` request and response, `Mask` | built-in CreditCard, Email and PhoneNumber, plus regexes for the 12-digit citizen ID (CCCD) and Vietnamese mobile numbers | customers type card and phone numbers into a support chat; the model needs neither, and masking lets the conversation go on where a reject would break it |
 
 The keys themselves live in Vault: the gateway only stores their hashes, which
-[`infra/k8s/secrets.sh` L80-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L82-L88)
+[`infra/k8s/secrets.sh` L82-L88](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L82-L88)
 writes into that ConfigMap, and each client gets its key as a Kubernetes Secret synced from Vault.
 
 The policy as written
-([`infra/k8s/agentgateway.yaml` L86-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L86-L113)):
+([`infra/k8s/agentgateway.yaml`](../../infra/k8s/agentgateway.yaml)):
 
 ```yaml
 # Security and policy of the LLM route: who may call (API key), how much (tokens and requests), and no PII to or
@@ -179,6 +184,10 @@ spec:
     apiKeyAuthentication:
       mode: Strict
       configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    authorization:   # only the agents' key: the support app's, coordinator's and MCP keys are for their own routes
+      action: Allow
+      policy:
+        matchExpressions: ['apiKey.user_id == "agents"']
     rateLimit:
       local:
         - {requests: 120, unit: Minutes, burst: 20}
@@ -234,7 +243,7 @@ the same gateway and key with other sampling settings.
 
 The agents never call llama.cpp, the llm-d pool or Groq themselves: their NetworkPolicy lets them open connections
 only to the gateway, the kagent controller, DNS and Jaeger
-([`agents/chart/templates/networkpolicy.yaml` L22-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/networkpolicy.yaml#L23-L38)).
+([`agents/chart/templates/networkpolicy.yaml` L23-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/networkpolicy.yaml#L23-L38)).
 
 ## Gotchas
 
@@ -244,5 +253,13 @@ only to the gateway, the kagent controller, DNS and Jaeger
   no Ready endpoint and every LLM call fails.
 - agentgateway applies only one policy per target: the LLM route's key check, limits and PII guard are one object on
   purpose.
+
+## Limits
+
+- One GPU on one host serves every agent. When llama.cpp is down, every agent call fails: version B on Groq is at
+  weight 0 and reachable only with its header, so nothing fails over to it on its own. Layer 2 has a rule fallback
+  for a missing model; Layer 3 has none.
+- The embedding server is not behind the gateway: policy-rag and the RAG pipeline call it on the host directly
+  (port 8086, with the model server's key), so the gateway's key check, limits and metrics do not cover it.
 
 Coursework rubric: A3, C3 to C5, A7.

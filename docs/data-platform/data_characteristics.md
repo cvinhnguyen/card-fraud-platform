@@ -38,16 +38,30 @@ handles it.
 4. The truth file `_truth/ato_sessions.parquet` lists the account takeover (ATO) sessions for evaluation only; it is
    never loaded into the platform.
 
+## Run it
+
+From the repo root. Generating and checking need only the `.venv`; `load_source.py` and `producer.py` need the
+`core` compose profile up and `infra/init_infra.py` run once (buckets and Kafka topics, see the
+[README quick start](../../README.md#quick-start)). On macOS or Linux the venv path is `.venv/bin`.
+
+```bash
+.venv/Scripts/python generator/generate.py                  # every dataset -> data/source; --scale 0.05 for a smoke test
+.venv/Scripts/python generator/check_data.py                # the 69 checks; prints every number on this page
+.venv/Scripts/python generator/load_source.py               # Postgres core_banking, s3://core-banking-export, s3://bank-documents
+.venv/Scripts/python generator/producer.py --speed 200      # replay card_authorizations into Kafka (--topic app_events for the app stream)
+.venv/Scripts/python docs/diagrams/label_delay.py           # redraw the label delay histogram
+```
+
 ## Datasets
 
 | Dataset | Where it lands | Files | Rows | Size |
 |---|---|---:|---:|---:|
-| customers (100,000 customers with their history: the SCD2 source) | Postgres `core_banking` | 1 | 193,207 | |
+| customers (100,000 customers with their history: the SCD2 source, slowly changing dimension type 2, every past version kept) | Postgres `core_banking` | 1 | 193,207 | |
 | accounts | Postgres | 1 | 100,000 | |
 | cards | Postgres | 1 | 130,120 | |
 | merchants (5,000 domestic + 200 foreign online) | Postgres | 1 | 5,200 | |
 | disputes (fraud labels) | Postgres | 1 | 31,364 | |
-| ref_province_mapping (63 → 34) | Postgres | 1 | 63 | |
+| ref_province_mapping (63 -> 34) | Postgres | 1 | 63 | |
 | *core banking tables total* | | 6 | 459,954 | 11.6 MB |
 | transactions (nightly export) | S3 `core-banking-export/transactions/export_date=*/` | 1,019 | 8,159,516 | 327.6 MB |
 | card_authorizations | Kafka topic, key `card_id` | 1,019 | 8,119,499 | 402.2 MB |
@@ -65,11 +79,11 @@ peaks at 4.24 GB RAM (measured before the `currency` column was added to the che
 | Problem | How it shows up | Measured | Fixed in |
 |---|---|---|---|
 | Duplicate rows | Nightly export re-run after a timeout: same `transaction_id`, later `created_ts` ([`generator/generate.py` L328-L330](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L328-L330)) | 159,990 extra rows = 2.00% of 7,999,526 unique; 100% of duplicates have a later `created_ts` | DP2 silver: dedup, keep the latest ([spark_optimization.md](../performance/spark_optimization.md#duplicates)) |
-| Merchant skew | 10 super merchants (e-wallet top-up, ride-hailing, marketplace, convenience chains) | top-10 share 0.7000; biggest / median merchant = 10,012× | DP2: salting / AQE (adaptive query execution) skew join ([spark_optimization.md](../performance/spark_optimization.md#merchant-join-skew)) |
+| Merchant skew | 10 super merchants (e-wallet top-up, ride-hailing, marketplace, convenience chains) | top-10 share 0.7000; biggest / median merchant = 10,012× | DP2: broadcast joins, the winner of a benchmark against salting and AQE (adaptive query execution) ([spark_optimization.md](../performance/spark_optimization.md#merchant-join-skew)) |
 | Cross-border online payments | 200 foreign merchants (digital content, games, online stores, travel, software; US / SG / IE / CN / GB), online only, `currency = USD`, `amount_vnd` already converted; `city` NULL | 4.01% of transactions; 100% online with a merchant outside VN | Layer 2 `foreign_txn_ratio_90d` |
 | City skew | Shares on the 34 new units | Ho Chi Minh 0.5993, Ha Noi 0.1802, Da Nang 0.0500 | DP2 and the storage layout: partitioning ([storage_optimization.md](../performance/storage_optimization.md#lakehouse-layout)); Flink: hot key ([flink_jobs.md](flink_jobs.md#hot-key)) |
-| Province reorganization (63 → 34, from 2025-07-01) | Old names before the cutoff; 5% of legacy terminals keep sending old names after it ([`generator/generate.py` L83-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L83-L93)) | old-only names 19.62% before, 0.99% after; raw "Ho Chi Minh" share 0.4797 before the cutoff (a fake jump to 0.60 if not normalized) | DP2 silver: normalize via `ref_province_mapping` |
-| Schema evolution | `auth_method`, `three_ds_version` exist only in files from 2024-07-01 ([`generator/generate.py` L322-L324](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L322-L324)) | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 30.00% of ecom, 3DS 2.2.0 85.03% | DP1 and DP2: `mergeSchema` ([spark_optimization.md](../performance/spark_optimization.md#schema-evolution)) |
+| Province reorganization (63 -> 34, from 2025-07-01) | Old names before the cutoff; 5% of legacy terminals keep sending old names after it ([`generator/generate.py` L83-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L83-L93)) | old-only names 19.62% before, 0.99% after; raw "Ho Chi Minh" share 0.4797 before the cutoff (a fake jump to 0.60 if not normalized) | DP2 silver: normalize via `ref_province_mapping` |
+| Schema evolution | `auth_method`, `three_ds_version` exist only in payments from 2024-07-01, so in export files from 2024-07-02 ([`generator/generate.py` L322-L324](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L322-L324)) | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 30.00% of ecom, 3DS 2.2.0 85.03% | DP1 and DP2: `mergeSchema` ([spark_optimization.md](../performance/spark_optimization.md#schema-evolution)) |
 | High cardinality | `terminal_id` on POS / ATM, null for ecom | 26,863 distinct | storage layout: bucketing, approx distinct |
 | SCD2 | Customers move (5%/yr), get rescored (10%/yr); on 2025-07-01 the core system relabels old province names | 56.45% of customers have >1 version; 16,635 spurious relabel versions (95.09% of old-name customers) | DP2 gold: SCD2 `dim_customer` ([dbt_gold.md](dbt_gold.md)) |
 | As-of joins | A moved customer pays in the home unit valid at `txn_ts` | 97.08% of 1,107,271 post-move transactions | DP2 gold: point-in-time join ([spark_jobs.md](spark_jobs.md#point-in-time-join)) |

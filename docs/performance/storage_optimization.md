@@ -16,8 +16,10 @@ rows are split into files and sorted inside them), Postgres by indexes. Both are
 
 ## Where it fits
 
-Both stores belong to Layer 1 (data platform). The lakehouse holds the gold tables that DP2 writes and that Trino,
-DP3 and the training pipeline read ([schema_design.md](../data-platform/schema_design.md)); the layout rules found
+Both stores belong to Layer 1 (data platform,
+[architecture.md](../architecture.md#layer-1-the-data-platform-top-band)). The lakehouse holds the gold tables that
+DP2 (bronze to silver and gold) writes and that Trino, DP3 (gold to features) and the training pipeline read
+([schema_design.md](../data-platform/schema_design.md)); the layout rules found
 here are the ones the gold tables use (month partitions). The serving database is a flat copy of the last 180 days
 of `fact_transaction` for dashboards and an analyst's screen, loaded by a Spark job. The benchmark tables live under
 `s3a://lakehouse/lab/` and are not registered in the metastore, so they touch nothing the pipelines read.
@@ -32,7 +34,7 @@ of `fact_transaction` for dashboards and an analyst's screen, loaded by a Spark 
 3. The lesson: the number of files costs more than the bytes; partition by what queries filter on, with even sizes;
    Z-order the high-cardinality column you cannot partition by.
 4. The serving database gets a flat table loaded in time order. The indexes script measures its two query patterns
-   before and after two indexes: a composite B-tree for one card's recent payments and a BRIN index for a date range
+   before and after two indexes: a composite B-tree for one card's recent payments and a BRIN (block range) index for a date range
    ([Serving database](#serving-database-postgres)).
 5. Postgres picks the index itself; `EXPLAIN (ANALYZE, BUFFERS)` shows the plan and the buffers read, which is the
    before-and-after evidence.
@@ -137,7 +139,7 @@ same 107:
 The gold tables are partitioned by month for the same reason (`fact_transaction` by `txn_month`,
 [`pipelines/dbt/models/gold/fact_transaction.sql` L4-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/fact_transaction.sql#L4-L9);
 `label_transaction` by `event_month`,
-[`pipelines/spark/build_labels.py` L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L69)).
+[`pipelines/spark/build_labels.py` L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L69)).
 
 ## Serving database (Postgres)
 

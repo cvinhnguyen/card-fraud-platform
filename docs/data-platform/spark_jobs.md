@@ -19,16 +19,18 @@ card features for the Feast offline store. The stack is Spark 4.1.3 standalone (
 
 ## Where it fits
 
-Airflow runs these jobs as the tasks of the pipelines DP1, DP2 and DP3 ([airflow.md](airflow.md)); this page is about
-what each job does to the data. Each job reads one zone and writes the next, and the next job reads what it wrote:
+Airflow runs these jobs as the tasks of the pipelines DP1, DP2 and DP3 ([airflow.md](airflow.md)). In the platform
+overview they are the batch row of Layer 1 ([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)),
+and in the system diagram the B arrows ([numbered arrows](../architecture.md#numbered-arrows)). Each job reads one
+zone and writes the next, and the next job reads what it wrote:
 
 | Pipeline | Job | Reads | Writes |
 |---|---|---|---|
-| DP1, ingest to bronze | `ingest_bronze.py` | Postgres `core_banking`, the nightly export, Flink's landing files | `bronze.raw_*`, unchanged |
+| DP1, ingest to bronze (DAG `dp1_source_to_bronze`) | `ingest_bronze.py` | Postgres `core_banking`, the nightly export, Flink's landing files | `bronze.raw_*`, unchanged |
 | DP2, bronze to silver (DAG `dp2_bronze_to_silver`) | `build_silver.py` | bronze | `silver.stg_*`, cleaned |
 | DP2, silver to gold (DAG `dp2_silver_to_gold`) | dbt (`pipelines/dbt/`) | silver | gold `dim_*` and `fact_*` |
 | DP2, silver to gold | `build_labels.py` | `silver.stg_transactions`, and the disputes, cards and accounts from bronze | `gold.label_transaction`, the labels as known on each date |
-| DP3, gold to features | `build_features.py` | `gold.fact_transaction`, and the disputes from bronze | `gold.feat_card_txn_stats_daily`, the Feast offline store |
+| DP3, gold to features (DAG `dp3_gold_to_features`) | `build_features.py` | `gold.fact_transaction`, and the disputes from bronze | `gold.feat_card_txn_stats_daily`, the Feast offline store |
 
 Trino and analysts read every zone; Layer 2 reads the labels and the features ([ml_training.md](../ml-platform/ml_training.md),
 [feature_store.md](../ml-platform/feature_store.md)).
@@ -49,9 +51,11 @@ Trino and analysts read every zone; Layer 2 reads the labels and the features ([
 
 ## Run it
 
-From the repo root, with the `batch` profile up:
+From the repo root. The `batch` profile needs the `core` profile (Postgres, SeaweedFS, Kafka) up as well:
 
 ```bash
+docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
+
 # DP1, first load (before infra/init_lakefs.py moves bronze.raw_transactions into lakeFS)
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py --txn-root s3a://lakehouse/bronze
 # DP1 after that, as the Airflow tasks run it: the exports go on a lakeFS run branch (DP1 creates, validates and merges it)
@@ -165,7 +169,7 @@ exports part runs without `--txn-root` or with `s3a://bronze/main`
 ([`pipelines/spark/ingest_bronze.py` L127-L129](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L127-L129)).
 `s3a://lakehouse/bronze` is only for the first load, before `infra/init_lakefs.py` imports the table into lakeFS. The
 Airflow DAG appends on the branch `dp1_<ds>`, commits it, validates it and merges it into `main`
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L60));
+([`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L60));
 the runs are in [novel_lakefs_wap.md](novel_lakefs_wap.md).
 
 ### Schema evolution
@@ -182,7 +186,7 @@ builds two silver tables:
 
 | Silver table | From | Fixes |
 |---|---|---|
-| `silver.stg_transactions`, partitioned by `txn_date` | `bronze.raw_transactions` | dedup, `txn_unit` (34 units) + `txn_city_raw`, `auth_method` NULL → `unknown_pre_regulation` |
+| `silver.stg_transactions`, partitioned by `txn_date` | `bronze.raw_transactions` | dedup, `txn_unit` (34 units) + `txn_city_raw`, `auth_method` NULL -> `unknown_pre_regulation` |
 | `silver.stg_customers` | `bronze.raw_customers` | `customer_unit` (34 units) + `city_raw`; input of the SCD2 `dim_customer` |
 
 The job stops if a city name is missing from `ref_province_mapping` (no silent NULL unit)
@@ -204,13 +208,13 @@ the job merged exactly 47,226 rows back (7,999,526 total, 64 s).
 |---|---:|---:|
 | Rows | 8,159,516 | 7,999,526 |
 | Distinct `transaction_id` | 7,999,526 | 7,999,526 |
-| Settled spend (VND) | 3,625,268,094,000 | 3,554,102,498,000 |
+| Settled spend (VND, Vietnamese dong) | 3,625,268,094,000 | 3,554,102,498,000 |
 | NULL `auth_method` | 1,455,416 | 0 (1,426,881 rows `unknown_pre_regulation`) |
 
 Without dedup the settled spend is overcounted by 2.00%. 878,795 rows (10.99%) carry a location name that maps to a
 different unit (old province names before 2025-07-01, plus stale names after it).
 
-Ho Chi Minh City around the reorganization (settled spend, billion VND; share of rows):
+Ho Chi Minh City (HCMC) around the reorganization (settled spend, billion VND; share of rows):
 
 | Month | By raw name | By `txn_unit` | Binh Duong (raw) | Share raw | Share unit |
 |---|---:|---:|---:|---:|---:|
@@ -220,7 +224,7 @@ Ho Chi Minh City around the reorganization (settled spend, billion VND; share of
 | 2025-08 | 64.1 | 64.7 | 0.4 | 59.3% | 59.9% |
 
 By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat,
-because only the labels changed. The chart draws both series for every month; the February dips are the short month:
+because only the place names changed. The chart draws both series for every month; the February dips are the short month:
 
 ![Ho Chi Minh City settled spend per month in billion VND: the raw-name line jumps 28% in July 2025 when old province names are relabelled on 2025-07-01, the unit line stays flat](../images/hcmc_spend.svg)
 
@@ -296,7 +300,7 @@ The two small reference tables need no cleaning, so `dim_card` and `dim_merchant
 Tests (`dbt build`, 27/27 pass): unique / not-null keys, every fact key found in its dimension (`relationships`), and
 `fact_transaction` has the same row count and settled spend as silver (7,879,773 rows, 3,554,102,498,000 VND).
 
-Incremental load: a full refresh of the fact takes 60 s. Deleting the last 5 export dates (38,752 rows) and running
+The fact loads incrementally. A full refresh takes 60 s. Deleting the last 5 export dates (38,752 rows) and running
 `dbt run --select fact_transaction` again `MERGE`d exactly 38,752 rows back in 25 s, with no file rewritten.
 
 ## Labels with label delay
@@ -312,7 +316,7 @@ last run are flipped to `is_fraud = true`. Because disputes are at most 60 days 
 3 months of partitions. Each run is one Delta version and its commit carries `label_as_of=D` (the `userMetadata`
 column of `DESCRIBE HISTORY`), so `VERSION AS OF` returns the labels exactly as they were known on D.
 The tag and the `MERGE`
-([`pipelines/spark/build_labels.py` L51-L67](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L83)):
+([`pipelines/spark/build_labels.py` L67-L83](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L83)):
 
 ```python
     spark.conf.set("spark.databricks.delta.commitInfo.userMetadata", f"label_as_of={as_of}")

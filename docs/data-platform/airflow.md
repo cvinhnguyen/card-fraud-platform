@@ -6,8 +6,7 @@ cleaned and turned into features, in the right order, and the work has to stop b
 does this with the three batch pipelines of the data platform (Layer 1), named as in the course: DP1 loads the
 sources into bronze, DP2 builds silver and gold from bronze, DP3 computes the daily card features from gold.
 
-This page tells you what starts each pipeline, what each one does task by task, how a failed check stops a bad batch,
-and how to run and backfill them. Three ideas carry it:
+Three design choices run through all of them:
 
 - The lakehouse keeps the data in zones, one per stage of work: bronze is an exact copy of the sources, silver is
   cleaned, gold is modelled for analysis and holds the fraud labels, and the feature table holds per-card statistics.
@@ -28,7 +27,8 @@ and how to run and backfill them. Three ideas carry it:
 
 ## Where it fits
 
-The pipelines read and write the zones of the lakehouse and never hand data to each other
+These are Layer 1's batch pipelines; [architecture.md](../architecture.md#what-starts-the-pipelines-and-the-platform-services)
+shows what starts each one. The pipelines read and write the zones of the lakehouse and never hand data to each other
 directly: DP1 writes bronze, DP2 reads bronze and writes silver and gold, DP3 reads gold and writes the feature table
 that Layer 2's feature store serves. Airflow runs them in that data order each day. Only DP1 runs on a clock
 (`@daily`). No pipeline starts another one. Each pipeline ends with a `publish_<zone>` task, which emits an Airflow
@@ -40,7 +40,7 @@ never a half-written one, so DP2 can also be run by hand at any time, even while
 Layer 2 incremental materialize pipeline copies the new features into Redis
 ([feature_store.md](../ml-platform/feature_store.md)).
 
-Airflow runs eight DAGs in all. Four are these data pipelines (DP2 is two DAGs, one per zone it writes); the others
+Airflow runs eight DAGs (directed acyclic graphs, Airflow's name for a pipeline of tasks) in all. Four are these data pipelines (DP2 is two DAGs, one per zone it writes); the others
 belong to Layers 2 and 3 or to data governance:
 
 | DAG | Pipeline | Started by | Docs |
@@ -82,7 +82,11 @@ are incremental the rows of the older day are loaded too. A toy pair of DAGs bui
 both points: the consumer ran for the day the event carried (`2026-11-20`, while its own logical date was the
 wall clock), and two days published 5 seconds apart gave two consumer runs with one event each.
 
-The sections below show each pipeline task by task, the shared helpers, the connections and variables, and the runs.
+One gap remains when a run loads more than one day: the validate stage checks only the run's own day. That happens
+when two versions share a run as above, or when DP1 is unpaused after missed days (with `catchup=False`, the next
+run loads every export day since the last one). The older days then reach main and silver without their checks.
+Starting the pipeline by hand for each of those days checks them afterwards: its load finds nothing new and its
+validate stage reads that day.
 
 ## Run it
 
@@ -136,7 +140,7 @@ are the data pipelines, each with an ingest stage and a validate stage. The othe
 - The scheduler is on two networks (the default one and `airflow-docker` for DockerOperator), and its hostname
   resolves to the `airflow-docker` address first. A driver bound there refuses the executors, which reach it on the
   default network, so every Spark task sets `spark.driver.bindAddress` to `0.0.0.0`
-  ([`pipelines/airflow/dags/common.py` L46-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L73-L75)).
+  ([`pipelines/airflow/dags/common.py` L73-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L73-L75)).
 - The pool `spark` has 1 slot. The worker has 3 GB: one executor (1.5 GB for DAG tasks) at a time, with room left
   for the Thrift Server's 1 GB executor when it is up. Every Spark task takes the pool slot, so Spark applications
   from overlapping DAG runs queue in Airflow instead of waiting for executors inside Spark.
@@ -149,7 +153,7 @@ are the data pipelines, each with an ingest stage and a validate stage. The othe
 
 Every Spark task of the four DAGs comes from one helper that sets the connection, the S3 environment and the
 `spark` pool
-([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L79-L86)):
+([`pipelines/airflow/dags/common.py` L79-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L79-L86)):
 
 ```python
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
@@ -162,7 +166,8 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
                                **kwargs)
 ```
 
-The connections and variables the DAGs use, as `setup_airflow.py` creates them
+The connections and variables the data pipelines use, as `setup_airflow.py` creates them (it also creates the ones
+of Layers 2 and 3)
 ([`pipelines/airflow/setup_airflow.py` L14-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/setup_airflow.py#L14-L60)):
 
 | Connection | Type | Used by |
@@ -189,11 +194,11 @@ The connections and variables the DAGs use, as `setup_airflow.py` creates them
   time, which next to DataHub pushed the 8 GB Docker VM into swap; Docker's DNS then failed (`Unable to execute HTTP
   request: seaweedfs`) and tasks failed at random.
 - Every task has `depends_on_past`
-  ([`pipelines/airflow/dags/common.py` L18-L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L19-L21)).
+  ([`pipelines/airflow/dags/common.py` L19-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L19-L21)).
   All loads are incremental, so day D must not run before D-1 succeeded. The first backfill showed why: a Docker DNS
   error failed DP2 for 10-13, DP2 for 10-14 ran first, and its labels (as of 10-14) made the 10-13 label step a no-op,
   so the 10-13 validation would have failed with no rows labelled as of 10-13.
-- XCom carries paths only. Data moves through the lakehouse; the only XCom value is the path of a results file.
+- XCom (Airflow's store for small values passed between tasks) carries paths only. Data moves through the lakehouse; the only XCom value is the path of a results file.
 - The pipelines are chained through Airflow datasets. `common.py` defines one dataset
   per zone, `DAY` (the business day of a run: the day on the event that started it, else the run's own `ds`) and
   `publish()`, the last task of every data pipeline. The publish task puts the day on the event the scheduler
@@ -204,11 +209,13 @@ The connections and variables the DAGs use, as `setup_airflow.py` creates them
 BRONZE, SILVER, GOLD, FEATURES = (Published(f"lakehouse://{zone}") for zone in ("bronze", "silver", "gold", "features"))
 # Business day of a run: the day carried by the dataset event that started it, or the run's own ds when it is
 # scheduled (DP1) or started by hand. Each published version starts its own run; only versions published within one
-# scheduler loop share a run, which then takes the newest day (the loads are incremental, so no row is skipped).
+# scheduler loop share a run, which then takes the newest day (Airflow gives the events unsorted, so they are
+# sorted by time; the loads are incremental, so no row is skipped).
 # The day is rendered into shell commands and Spark arguments, and a dataset event can also be posted through the
 # Airflow API with any text in it. ds_format parses the value as YYYY-MM-DD and writes it back, so anything that is
 # not a date fails the task while it renders, before a command runs.
-DAY_EXPR = ("macros.ds_format(((triggering_dataset_events.values() | first | last).extra['ds'] "
+DAY_EXPR = ("macros.ds_format(((triggering_dataset_events.values() | first | sort(attribute='timestamp') | last)"
+            ".extra['ds'] "
             "if triggering_dataset_events else ds), '%Y-%m-%d', '%Y-%m-%d')")
 DAY = "{{ " + DAY_EXPR + " }}"
 
@@ -385,7 +392,7 @@ DP2 is two DAGs. `dp2_bronze_to_silver` starts on `lakehouse://bronze/`, builds 
 `dp2_silver_to_gold` starts on `lakehouse://silver/`. Labels run next to dbt (they read silver, not gold), and the
 gold validation waits for both:
 
-![dp2_silver_to_gold graph, run of 2026-11-12 13:04, started by the dataset lakehouse://silver/: dbt_build with dbt_docs and build_labels in parallel, validate_dp2_gold, publish_gold, ending in the dataset lakehouse://gold/](../images/airflow_dp2_graph.png)
+![dp2_silver_to_gold graph, run of 2026-11-12 13:04, started by the dataset lakehouse://silver/: dbt_build (then dbt_docs) in parallel with build_labels, validate_dp2_gold, publish_gold, ending in the dataset lakehouse://gold/](../images/airflow_dp2_graph.png)
 
 The grid of the 4 backfill runs of October, when DP2 was still one DAG, `dp2_bronze_to_gold`: every task green,
 mean run 01:13:57, max 02:47:38:
@@ -402,7 +409,8 @@ The Connections page (Admin menu) shows hosts and descriptions only; the passwor
 
 ![Admin menu, Connections: hosts and descriptions only, passwords encrypted](../images/airflow_connections.png)
 
-The Variables page (Admin menu) lists the six variables of the table above:
+The Variables page (Admin menu) lists the six variables of the table above. It was captured before Layers 2 and 3
+added four more (`feast_repo`, `feast_kb_repo`, `drift_psi_threshold`, `drift_pr_auc_drop`):
 
 ![Admin menu, Variables: the 6 variables, spark_jobs_dir, dbt_project_dir, dbt_artifacts_dir, export_bucket, lakehouse_bucket, validation_prefix](../images/airflow_variables.png)
 

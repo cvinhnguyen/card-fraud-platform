@@ -3,8 +3,9 @@
 Four pictures of the same platform, from the most general to the most detailed. The overview shows every part and
 how data moves between them, each pipeline framed with its tasks in run order; the two system diagrams show which
 container sends which data to which, arrow by arrow; the deployment diagram shows where each one runs. A
-new reader should start with the overview. In every picture a box shows a name and, under it, what that part does
-in plain words; pipelines are frames with their tasks inside, in the order they run.
+new reader should start with the overview. In the overview and the two system diagrams a box shows a name and,
+under it, what that part does in plain words; in the deployment diagram it shows the container's image and port.
+Pipelines are frames with their tasks inside, in the order they run.
 
 | | |
 |---|---|
@@ -15,7 +16,7 @@ in plain words; pipelines are frames with their tasks inside, in the order they 
 
 | View | Question it answers | Boxes are |
 |---|---|---|
-| [Overview](#overview) | What does the platform do, and how do the parts hand data to each other? | the jobs and services (white), the stores between them (blue), each pipeline framed with its tasks |
+| [Overview](#overview) | What does the platform do, and how do the parts hand data to each other? | the jobs (green) and services (white), the stores between them (blue), each pipeline framed with its tasks |
 | [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) | Which unit sends which data to which unit? | deployable units: compose containers and Kubernetes workloads |
 | [System diagram, Layer 3](#system-diagram-layer-3) | The same question for the agents, the gateway and the model servers | deployable units |
 | [Deployment](#deployment) | Where does each unit run, on which port? | containers, Kubernetes workloads, host processes |
@@ -112,8 +113,9 @@ Trino (top right) takes no arrow from a pipeline: it asks the Hive Metastore whe
 Delta files of every zone itself, so analysts can query any zone. The Hive Metastore is a service and keeps its own
 metadata in PostgreSQL; the zones are storage, so it is drawn with Trino and not among the stores.
 
-The second row of the band is the streaming side, which runs all the time. The Kafka box lists the topics that
-come in and the topics the jobs write. The four streaming jobs are all Flink jobs written in PyFlink, on the same
+The second row of the band is the streaming side. The Kafka box lists the topics that come in and the topics the
+jobs write. The two feature jobs and the push jobs run all the time; the raw landing job runs by hand, and the
+takeover alerts have so far run on a replay of the app events. The four streaming jobs are all Flink jobs written in PyFlink, on the same
 Flink cluster, so they are one box; each bullet names the Flink API that job uses.
 Two use the DataStream API with keyed state (the card features of each payment,
 [`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/rt_features.py), and the first device of each card), and two
@@ -173,7 +175,9 @@ overview draws it under the Drift API.
 The retraining decision is the drift pipeline (DAG `drift_monitoring`,
 [`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/drift_monitoring.py)). It runs every
 day, scores the last 7 days with their labels and point-in-time features using the production model, and saves
-the drift report as an MLflow run whatever the result. When a PSI is above 0.25 or the PR-AUC fell more than
+the drift report as an MLflow run whatever the result. The labels of those 7 days come from the simulation's ground
+truth (`s3://lakehouse/ml/ground_truth/labels.parquet`): a real bank learns about fraud from disputes over about 60
+days, so there the PR-AUC check would lag by that much and only the PSI check would be immediate. When a PSI is above 0.25 or the PR-AUC fell more than
 0.05, it also starts a training pipeline run with the newest labels; otherwise the production model stays. The
 overview draws the save before the check, so both outcomes keep the report.
 
@@ -220,11 +224,12 @@ from `agents/registry/catalog.yaml` ([agents.md](llm-platform/agents.md#agent-re
 
 The dashed note at the top of Layer 1 says what starts the pipelines: DP1 runs every night; the DP2 silver
 pipeline, the DP2 gold pipeline, DP3 and the materialize pipeline each start on a new checked version of the
-table they read, not on the pipeline before them. The drift, DataHub metadata and RAG data pipelines run on
-their own schedule ([airflow.md](data-platform/airflow.md) lists all eight DAGs).
+table they read, not on the pipeline before them. The drift and DataHub metadata pipelines run on their
+own daily schedule, and the RAG data pipeline when its Jenkins pipeline or a person starts it
+([airflow.md](data-platform/airflow.md) lists all eight DAGs).
 
 The CI/CD row is the path of a change, from left to right: Jenkins polls GitHub, tests
-and builds, pushes signed images to the registry, then deploys (Helm upgrades in the kind cluster, a new RAG
+and builds, pushes images to the registry (the MCP server image with its signature), then deploys (Helm upgrades in the kind cluster, a new RAG
 image for Airflow, the push jobs in compose) and checks against the running platform
 ([cicd.md](operations/cicd.md)). Two of the novel ideas sit on that path: Kyverno admits an MCP server pod only
 with a cosign signature from CI, and after each data-agent release the eval gate asks risk-agent 20 questions and
@@ -267,7 +272,7 @@ letter in each badge carries the flow. Two crossings are left (M7 over T2, M2 ov
 | S6 | Payment scoring | Every decision is logged to Kafka topic fraud_predictions, the record of decisions (scoring never waits on it) |
 | R1 | Streaming features | Every authorization (retries included) to Kafka topic card_authorizations (generator/producer.py replays the generated stream in arrival order) |
 | R2 | Streaming features | The mobile banking app's events (login, password reset, new payee, transfer, biometric check) to Kafka topic app_events, replayed the same way; about 15 % arrive after the next event of their session |
-| R3 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events (account takeover patterns -> ato_alerts_cep) |
+| R3 | Streaming features | Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads the app events (account takeover patterns -> ato_alerts_cep; so far on the replay topic app_events_replay) |
 | R4 | Streaming features | Realtime features to card_features_rt, first (card, device) pairs to card_device_seen; ato_cep writes one alert per matched pattern to ato_alerts_cep |
 | R5 | Streaming features | raw_landing writes the raw authorizations as JSON lines to the S3 landing zone; DP1 (ingest to bronze) loads them into bronze.raw_card_authorizations (Delta) |
 | R6 | Streaming features | push-online reads card_features_rt and card_device_seen |
@@ -275,7 +280,7 @@ letter in each badge carries the flow. Two crossings are left (M7 over T2, M2 ov
 | R8 | Streaming features | push-offline reads the same two topics |
 | R9 | Streaming features | Appends them to gold.feat_card_auth_rt / gold.feat_card_device: the offline copy for training |
 | B1 | Batch data | Airflow submits the Spark jobs of DP1, the two DP2 pipelines and DP3 (a call, no data); each pipeline checks what it wrote with Great Expectations, then announces the new version of its zone, which starts the next one |
-| B2 | Batch data | DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes) |
+| B2 | Batch data | DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes, province mapping) |
 | B3 | Batch data | DP1 loads the new daily export folders from s3://core-banking-export |
 | B4 | Batch data | DP1 writes bronze, the DP2 silver pipeline silver, the DP2 gold pipeline gold (dbt) and the labels, DP3 the feat_* tables, all Delta in s3://lakehouse; bronze.raw_transactions goes through lakeFS: a branch per DP1 run, merged into main after the checks |
 | B5 | Batch data | Trino reads the Delta tables of any zone for analysts; the Hive Metastore tells it where each table lives (bronze.raw_transactions: catalog lakefs, branch main) |
@@ -291,7 +296,7 @@ letter in each badge carries the flow. Two crossings are left (M7 over T2, M2 ov
 | M1 | Monitoring and retraining | KServe's payload logger (the agent sidecar, mode all) posts every request and its response as CloudEvents to the broker serving/default |
 | M2 | Monitoring and retraining | Trigger drift-detector delivers them to POST /v1/inference-events: request events count the features, response events the score. Outlier and adversarial detectors would subscribe the same way |
 | M3 | Monitoring and retraining | Bin counts per feature and minute in Redis db 1; GET /v1/drift returns the PSI vs the training profile |
-| M4 | Monitoring and retraining | Data drift pipeline (DAG drift_monitoring, daily): the last 7 days of payments, their labels and point-in-time features |
+| M4 | Monitoring and retraining | Data drift pipeline (DAG drift_monitoring, daily): the last 7 days of payments, their labels (the simulation's ground truth) and point-in-time features |
 | M5 | Monitoring and retraining | Loads the production model to score them |
 | M6 | Monitoring and retraining | Logs PR-AUC, recall and PSI as a run of experiment card_fraud_monitoring |
 | M7 | Monitoring and retraining | On drift: a training pipeline run (train_fraud_model) through the Kubeflow Pipelines API, label_as_of = the DAG's day (a call, no data) |
@@ -309,8 +314,8 @@ agents' autoscaling:
 |---|---|
 | Every box is a deployable unit | a pod set in the kind cluster (tag = namespace), a compose service (tag = profile), a process on the host, or a service on the internet. The dotted frame groups the three agents: A6-A9, C5, O5 and O6 apply to each of them. The question enters the gateway (A3) between the coordinator and the card-data agent, so the gateway is visibly its first hop |
 | Arrows follow the data, the data on the arrow | the arrow from Redis to the card-data MCP server (A10) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
-| Numbered, one numbering per user flow | A, K, C and O, each with its own colour and 1..n; the colours are the ones of S, B, T and M, so the validated pairs carry over |
-| Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow of their own: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
+| Numbered, one numbering per user flow | A, K, C and O, each with its own colour and 1..n; K, C and O take the colours of B, T and M, so the validated pairs carry over, and A has its own (wine), at least 16 apart (OKLab x 100) from every other flow |
+| Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow of their own: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), kagent (runs the agents; admin chat UI), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
 
 No two arrows cross. The two CI lanes above the panels (C5, C6) and the lane between the model servers and the MCP
 server (C4) are there for that reason.
@@ -320,11 +325,11 @@ server (C4) are there for that reason.
 | # | Flow | Data / call |
 |---|---|---|
 | A1 | Agent conversation | A question in the support chat (https://support.<domain>, basic auth and rate limit at NGINX) |
-| A2 | Agent conversation | NGINX passes it to support-chat, which serves the chat page (streamed answers, no buffering) |
+| A2 | Agent conversation | NGINX passes it to support-chat, which serves the chat page (one A2A message/send per question) |
 | A3 | Agent conversation | support-chat forwards the question to the gateway route /a2a/coordinator and adds the support-app API key, so the key never reaches the browser. The gateway is the first hop of every question |
 | A4 | Agent conversation | Route a2a-coordinator: the gateway checks the key (only support-app may call it), applies the rate limit and passes the question to the coordinator over A2A |
 | A5 | Agent conversation | The coordinator's A2A calls to the two agents and its LLM calls, all through the gateway (kagent proxy.url) |
-| A6 | Agent conversation | Route agents-internal: a sub-task for card-data-agent; only the coordinator's key may call it |
+| A6 | Agent conversation | Route card-support-data-agents-internal: a sub-task for card-data-agent; only the coordinator's key may call it |
 | A7 | Agent conversation | ... and for risk-agent (risk-agent-b, the B side of its model-config A/B test, sits behind the same route) |
 | A8 | Agent conversation | card-data-agent's tool calls (MCP, its own API key) and LLM calls through the gateway |
 | A9 | Agent conversation | risk-agent's tool calls and LLM calls through the gateway |
@@ -360,7 +365,7 @@ server (C4) are there for that reason.
 
 Compose sits on top and the kind cluster underneath, both inside the Docker Desktop VM. The host runs the CLIs and
 the two llama.cpp servers. The column on the right holds the SaaS the platform talks to and, under it, the Azure
-resources an IaC run creates, reached from the host's terraform and ansible. The corridor
+resources an IaC run creates, reached from the host's terraform, ansible and kubectl. The corridor
 between compose and the VM's edge carries the three paths between the host and the cluster: pods to the model
 servers, the browser to NGINX, and kubectl/helm to the API server:
 

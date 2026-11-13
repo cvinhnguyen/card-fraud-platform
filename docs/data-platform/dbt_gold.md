@@ -2,8 +2,8 @@
 
 Analysts, the fraud labels job and the feature pipeline all need the same clean, joined view of the business:
 customers with their history, cards, merchants, dates, and one fact row per settled transaction. That view is the
-gold star schema, and it is built in the second half of DP2 (data pipeline: bronze to silver and gold), the DAG
-`dp2_silver_to_gold`, by dbt on Spark. dbt is a SQL build tool: each table is a `SELECT` model, dbt renders the SQL, works out the build order from
+gold star schema, and it is built in the second half of DP2 (data pipeline: bronze to silver and gold), the Airflow
+DAG (pipeline of tasks) `dp2_silver_to_gold`, by dbt on Spark. dbt is a SQL build tool: each table is a `SELECT` model, dbt renders the SQL, works out the build order from
 `ref()` / `source()`, runs it on Spark (Spark still does all the work), runs the tests, and writes docs and lineage
 for DataHub. The tables are `dim_customer` (SCD2: every past version of a customer kept),
 `dim_card`, `dim_merchant`, `dim_date` and the incremental `fact_transaction`.
@@ -19,8 +19,10 @@ for DataHub. The tables are `dim_customer` (SCD2: every past version of a custom
 ## Where it fits
 
 dbt reads silver (cleaned by `build_silver.py` in `dp2_bronze_to_silver`, the first half of DP2) and three bronze
-tables, and writes gold.
-Silver stays in PySpark because the dedup window and the MERGE on `created_ts` need DataFrame code; `mergeSchema` is
+tables, and writes gold. In [architecture.md](../architecture.md#layer-1-the-data-platform-top-band) this is the
+DP2 gold pipeline.
+Silver stays in PySpark because the dedup window and the MERGE that keeps the row with the newest `created_ts` need
+DataFrame code; `mergeSchema` is
 in DP1 and the skew benchmark is its own job. Everything after silver that is "join and reshape" is dbt. The gold
 tables feed the fraud labels job, DP3's features ([spark_jobs.md](spark_jobs.md)) and the analysts' queries in Trino;
 dbt's tests run inside `dp2_silver_to_gold`, so a failing test stops it before `publish_gold`, and DP3, which
@@ -39,7 +41,8 @@ runs on that event, does not build the features ([airflow.md](airflow.md)).
    reconciliation with silver) and skips everything downstream of a failure.
 5. `dbt docs generate` writes the manifest and catalog that DataHub reads for model lineage and column docs.
 
-The page also builds the same tables by hand in PySpark and compares them row by row, to show what dbt saves.
+A hand-written PySpark job builds the same tables and compares them row by row with dbt's, to measure what dbt saves
+([Same tables as hand-written PySpark](#same-tables-as-hand-written-pyspark)).
 
 ## Run it
 

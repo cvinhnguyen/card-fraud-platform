@@ -155,7 +155,7 @@ VIEWS = {
               ("dim_date", "date_key", "fact_transaction", "date_key", "1n", ""),
               ("dim_card", "card_id", "fact_transaction", "card_id", "1n", ""),
               ("dim_merchant", "merchant_id", "fact_transaction", "merchant_id", "1n", ""),
-              ("fact_transaction", "transaction_id", "label_transaction", "transaction_id", "11", "R"),
+              ("label_transaction", "transaction_id", "fact_transaction", "transaction_id", "11", "R"),   # a label row has 0..1 fact row
               ("dim_card", "card_id", "feat_card_txn_stats_daily", "card_id", "1n", "")],
              "Gold: star schema around fact_transaction (dbt), the label table and the Feast feature table."),
 }

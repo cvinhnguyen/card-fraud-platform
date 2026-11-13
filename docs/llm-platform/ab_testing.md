@@ -19,8 +19,8 @@ How the two tests split the traffic at the gateway:
 ```mermaid
 flowchart LR
     co["coordinator"] -->|"A2A, x-kagent-host: risk-agent"| gw["agentgateway"]
-    gw -->|50 %| ra["risk-agent<br/>global model config"]
-    gw -->|50 %| rb["risk-agent-b<br/>temperature 0.2, max 512 tokens"]
+    gw -->|"50 % (100 % since the test ended)"| ra["risk-agent<br/>global model config"]
+    gw -->|"50 % (0 %, header x-agent-variant: b)"| rb["risk-agent-b<br/>temperature 0.2, max 512 tokens"]
     ra & rb -->|"/v1 (every agent)"| llm["route llm"]
     llm -->|"80 % (100 % since the canary stopped)"| a["Qwen3-8B<br/>llama.cpp via llm-d"]
     llm -->|"20 % (0 %, header x-llm-variant: b)"| b["Qwen3.8-27B<br/>Groq"]
@@ -29,11 +29,13 @@ flowchart LR
 ## Where it fits
 
 Both tests live in Layer 3 (LLM and agent platform), at the agentgateway, the one entry point every agent call
-passes ([agents.md](agents.md), [llm_platform.md](llm_platform.md)). The gateway takes the coordinator's A2A
+passes ([architecture.md](../architecture.md#system-diagram-layer-3), arrow A7 and the A/B dashboard of O3;
+[agents.md](agents.md), [llm_platform.md](llm_platform.md)). The gateway takes the coordinator's A2A
 (agent-to-agent) calls to the risk agent and every agent's LLM calls on route `llm`, and splits each by weight
 between two backends. Its per-backend metrics feed the Grafana dashboard
 ([observability.md](../operations/observability.md)), and the evaluation writes per-question results. The eval gate
-of the CD pipeline ([novel_eval_gate.md](novel_eval_gate.md)) uses the same questions and the same scoring.
+of the CD (continuous delivery) pipeline ([novel_eval_gate.md](novel_eval_gate.md)) uses the same questions and the
+same scoring.
 
 ## How it works
 
@@ -44,7 +46,7 @@ of the CD pipeline ([novel_eval_gate.md](novel_eval_gate.md)) uses the same ques
    (`x-agent-variant`, `x-llm-variant`) pins a call to one side, so an evaluation can measure each side on the same
    questions.
 3. The gateway's metrics carry the backend as a label, so the dashboard compares the two sides on live traffic:
-   calls per minute, latency p50, error share, tokens per call
+   calls per minute, latency p50 (the median), error share, tokens per call
    ([Monitoring](#monitoring-dashboard-card-support---ab-tests)).
 4. `run_eval.py` sends the eval questions through the gateway, pinned to A and then to B, and counts an answer as
    correct when it states every expected fact ([Evaluation](#evaluation)).
@@ -56,11 +58,17 @@ of the CD pipeline ([novel_eval_gate.md](novel_eval_gate.md)) uses the same ques
 The evaluation sends the dataset through the gateway; `--mode agent` asks the risk agent over A2A, `--mode llm` asks
 route `/v1`, and `--variant a|b` pins one side:
 
+The two keys come from `infra/.env`: `A2A_KEY` is the coordinator's key for the sub-agents (`A2A_KEY_COORDINATOR`,
+the key the Jenkins eval stage uses too) and `AGW_KEY` is the agents' gateway key (`AGW_API_KEY`).
+
 ```bash
+export A2A_KEY=$(grep '^A2A_KEY_COORDINATOR=' infra/.env | cut -d= -f2-) AGW_KEY=$(grep '^AGW_API_KEY=' infra/.env | cut -d= -f2-)
 kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}'   # the gateway nodePort
 docker run --rm --network kind -e A2A_KEY -e AGW_KEY -e GATEWAY=http://fraud-control-plane:<gateway nodePort> \
   -v "$PWD:/repo" -w /repo python:3.13-slim python agents/eval/run_eval.py --mode agent --variant b
 ```
+
+Add `--out agents/eval/results/<name>.json` to keep the per-question answers.
 
 ## Agent model config (risk-agent A vs B)
 
@@ -69,9 +77,11 @@ The test is configured by `abTests` in
 
 ```yaml
 # A/B test of the risk agent's model config: B samples near-greedily and caps its answers (the global config leaves
-# llama.cpp's defaults: temperature 0.8, no cap). Half of the coordinator's calls to risk-agent go to risk-agent-b.
+# llama.cpp's defaults: temperature 0.8, no cap). The test ran at weight 50 (half of the coordinator's calls to
+# risk-agent-b); B lost (docs/llm-platform/ab_testing.md), so it gets no live calls and stays reachable with header
+# x-agent-variant: b for later evaluations. Delete the entry to remove risk-agent-b.
 abTests:
-  risk-agent: {variant: risk-agent-b, modelConfig: qwen3-8b-precise, weight: 50}
+  risk-agent: {variant: risk-agent-b, modelConfig: qwen3-8b-precise, weight: 0}
 modelConfigs:
   qwen3-8b-precise: {temperature: "0.2", maxTokens: 512}
 ```
@@ -86,11 +96,11 @@ no cap).
 
 The coordinator still calls `risk-agent`; the A2A route of the release
 ([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/a2a-gateway.yaml))
-sends 50 % of those calls to each side. Header `x-agent-variant: a|b` pins a call to one side, for evaluations. The
+sent 50 % of those calls to each side during the test (0 % to B since, see [Decisions](#decisions)). Header `x-agent-variant: a|b` pins a call to one side, for evaluations. The
 gateway's metrics (label `backend`) give the online comparison: calls, latency p50 and error share per variant.
 
 For an agent listed in `abTests` the template writes three rules: pinned to A, pinned to B, and the weighted split
-([`agents/chart/templates/a2a-gateway.yaml` L29-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
+([`agents/chart/templates/a2a-gateway.yaml` L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
 
 ```yaml
     {{- range $name, $a := .Values.agents }}
@@ -136,7 +146,7 @@ its own User-Agent (see [Gotchas](#gotchas)). The rules of route `llm` as they a
     - matches: [{path: {type: PathPrefix, value: /v1}, headers: [{name: x-llm-variant, value: b}]}]
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: qwen3-8-27b-groq, filters: [{type: RequestHeaderModifier, requestHeaderModifier: {set: [{name: User-Agent, value: agentgateway}]}}]}]
       timeouts: {request: 300s}
-    # Canary stopped on 2026-10-21 (docs/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
+    # Canary stopped on 2026-10-21 (docs/llm-platform/ab_testing.md): at 20 % the dashboard showed B refusing agent calls (429, the
     # free tier's output tokens a minute). B stays reachable with the header; raise its weight again on a paid tier.
     - matches: [{path: {type: PathPrefix, value: /v1}}]
       backendRefs:
@@ -174,7 +184,8 @@ held 12 card-policy questions at the time of these runs (fees, disputes, authent
 with the facts a correct answer must state, taken from the bank documents
 ([`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/generator/knowledge)).
 `run_eval.py` sends them through the gateway and scores each answer. An answer is correct when it states every
-expected fact
+expected fact as a whole term and not negated ("3%" does not match "1.3%", "not free" does not match "free"; every
+stored answer and every eval-gate answer in Langfuse was re-scored with this rule on 2026-11-12, with the same results)
 ([`agents/eval/run_eval.py` L31-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/run_eval.py#L31-L34)).
 In `agent` mode the question goes to the risk agent over A2A (as the coordinator does), in `llm` mode straight to
 `/v1` with the policy document as context
@@ -196,9 +207,10 @@ dashboard shows the route's share (about 78 / 22 of the LLM calls in the run).
 
 ## Decisions
 
-Agent model config: keep A and remove B. Near-greedy sampling with a cap improved neither accuracy (7 vs 8 of 12) nor
-latency (both ~7.5 s); the latency comes from the GPU. To end the test, delete the `abTests` entry: the next deploy
-removes `risk-agent-b` and the split.
+Agent model config: keep A. Near-greedy sampling with a cap improved neither accuracy (7 vs 8 of 12) nor latency
+(both ~7.5 s); the latency comes from the GPU. B's weight is 0, so every coordinator call goes to A and B stays
+reachable with the header for later evaluations, as on route `llm`. Deleting the `abTests` entry removes
+`risk-agent-b` at the next deploy.
 
 The evaluation did find where both sides fail. They lose the same questions the same way: the agent answers "the
 policy could not be checked" in 2 s without calling `search_policy`, or after hits that did not include the fee table

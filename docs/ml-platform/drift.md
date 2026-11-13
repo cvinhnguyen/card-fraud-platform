@@ -6,7 +6,7 @@ Drift API measures input drift (PSI: how far each feature's distribution has mov
 training data) on every scored payment in real time, and the data drift pipeline, a daily Airflow DAG, checks the
 production model against ground-truth labels and starts a training pipeline run on Kubeflow Pipelines (KFP) when the
 model degrades. Two checks are needed because labels arrive weeks late: the live check sees the inputs change at once
-but cannot tell if the model got worse, the daily check can tell, but only for payments whose labels are known.
+but cannot tell if the model got worse; the daily check can tell, but only for payments whose labels are known.
 
 | | |
 |---|---|
@@ -19,7 +19,7 @@ but cannot tell if the model got worse, the daily check can tell, but only for p
 ## Where it fits
 
 Drift detection is the monitoring part of Layer 2 (ML platform), the brown M flow of the
-[overview](../architecture.md#layer-2-the-ml-platform-middle-band). It reads every request and response of the model
+[overview](../architecture.md#layer-2-the-ml-platform-right-panel). It reads every request and response of the model
 server ([serving.md](serving.md)), which KServe's payload logger sends through a Knative Broker, and the production
 model's reference profile from MLflow. The daily check also
 reads the ground-truth labels and the point-in-time features of the Feast offline store
@@ -49,8 +49,6 @@ adds.
 4. Retrain: when a PSI is above 0.25 or the PR-AUC fell more than 0.05 below the model's own test score, the DAG
    starts a training pipeline run with `label_as_of` = that day. The new model is registered as a challenger only
    when it beats production on the same test period, and a reviewer promotes it.
-5. Why two checks: labels arrive weeks late. The live check sees the inputs change at once but cannot tell whether
-   the model got worse; the daily check can, but only for payments whose labels are known.
 
 ## Run it
 
@@ -61,7 +59,7 @@ see [serving.md](serving.md)):
 
 ```bash
 python generator/generate_drift.py --upload                      # live period -> data/drift/; export + labels to S3
-python services/predictor/fetch_model.py --alias production       # model + reference_profile.json, before drift-api starts
+MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python services/predictor/fetch_model.py --alias production   # model + reference_profile.json, before drift-api starts
 docker compose -f infra/docker-compose.yaml --profile ml up -d drift-api
 kubectl get trigger drift-detector -n serving                     # READY True, subscriber http://drift-api:8000/...
 curl -s http://127.0.0.1:8002/v1/drift                            # PSI per input over the last 15 minutes
@@ -184,21 +182,23 @@ The rules the endpoint follows
   The broker does not retry a `400`.
 - The metric `drift_events_total{type="request"|"response"}` counts the instances read from each kind of event.
 
+How the counts become a PSI:
+
 - Reference = `reference_profile.json` of the production model: decile edges of each input and of the score on
   the validation period, the share of rows per bin, plus a `missing` bin (a feature that suddenly goes NULL, a
   broken join or a dead stream, drifts too).
   [`services/predictor/fetch_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor/fetch_model.py)
   downloads it next to the model; run it before starting `drift-api`, because compose bind-mounts the file
-  ([`infra/docker-compose.yaml` L735-L736](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L738-L739))
+  ([`infra/docker-compose.yaml` L738-L739](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L738-L739))
   and a missing file becomes an empty directory.
 - Live histograms in Redis, one hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h,
-  [`services/drift_api/app/store.py` L24-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/app/store.py#L24-L35)).
+  [`services/drift_api/app/store.py` L24-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/app/store.py#L24-L35)).
   The replicas keep no state: any number of them can count into the same buckets.
 - `GET /v1/drift` sums the last 15 minutes and computes the PSI per input,
   `sum (live% - ref%) * ln(live% / ref%)`: < 0.1 stable, 0.1-0.25 moderate, > 0.25 major. Below `MIN_EVENTS` (100,
   ~10 per decile bin) an input is `too_few_events` and cannot raise `drift`: the first live run reported PSI 12 and
   `drift: true` from 9 events
-  ([`services/drift_api/app/main.py` L75-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/app/main.py#L112-L123)).
+  ([`services/drift_api/app/main.py` L112-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/app/main.py#L112-L123)).
   The gauges `drift_psi{input}` follow every report.
 - The Drift API counts what the model received and answered. When the Scoring API gives up on a slow model and falls
   back, the model still answers and both events are counted. When the model fails, only the request is counted.
@@ -277,8 +277,8 @@ the ground truth:
 
 | Day | Phase | Payments | Frauds | Live PR-AUC | Largest input PSI |
 |---|---|---:|---:|---:|---|
-| 10-19 | normal | 8,021 | 22 | **0.902** | `days_since_last_active` 0.81; every other input < 0.03 |
-| 11-03 | `fraud_shift` | 7,935 | 48 | **0.293** | `days_since_last_active` 4.88; every other input < 0.03 |
+| 10-19 | normal | 8,021 | 22 | 0.902 | `days_since_last_active` 0.81; every other input < 0.03 |
+| 11-03 | `fraud_shift` | 7,935 | 48 | 0.293 | `days_since_last_active` 4.88; every other input < 0.03 |
 
 - Concept drift, as designed: the inputs of 11-03 look like 10-19's (PSI < 0.03 on amount, channel, device,
   realtime counts...), the fraud rate doubles and PR-AUC falls from 0.90 to 0.29. The Drift API cannot see this;
@@ -324,7 +324,7 @@ The live period is dated after the machine clock (the runs here were on 2026-10-
 whose logical date is in the future (`RunnableExecDateDep`), so a backfill of DP1 for 2026-11-03 deadlocked with
 every task waiting. Two settings make it work without changing any DAG's schedule.
 `AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE` (compose,
-[`infra/docker-compose.yaml` L369-L371](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L369-L373))
+[`infra/docker-compose.yaml` L369-L373](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L369-L373))
 lets the scheduler run the *triggered* DAGs (DP2, DP3 and the materialize pipeline `feast_materialize`, which were
 `schedule=None` at the time of these runs and started by DP1's and DP2's trigger tasks), and the two daily
 DAGs run as `airflow dags test <dag> <ds>`, which executes the same tasks in-process and records the run like any
@@ -345,8 +345,8 @@ active on 11-03, 0 missing online, 0 stale), the DAG ran for two windows of the 
 
 | `ds` | Window | Rows | Fraud rate | PR-AUC (test 0.828) | recall @ 1% FPR | Worst input PSI | Branch |
 |---|---|---:|---:|---:|---:|---|---|
-| 2026-10-22 | 10-16 .. 10-22, normal | 56,025 | 0.31% | **0.869** | 0.966 | 0.019 `days_since_card_issue` | `no_drift` |
-| 2026-11-02 | 10-27 .. 11-02, `fraud_shift` | 55,850 | 0.52% | **0.277** | 0.369 | 0.022 `days_since_card_issue` | `trigger_retraining` |
+| 2026-10-22 | 10-16 .. 10-22, normal | 56,025 | 0.31% | 0.869 | 0.966 | 0.019 `days_since_card_issue` | `no_drift` |
+| 2026-11-02 | 10-27 .. 11-02, `fraud_shift` | 55,850 | 0.52% | 0.277 | 0.369 | 0.022 `days_since_card_issue` | `trigger_retraining` |
 
 The two windows have the same inputs (no PSI above 0.03) and opposite verdicts: the decision came from the
 PR-AUC drop alone, which is what concept drift looks like and why this check needs ground truth. Each run is an
@@ -372,7 +372,7 @@ once on MLflow's presigned URLs (same page) and passed after a KFP retry of the 
 
 | Test period of 11-02 (same rows for both) | Retrained challenger | Production v1 |
 |---|---:|---:|
-| PR-AUC | **0.883** | 0.844 |
+| PR-AUC | 0.883 | 0.844 |
 | recall @ 1% FPR | 0.9275 | 0.9283 |
 
 `passed = False`, nothing registered (at the time a model that did not pass was not registered; now it is kept as a
@@ -394,7 +394,7 @@ On the Airflow side:
 - The first try of DP1 for the live days failed its own validation: a manual run's data interval ends on ds itself,
   so the export bound `data_interval_end` loaded the folders up to ds while the validation (correctly) looked for
   `ds + 1`. DP1 now uses `macros.ds_add(ds, 1)` for the sensor and the load
-  ([`pipelines/airflow/dags/dp1_source_to_bronze.py` L45-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L47-L54)),
+  ([`pipelines/airflow/dags/dp1_source_to_bronze.py` L47-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L47-L54)),
   the same day as the validation in every kind of run.
 - `trigger_retraining(host, ds)` failed with `The key 'ds' in args is a part of kwargs and therefore reserved`:
   Airflow passes its context by name, so the parameter is now `label_as_of`.
@@ -417,8 +417,10 @@ On the event feed:
 
 ## Limits
 
-The label delay limits what retraining can do: `label_as_of` 2026-11-02 trains on payments up to 60 days before it
-(maturity window), so not a single `fraud_shift` payment (from 10-26) is in the training set yet. Retraining cannot
+The label delay limits what retraining can do: `label_as_of` 2026-11-02 uses only payments at least 60 days old (the
+maturity window). Its test period ends 60 days before that day and its training period about 300 days before (two
+60-day evaluation periods, each after a 60-day gap, `ml/fraud_ml/split.py`), so not a single `fraud_shift` payment
+(from 10-26) is in the training set yet. Retraining cannot
 fix this concept drift until its labels mature (or until confirmed frauds are labelled faster than the 60-day worst
 case); what the platform does today is detect it the week it starts and report it.
 

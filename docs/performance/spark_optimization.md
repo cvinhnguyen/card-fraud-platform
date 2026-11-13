@@ -2,12 +2,12 @@
 
 Three problems in the bank's batch data would make the daily pipelines slow or their numbers wrong if nothing were
 done about them ([data_characteristics.md](../data-platform/data_characteristics.md)). Join skew: 70% of the payments go to 10 big
-merchants, so one Spark task does most of the work and the whole job waits for it. Schema evolution: two columns
-appear in the exports from 2024-07-01, so older and newer files no longer have the same columns. Duplicates: an
-export re-run sends 2% of the rows twice, which would count those payments twice in every total. Each section
-starts from the baseline (what goes wrong without the fix), then shows the fix, the numbers and where it runs in
-Airflow: DP1 (data pipeline: ingest to bronze) and DP2 (bronze to silver and gold), summed up in
-[In the Airflow pipeline](#in-the-airflow-pipeline), details in [airflow.md](../data-platform/airflow.md).
+merchants, so one Spark task does most of the work and the whole job waits for it. Schema evolution: payments from
+2024-07-01 carry two new columns, so older and newer export files no longer have the same columns. Duplicates: an
+export re-run sends 2% of the rows twice, which would count those payments twice in every total. For each problem
+the baseline (what goes wrong without the fix) comes first, then the fix and its numbers. The fixes run in two
+Airflow pipelines, DP1 (data pipeline: ingest to bronze) and DP2 (bronze to silver and gold)
+([In the Airflow pipeline](#in-the-airflow-pipeline), [airflow.md](../data-platform/airflow.md)).
 
 | | |
 |---|---|
@@ -20,12 +20,13 @@ Airflow: DP1 (data pipeline: ingest to bronze) and DP2 (bronze to silver and gol
 | Problem | Job | Airflow task | Section |
 |---|---|---|---|
 | Merchant join skew: top 10 merchants have 70% of the rows | [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/skew_join.py) (benchmark of 4 join methods, run by hand); the pipeline applies the winner, broadcast, to its own joins | `dp2_bronze_to_silver.build_silver`, `dp2_silver_to_gold.build_labels` | [Merchant join skew](#merchant-join-skew) |
-| Schema evolution: `auth_method`, `three_ds_version` appear in the exports on 2024-07-01 | [`pipelines/spark/ingest_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py) (DP1) | `dp1_source_to_bronze.ingest_exports` | [Schema evolution](#schema-evolution) |
+| Schema evolution: `auth_method`, `three_ds_version` appear in the payments from 2024-07-01 (export files from 2024-07-02) | [`pipelines/spark/ingest_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py) (DP1) | `dp1_source_to_bronze.ingest_exports` | [Schema evolution](#schema-evolution) |
 | Duplicates: 2% of the exported rows, from export re-runs | [`pipelines/spark/build_silver.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py) (DP2) | `dp2_bronze_to_silver.build_silver` | [Duplicates](#duplicates) |
 
 ## Where it fits
 
-The three fixes run inside the Layer 1 (data platform) pipelines: schema evolution in DP1's export load, the
+The three fixes run inside the Layer 1 (data platform) pipelines
+([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)): schema evolution in DP1's export load, the
 duplicates and the broadcast joins in DP2 ([airflow.md](../data-platform/airflow.md),
 [spark_jobs.md](../data-platform/spark_jobs.md)). The benchmarks that justify them run by hand on the same compose
 Spark cluster. [scale_100g.md](scale_100g.md) repeats the skew benchmark and the dedup at 100 GB, and
@@ -37,8 +38,8 @@ carries.
 1. Every Spark job of the pipeline is an Airflow task made by one helper, one Spark application at a time with the
    same settings for every job, and every zone is validated before the next DAG reads it
    ([In the Airflow pipeline](#in-the-airflow-pipeline)).
-2. Join skew: a benchmark joins the transactions with the merchants four ways (sort-merge baseline, salting, AQE and
-   broadcast) and compares the slowest task with the median. The pipeline uses the winner, broadcast, for its joins
+2. Join skew: a benchmark joins the transactions with the merchants four ways (sort-merge baseline, salting, AQE
+   (adaptive query execution) and broadcast) and compares the slowest task with the median. The pipeline uses the winner, broadcast, for its joins
    with small tables ([Merchant join skew](#merchant-join-skew)).
 3. Schema evolution: without `mergeSchema` Spark silently drops the two new columns on read, and Delta refuses the
    append. DP1 sets `mergeSchema` on both sides, so the table gains the columns once and older rows keep NULL, which
@@ -46,11 +47,10 @@ carries.
 4. Duplicates: DP2 keeps one row per `transaction_id`, the one with the latest `created_ts`, and MERGEs the new
    export dates into silver, so a re-run or a late duplicate cannot double count. The check after it requires one row
    per id ([Duplicates](#duplicates)).
-5. Each section shows the baseline first (what goes wrong), then the fix with its numbers and screenshots.
 
 ## Run it
 
-From the repo root, with the `batch` profile up:
+From the repo root, with the `batch` profile up (stop `spark-thrift` first if the `dbt` profile is up too):
 
 ```bash
 # Merchant join skew: 4 methods on the data unioned 4 times, then the skew level sweep
@@ -74,9 +74,9 @@ Every Spark job of the pipeline is an Airflow task made by one helper, `spark_jo
 [`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py):
 a `SparkSubmitOperator` to the standalone master, in the pool `spark` (1 slot, so Spark applications queue in Airflow
 instead of fighting for the 3 GB worker), with the same Spark settings for every job (`SPARK_CONF`,
-[`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76)).
+[`pipelines/airflow/dags/common.py` L68-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76)).
 The helper
-([`pipelines/airflow/dags/common.py` L52-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L79-L86)):
+([`pipelines/airflow/dags/common.py` L79-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L79-L86)):
 
 ```python
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
@@ -89,14 +89,14 @@ def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dic
                                **kwargs)
 ```
 
-The fixes of this document run inside these tasks, and each zone is validated (Great Expectations) before the next
+The three fixes run inside these tasks, and each zone is validated (Great Expectations) before the next
 DAG reads it:
 
 | Fix | DAG and task | What the task runs | Checked by |
 |---|---|---|---|
 | Schema evolution | `dp1_source_to_bronze.ingest_exports`, after the S3 sensor `wait_for_export` and `create_branch` | `ingest_bronze.py --part exports --until <ds+1> --txn-root s3a://bronze/dp1_<ds>`: reads only the new export folders, `mergeSchema` on read and append, on the run's lakeFS branch | `validate_dp1`, on the branch before `merge_to_main` |
 | Duplicates | `dp2_bronze_to_silver.build_silver` | `build_silver.py`: `row_number()` per `transaction_id` (latest `created_ts`), MERGE into `silver.stg_transactions` | `validate_dp2_silver`: row count = distinct ids of the bronze slice, `transaction_id` unique |
-| Skew (join with a small table) | `build_silver` and `build_labels` | broadcast joins: the 34-unit mapping ([`pipelines/spark/build_silver.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L30)) and the card owner table ([`pipelines/spark/build_labels.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L61)); AQE stays on (Spark's default, not overridden in `spark-defaults.conf`) | `validate_dp2_gold` |
+| Skew (join with a small table) | `build_silver` and `build_labels` | broadcast joins: the 34-unit mapping ([`pipelines/spark/build_silver.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L30)) and the card owner table ([`pipelines/spark/build_labels.py` L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L61)); AQE stays on (Spark's default, not overridden in `spark-defaults.conf`) | `validate_dp2_gold` |
 
 DP1 wires them like this: the sensor and the run's lakeFS branch gate the export append, while the Postgres snapshot
 and the landing load run in parallel. The append is committed on the branch and `validate_dp1` checks it there. Only a
@@ -290,8 +290,8 @@ generated data), so compare methods within a row, not across rows. Median of 3 r
 
 ## Schema evolution
 
-Core banking added two columns to the nightly export on 2024-07-01 (an authentication regulation). Every export file
-up to that day has 12 columns, every later file has 14:
+Core banking added two columns to its payments from 2024-07-01 (an authentication regulation). The export of a day's
+payments is dated the next day, so every export file up to 2024-07-01 has 12 columns and every later file has 14:
 
 | Export files | Columns |
 |---|---|
@@ -322,7 +322,7 @@ needs `--txn-root`, see [spark_jobs.md](../data-platform/spark_jobs.md#increment
 |---|---|---|
 | 1 | `--until 2024-07-01` | +182 export dates, 1,455,416 rows, table without the auth columns (82 s) |
 | 2 | `--until 2024-07-02 --no-merge-schema` | fails: `[DELTA_METADATA_MISMATCH] A schema mismatch detected when writing to the Delta table`, nothing written |
-| 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows (132 s; 510 s on a run where the machine was short of RAM) |
+| 3 | no flags (`mergeSchema` on read and write) | +837 export dates, 8,159,516 rows in total (132 s; 510 s on a run where the machine was short of RAM) |
 
 The failure in step 2 is the safe default: a source that changes its schema cannot silently corrupt the table.
 
@@ -429,6 +429,7 @@ silver row count must equal the distinct ids of the bronze slice and `transactio
 ## Limits
 
 - The dedup window shuffles and sorts every row. At 100 GB a probe estimated about 4 days (Docker disk then on a USB
-  HDD), so the 100 GB run dedups in batches of export dates (both copies of a row always share an `export_date`) and
-  runs the window on the 2% duplicated ids only, found from the id column and broadcast:
-  [scale_100g.md](scale_100g.md#dedup-at-scale).
+  HDD). The 100 GB dedup was therefore measured on a 20-date slice: the variant that scales works in batches of
+  export dates (both copies of a row always share an `export_date`) and runs the window on the 2% duplicated ids
+  only, found from the id column and broadcast. The pipeline's `build_silver.py` still uses the plain window
+  ([scale_100g.md](scale_100g.md#dedup-at-scale)).

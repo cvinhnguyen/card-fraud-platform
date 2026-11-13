@@ -1,7 +1,7 @@
 # Infrastructure as code (Azure)
 
 Cloud resources clicked together by hand cannot be rebuilt the same way twice, and nobody can review what changed.
-Infrastructure as code writes them down instead: Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it; kubectl deploys the
+Infrastructure as code (IaC) writes them down instead: Terraform creates the cloud resources; Ansible configures the VM and deploys the services on it; kubectl deploys the
 same model image to AKS, which pulls it from the registry. The cloud is an Azure for Students subscription ($100
 credit, no card): it caps a region at 6 vCPU, refuses quota increases and only allows 5 EU regions. Of those, only
 `polandcentral` lets AKS use the B-series the quota covers (in `germanywestcentral` AKS only offers v6/v7 sizes, whose
@@ -12,7 +12,7 @@ quota is 0), so everything runs there: 2 vCPU for the VM + 2 for the AKS node.
 | Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/aks/predictor.yaml) |
 | Runs on | Azure, resource group `rg-cardfraud-dev` in `polandcentral` (one IaC run: created, checked, destroyed); Terraform, Ansible and kubectl run from the PC |
 | Reads | `services/predictor/` (code + production model) for the VM, the image `fraud/predictor:1` of the local registry for AKS |
-| Writes | the Azure resources, `infra/ansible/inventory/hosts.ini`, `infra/.secrets/aks-kubeconfig`, the local Terraform state (all three gitignored) |
+| Writes | the Azure resources, `infra/ansible/inventory/hosts.ini`, `infra/.secrets/aks-kubeconfig`, the local Terraform state (the three files are gitignored) |
 | Related | [serving.md](../ml-platform/serving.md), [architecture.md](../architecture.md) |
 
 What one IaC run creates and deploys:
@@ -41,8 +41,8 @@ local platform serves.
 
 ## How it works
 
-1. Terraform creates the resources in one resource group: a network with a security group that admits only the
-   admin's IP, an Ubuntu VM, a one-node AKS (Azure Kubernetes Service) cluster and a container registry (ACR). It
+1. Terraform creates the resources in one resource group: a virtual network (VNet) with a network security group
+   (NSG) that admits only the admin's IP, an Ubuntu VM, a one-node AKS (Azure Kubernetes Service) cluster and a container registry (ACR). It
    also writes Ansible's inventory and the AKS kubeconfig ([Terraform](#terraform)).
 2. Ansible configures the VM over SSH: packages and a firewall, Docker, the model server built from the source on
    the VM, and node_exporter for metrics. The play fails unless the model answers a smoke prediction, and a second
@@ -66,7 +66,8 @@ kubectl --kubeconfig ../../../.secrets/aks-kubeconfig get nodes
 ```
 
 Configure the VM with Ansible, from the repo root. `services/predictor/model/` is gitignored:
-`python services/predictor/fetch_model.py --alias production` fills it.
+`python services/predictor/fetch_model.py --alias production` fills it from MLflow (set `MLFLOW_TRACKING_URI`, for
+the local platform `http://127.0.0.1:5000`).
 
 ```bash
 # macOS / Linux
@@ -150,7 +151,7 @@ infra/terraform/
   ([`infra/terraform/modules/aks/main.tf` L31-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/terraform/modules/aks/main.tf#L31-L33)).
 - The subscription id comes from `ARM_SUBSCRIPTION_ID`, never from a committed file. The state, the plan, the
   inventory (VM IP) and the kubeconfig are gitignored. The state is local: one person runs this.
-- `admin_cidr` is required and validated (`0.0.0.0/0` is refused), so the VM is never open to the whole internet.
+- `admin_cidr` is required and must be one address (`/32`), so the VM is never open to a whole network.
 
 The environment wires the resource group and the four modules
 ([`infra/terraform/envs/dev/main.tf` L17-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/terraform/envs/dev/main.tf#L17-L61)).
@@ -163,8 +164,8 @@ variable "admin_cidr" {
   type        = string
 
   validation {
-    condition     = can(cidrhost(var.admin_cidr, 0)) && var.admin_cidr != "0.0.0.0/0"
-    error_message = "admin_cidr must be a CIDR and not the whole internet."
+    condition     = can(cidrhost(var.admin_cidr, 0)) && endswith(var.admin_cidr, "/32")
+    error_message = "admin_cidr must be one address as /32 (the admin's public IP)."
   }
 }
 ```
@@ -398,4 +399,4 @@ exists:
   `~/.ssh` with mode 600 first
   ([`infra/ansible/Dockerfile` L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/ansible/Dockerfile#L8)).
 - Run on a loaded Docker Desktop VM, the Ansible container once failed reading `model.json` with
-  `[Errno 12] Cannot allocate memory` (the host, not the VM); the rerun passed.
+  `[Errno 12] Cannot allocate memory` on the PC, where Ansible runs, not on the Azure VM; the rerun passed.

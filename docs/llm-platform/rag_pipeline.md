@@ -2,12 +2,12 @@
 
 An agent that answers from memory makes up fees and rules. The risk agent instead answers policy questions from the
 bank's own card documents and quotes the clause it used. The documents are the terms and conditions, the fee
-schedule, the dispute policy, the authentication rules and the FAQ. The RAG data pipeline, the Layer 3 Airflow DAG
-`rag_ingest`, prepares them for the agent: it cuts each document into chunks (one clause, section or FAQ question
-each), turns every chunk into a 1024-number vector of its meaning, and stores chunks and vectors in a Feast feature
-view. Two MCP (Model Context Protocol) tool servers read that view: policy-rag's `search_policy` finds the chunks
-closest to a question (RAG, retrieval-augmented generation), and card-data's `get_policy_chunk` returns one chunk by
-id. The CI/CD pipeline that releases it is in [cicd.md](../operations/cicd.md#rag-data-pipeline).
+schedule, the dispute policy, the authentication rules and the FAQ. The RAG (retrieval-augmented generation) data
+pipeline, the Layer 3 Airflow DAG `rag_ingest`, prepares them for the agent. It cuts each document into chunks (one
+clause, section or FAQ question each), turns every chunk into a 1024-number vector of its meaning, and stores chunks
+and vectors in a Feast feature view. Two MCP (Model Context Protocol) tool servers read that view: policy-rag's
+`search_policy` finds the chunks closest to a question, and card-data's `get_policy_chunk` returns one chunk by id.
+The CI/CD pipeline that releases it is in [cicd.md](../operations/cicd.md#rag-data-pipeline).
 
 | | |
 |---|---|
@@ -16,6 +16,18 @@ id. The CI/CD pipeline that releases it is in [cicd.md](../operations/cicd.md#ra
 | Reads | `s3://bank-documents/*.md` (5 markdown files) |
 | Writes | Feast project `card_support_kb`: offline history `s3://lakehouse/kb/policy_chunks.parquet`, online store pgvector (`vector-db`); validation reports `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json`; assertions and lineage in DataHub |
 | Related | [cicd.md](../operations/cicd.md#rag-data-pipeline), [agents.md](agents.md), [airflow.md](../data-platform/airflow.md), [datahub.md](../data-platform/datahub.md) |
+
+## Where it fits
+
+The pipeline is the K flow of the Layer 3 picture ([architecture.md](../architecture.md#system-diagram-layer-3)).
+It reads the five bank documents from the bucket `bank-documents` and calls the embedding server on the host
+([llm_platform.md](llm_platform.md)). It writes the chunks and their vectors to the Feast project
+`card_support_kb`: the history to the lakehouse, the latest version to pgvector, which the policy-rag and card-data
+tool servers read ([agents.md](agents.md)). Its checks and lineage go to DataHub
+([datahub.md](../data-platform/datahub.md)). The Jenkins pipeline `rag-pipeline` releases a new image of the steps
+and starts the DAG ([cicd.md](../operations/cicd.md#rag-data-pipeline)).
+
+## How it works
 
 The DAG `rag_ingest`, from the documents to the stores and DataHub:
 
@@ -30,18 +42,6 @@ flowchart LR
     p --> v["validate_rag<br/>7 checks"]
     v -->|"assertions + lineage"| dh["DataHub"]
 ```
-
-## Where it fits
-
-The pipeline is the K flow of the Layer 3 picture ([architecture.md](../architecture.md#system-diagram-layer-3)).
-It reads the five bank documents from the bucket `bank-documents` and calls the embedding server on the host
-([llm_platform.md](llm_platform.md)). It writes the chunks and their vectors to the Feast project
-`card_support_kb`: the history to the lakehouse, the latest version to pgvector, which the policy-rag and card-data
-tool servers read ([agents.md](agents.md)). Its checks and lineage go to DataHub
-([datahub.md](../data-platform/datahub.md)). The Jenkins pipeline `rag-pipeline` releases a new image of the steps
-and starts the DAG ([cicd.md](../operations/cicd.md#rag-data-pipeline)).
-
-## How it works
 
 1. Someone changes a document or the code. The CI pipeline builds a new image, sets the Airflow Variable
    `rag_image` and starts the DAG. The DAG has no schedule of its own.
@@ -59,7 +59,9 @@ and starts the DAG ([cicd.md](../operations/cicd.md#rag-data-pipeline)).
 
 ## Run it
 
-With the embedding server running on the host and the kind cluster stopped (8 GB Docker VM):
+Start the embedding server on the host first ([llm_platform.md](llm_platform.md#start-the-model-servers)). On this
+machine the kind cluster stays stopped while Airflow and
+DataHub run, because the Docker VM has 8 GB:
 
 ```bash
 # Airflow (orch) + DataHub (gov) + the stores; Kafka for DataHub
@@ -69,7 +71,7 @@ docker exec airflow-scheduler airflow dags trigger rag_ingest       # or the CI 
 ```
 
 Without DataHub (`DATAHUB_ENABLED=false`, as in the CI run) the checks still gate the run; only the publication to
-DataHub is skipped. On this machine the kind cluster is stopped while Airflow and DataHub run (8 GB Docker VM).
+DataHub is skipped.
 
 ## Steps
 
@@ -87,7 +89,7 @@ and the steps hand each other S3 paths, never data.
 | `embed_chunks` | sends every chunk to the embedding server (OpenAI-compatible `/v1/embeddings`, Qwen3-Embedding-0.6B on the host, connection `llm_embeddings`), 1024-dimension vectors ([`ml/jobs/rag_ingest.py` L79-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L79-L89)) |
 | `write_feature_store` | Feast project `card_support_kb` ([`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo_kb)): appends the chunks to the offline history (the Parquet FileSource) and writes them to the online store, Postgres with pgvector (`vector-db`) ([`ml/jobs/rag_ingest.py` L108-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L108-L123)) |
 | `validate_rag.run_checks` | 7 checks on what was written, in the same report format as the Layer 1 validate stages |
-| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, and fails the run if one failed ([`pipelines/airflow/dags/common.py` L98-L117](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L125-L145)) |
+| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, and fails the run if one failed ([`pipelines/airflow/dags/common.py` L125-L145](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L125-L145)) |
 
 ### Chunking
 
@@ -185,6 +187,9 @@ The assertions on `card_support_kb.policy_chunks` in DataHub, all 7 passing in t
 
 ## Gotchas
 
+- The checks run after the write, so the chunks of a run that fails its checks are already in the online store that
+  policy-rag reads. The run fails in Airflow and its checks show in DataHub, but the agents read those chunks until a
+  good run replaces them. Writing to a staging view first and switching after the checks would close that gap.
 - Feast 0.66's `retrieve_online_documents_v2(...).to_df()` can put the wrong text and vector next to a `chunk_id`
   (the id column keeps the database's rank order, the feature columns another order). The policy-rag server uses it
   only for candidate ids

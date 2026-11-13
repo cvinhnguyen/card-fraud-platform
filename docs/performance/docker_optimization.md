@@ -4,8 +4,7 @@ Every container image has to be stored, pulled and started, and every `spark-sub
 loses time and fails when the network does. Layer 1 builds four images from `infra/*/Dockerfile`; every other Layer 1
 container runs an official image as is.
 Multi-stage builds made the Flink and Airflow images smaller, and a new Spark image bakes in the jars that every
-`spark-submit` used to download. This doc has the sizes before and after, what made the images big, and the checks
-that the slim images still run the pipelines.
+`spark-submit` used to download. Functional runs then checked that the slim images still run the pipelines.
 
 | | |
 |---|---|
@@ -15,10 +14,12 @@ that the slim images still run the pipelines.
 
 ## Where it fits
 
-These are the images the Layer 1 (data platform) compose profiles build and run: Spark for the batch jobs
+These are the images the Layer 1 (data platform) compose profiles build and run
+([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)): Spark for the batch jobs
 ([spark_jobs.md](../data-platform/spark_jobs.md)), Flink for the streaming jobs
 ([flink_jobs.md](../data-platform/flink_jobs.md)), Airflow for the pipelines ([airflow.md](../data-platform/airflow.md))
-and the Hive Metastore. Every other container of the platform runs an official image as it is. A smaller image
+and the Hive Metastore. Every other Layer 1 container runs an official image as it is (the Layer 2 images are
+outside this comparison, see [Limits](#limits)). A smaller image
 pulls and starts faster and takes less of the Docker VM's disk, and jars baked into the Spark image mean that no
 `spark-submit` downloads anything at run time.
 
@@ -34,7 +35,8 @@ pulls and starts faster and takes less of the Docker VM's disk, and jars baked i
    ([Airflow](#airflow-venvs-built-in-a-stage-only-what-a-spark-client-needs)).
 4. Spark: a new image resolves the lakehouse jars once and bakes them in, so no application downloads them and the
    worker's disk no longer fills with copies ([Spark](#spark-jars-baked-into-a-new-image)).
-5. Check that the slim images still run the pipelines: a Flink replay check and a full DP2 and DP3 run, because
+5. Check that the slim images still run the pipelines: a Flink replay check and a full run of DP2 (bronze to silver
+   and gold) and DP3 (gold to features), because
    import checks alone missed a broken dbt ([Checks after the rebuild](#checks-after-the-rebuild)).
 
 ## Run it
@@ -54,8 +56,8 @@ docker history fraud/flink:2.2.1 --format "table {{.Size}}\t{{.CreatedBy}}" | cu
 |---|---|---|
 | `fraud/spark:4.1.3` | `apache/spark:4.1.3-scala2.13-java17-python3-ubuntu` | Spark with the lakehouse jars baked in (Delta, S3A, Postgres JDBC, OpenLineage); added for the 100 GB run ([scale_100g.md](scale_100g.md)) |
 | `fraud/flink:2.2.1` | `flink:2.2.1-scala_2.12-java17` | PyFlink 2.2.1 + Kafka connector for the `stream` profile |
-| `fraud/airflow:2.10.5` | `apache/airflow:2.10.5-python3.10` | Spark client (JRE + Spark 4.1.3), Great Expectations (GE), dbt, DataHub plugin and CLI |
-| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | newer Postgres driver (SCRAM) + S3A jars ([`infra/hive/Dockerfile` L5-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/hive/Dockerfile#L5-L9)); 3 small layers, nothing to trim |
+| `fraud/airflow:2.10.5` | `apache/airflow:2.10.5-python3.10` | Spark client (Java runtime (JRE) + Spark 4.1.3), Great Expectations (GE), dbt, DataHub plugin and CLI |
+| `fraud/hive-metastore:3.1.3` | `apache/hive:3.1.3` | Postgres driver 42.7.14 (the bundled 9.4 driver predates SCRAM auth, the Postgres 16 default) + S3A jars ([`infra/hive/Dockerfile` L5-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/hive/Dockerfile#L5-L9)); 3 small layers, nothing to trim |
 
 ## Sizes
 
@@ -66,8 +68,8 @@ comparable between images) and the `docker images` figure (uncompressed, as stor
 
 | Image | Layers before | Layers after | Change | `docker images` before -> after |
 |---|---:|---:|---:|---|
-| `fraud/flink:2.2.1` | 1.80 GB | **1.38 GB** | **-23%** | 2.95 -> 2.22 GB |
-| `fraud/airflow:2.10.5` | 5.39 GB | **4.50 GB** | **-17%** (-29% before the jars below were added) | 7.66 -> 6.50 GB (5.19 GB without them) |
+| `fraud/flink:2.2.1` | 1.80 GB | 1.38 GB | -23% | 2.95 -> 2.22 GB |
+| `fraud/airflow:2.10.5` | 5.39 GB | 4.50 GB | -17% (-29% before the jars below were added) | 7.66 -> 6.50 GB (5.19 GB without them) |
 | `fraud/spark:4.1.3` (new; was `apache/spark` + jars downloaded per run) | 1.35 GB | 2.06 GB | +0.71 GB of jars, once | 2.15 -> 3.46 GB |
 
 The Airflow image after the change also carries the lakehouse jars (it copies Spark from `fraud/spark`), about
@@ -193,10 +195,11 @@ COPY --from=venvs --chown=airflow:0 /opt/venvs /opt/venvs
 [`infra/spark/Dockerfile` L6-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/spark/Dockerfile#L6-L21)
 resolves the packages once in a build stage and copies only the 13 jars Spark does not ship into `/opt/spark/jars`,
 plus the `delta-spark` Python module. The whole Ivy directory is not copied because Ivy also pulls an older jackson
-that breaks Spark on the classpath. The image is 1.3 GB bigger than `apache/spark`, once, instead of 600 MB per
-application. Nothing is downloaded at run time any more, `spark.jars.packages` / `spark.jars.ivy` are gone from
-`spark-defaults.conf`, and the Thrift Server no longer needs its 13-jar `extraClassPath` workaround (which also
-carried a Git Bash path-conversion artifact since the Thrift Server was first set up). The worker also cleans up finished applications' directories
+that breaks Spark on the classpath. The image is bigger than `apache/spark` once (0.71 GB of layers, 1.3 GB in
+`docker images`), where the old setup copied 600 MB per application. Nothing is downloaded at run time any more,
+`spark.jars.packages` / `spark.jars.ivy` are gone from `spark-defaults.conf`, and the Thrift Server no longer needs
+its 13-jar `extraClassPath` workaround (one of its paths had been mangled by Git Bash path conversion since the
+Thrift Server was first set up). The worker also cleans up finished applications' directories
 (`SPARK_WORKER_OPTS`,
 [`infra/docker-compose.yaml` L224-L227](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L224-L227)).
 
@@ -211,8 +214,8 @@ Import checks were not enough: the first slim Airflow image passed all of them a
 
 | Check | Image | Result |
 |---|---|---|
-| `pipelines/flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000` | `fraud/flink:2.2.1` | baseline 96.08%, lateness 98.47%, dedup **100.00%** card windows exact: same as before the change ([flink_jobs.md](../data-platform/flink_jobs.md); baseline sent 484 late events to the side output instead of 483, watermark timing) |
-| `dp2_bronze_to_gold` (DP2 as one DAG, before it was split into `dp2_bronze_to_silver` and `dp2_silver_to_gold`) + `dp3_gold_to_features` for 2026-10-15 (Spark jobs, GE, dbt build with its 14 tests) | `fraud/airflow:2.10.5` | both runs `success` |
+| `pipelines/flink/check_windows.py --replay-from "2026-06-01 00:00" --limit 20000` | `fraud/flink:2.2.1` | baseline 96.08%, lateness 98.47%, dedup 100.00% card windows exact: same as before the change ([flink_jobs.md](../data-platform/flink_jobs.md); baseline sent 484 late events to the side output instead of 483, watermark timing) |
+| `dp2_bronze_to_gold` (DP2 as one DAG, before it was split into `dp2_bronze_to_silver` and `dp2_silver_to_gold`) + `dp3_gold_to_features` for 2026-10-15 (Spark jobs, GE, dbt build with its 22 tests) | `fraud/airflow:2.10.5` | both runs `success` |
 
 ## Layer order and cache
 
@@ -231,7 +234,7 @@ would have needed a musl JRE and would break the manylinux wheels of pyarrow, nu
 
 - The first slim Airflow image passed every import check, then DP2 failed in the functional run of 2026-10-18. The
   `find ... -name tests` cleanup had also deleted `dbt/include/global_project/macros/materializations/tests`, which is
-  code (the `test` materialization and `get_where_subquery`), so all 14 dbt tests failed to compile
+  code (the `test` materialization and `get_where_subquery`), so all 22 dbt tests failed to compile
   (`'get_where_subquery' is undefined`, `No materialization 'test'`). numpy 2 has the same trap: it imports
   `numpy._core.tests._natype` at run time. The cleanup now skips the `dbt` and `numpy` packages (a few hundred KB
   kept,

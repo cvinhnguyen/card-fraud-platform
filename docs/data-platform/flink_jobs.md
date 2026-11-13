@@ -3,8 +3,8 @@
 A fraud model decides in milliseconds whether to approve a payment, so it needs what the card did in the last 10 minutes
 as well as its history up to last night. The Flink jobs are the streaming half of Layer 1 (data platform): they read
 card payments (authorizations) and app events from Kafka as they happen and compute what the batch pipelines cannot
-compute fast enough. Streams are messy in ways batch data is not: offline POS terminals send payments up to 30 minutes
-late, the card network retries and sends duplicates, app events arrive out of order, and one city produces most of
+compute fast enough. Streams are messy in ways batch data is not: offline POS (point-of-sale) terminals send payments up to
+30 minutes late, the card network retries and sends duplicates, app events arrive out of order, and one city produces most of
 the traffic (a hot key). Each job below handles one of those problems, and each replay check compares the job's
 output with a pandas recomputation from the Parquet files.
 
@@ -24,7 +24,9 @@ Kafka, where the push jobs `push-online` and `push-offline` pick them up for the
 which DP1 (data pipeline: ingest to bronze) loads into `bronze.raw_card_authorizations` ([spark_jobs.md](spark_jobs.md)).
 The other jobs show how each streaming problem is solved, from baseline to fix, and run as replays against a fixed
 slice of the stream. The account takeover job with Flink SQL is one of Layer 1's two novel ideas
-([novel_flink_cep.md](novel_flink_cep.md)).
+([novel_flink_cep.md](novel_flink_cep.md)). In the platform overview the jobs are the streaming row of Layer 1
+([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)), and in the system diagram the arrows R3
+to R5 ([numbered arrows](../architecture.md#numbered-arrows)).
 
 ## How it works
 
@@ -58,6 +60,10 @@ python pipelines/flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150
 python pipelines/flink/check_ato_cep.py --replay-from "2026-03-01 00:00" --limit 300000    # takeover patterns, Flink CEP
 python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000   # hot key, parallelism 4
 docker exec flink-jobmanager flink run -py /opt/flink/jobs/raw_landing.py         # raw events -> S3 landing
+
+# the two jobs that feed Feast, unbounded (-d returns once the job is submitted)
+docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/rt_features.py --topic card_authorizations --live
+docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/device_seen.py --topic card_authorizations --live
 ```
 
 Each `check_*.py` loads a fixed slice of the generated stream into a replay topic, runs the job over it as a bounded
@@ -94,10 +100,10 @@ fixed rate ([screenshots](#at-a-fixed-input-rate-live-mode)).
 
 | Problem | Job | Metric | Before (baseline) | After (fix) |
 |---|---|---|---|---|
-| Late events: offline POS terminals send 5 to 30 min late | `auth_windows.py` | late events dropped from their window; card windows exact | 483 dropped; 96.08% | `allowed_lateness(30 min)` + side output: 0 dropped; 98.47%; replay 305 s → 348 s |
-| Duplicates: network retries resend the same `auth_id` | `auth_windows.py` | card windows overcounted; exact | 301 overcounted; 98.47% (`lateness` mode) | dedup on `auth_id` before the window: 0; **100.00%** |
-| Out-of-order app events within a session | `ato_sequence.py` | account takeovers caught | 461 / 658 (70.1%) in arrival order | 658 / 658 (**100%**) in event-time order, +30 s per alert |
-| Hot key: Ho Chi Minh is 60% of the authorizations | `hot_key.py`, parallelism 4 | replay: job time; records on the busiest counting subtask; Flink UI data skew and backpressure. Live at 16,000 events/s: records/s processed, Kafka lag, BackPressure status | 71.4 s; 84%; skew 100%, upstream backpressured 88%. Live: about 13,300/s, lag grows, HIGH | two-phase salting: **50.7 s** (about 14,000 → 19,700 records/s); 33%; skew 28%, upstream 48%. Live: **16,000/s, lag 0, OK** |
+| Late events: offline POS terminals send 5 to 30 min late | `auth_windows.py` | late events dropped from their window; card windows exact | 483 dropped; 96.08% | `allowed_lateness(30 min)` + side output: 0 dropped; 98.47%; replay 305 s -> 348 s |
+| Duplicates: network retries resend the same `auth_id` | `auth_windows.py` | card windows overcounted; exact | 301 overcounted; 98.47% (`lateness` mode) | dedup on `auth_id` before the window: 0; 100.00% |
+| Out-of-order app events within a session | `ato_sequence.py` | account takeovers caught | 461 / 658 (70.1%) in arrival order | 658 / 658 (100%) in event-time order, +30 s per alert |
+| Hot key: Ho Chi Minh is 60% of the authorizations | `hot_key.py`, parallelism 4 | replay: job time; records on the busiest counting subtask; Flink UI data skew and backpressure. Live at 16,000 events/s: records/s processed, Kafka lag, BackPressure status | 71.4 s; 84%; skew 100%, upstream backpressured 88%. Live: about 13,300/s, lag grows, HIGH | two-phase salting: 50.7 s (about 14,000 -> 19,700 records/s); 33%; skew 28%, upstream 48%. Live: 16,000/s, lag 0, OK |
 
 Backpressure and busy time measure throughput, so they are the before / after of the hot key, a load problem
 ([Flink UI before and after](#flink-ui-before-and-after), [at a fixed input rate](#at-a-fixed-input-rate-live-mode)).
@@ -157,7 +163,7 @@ minutes late (offline POS terminals); 19,696 card windows.
 |---|---|---:|---:|---:|---:|
 | `baseline` | watermark 5 s | 483 (to side output) | 96.08% | 295 | 477 |
 | `lateness` | `allowed_lateness(30 min)` + side output | 0 | 98.47% | 301 | 0 |
-| `dedup` | keyed state on `auth_id` (TTL 1 h) before the window | 0 | **100.00%** | 0 | 0 |
+| `dedup` | keyed state on `auth_id`, kept 1 h (state TTL, time to live), before the window | 0 | 100.00% | 0 | 0 |
 
 The `dedup` job in the Flink UI shows the records per operator: 20,000 events in, 19,699 after dedup, 19,696
 windows:
@@ -286,7 +292,7 @@ account takeovers (ATO).
 | Order | Alerts | Pattern sessions caught | ATO caught |
 |---|---:|---:|---:|
 | arrival | 578 | 557 / 771 (72.2%) | 461 / 658 (70.1%) |
-| event time | 795 | **771 / 771 (100%)** | **658 / 658 (100%)** |
+| event time | 795 | 771 / 771 (100%) | 658 / 658 (100%) |
 
 Reordering costs 30 s of latency per alert and finds every takeover; arrival order misses 3 in 10. Both modes raise
 about 20 alerts on sessions outside the truth query (21 and 24): the pandas query compares the first `add_payee`
@@ -313,8 +319,8 @@ after the job ends.
 
 | Mode | Job time | Records into the counting subtasks | Busiest subtask |
 |---|---:|---|---|
-| `hot`: `key_by(unit)` | 71.4 s | 97,976 / **842,368** / 32,823 / 26,833 | 84% of records, busy 100%; the other three 69-84% idle |
-| `two_phase`, 8 salts on Ho Chi Minh only | **50.7 s** | 247,514 / 318,138 / 107,782 / 326,566 | 33% of records; three subtasks busy 94-100% |
+| `hot`: `key_by(unit)` | 71.4 s | 97,976 / 842,368 / 32,823 / 26,833 | 84% of records, busy 100%; the other three 69-84% idle |
+| `two_phase`, 8 salts on Ho Chi Minh only | 50.7 s | 247,514 / 318,138 / 107,782 / 326,566 | 33% of records; three subtasks busy 94-100% |
 | `two_phase`, 8 salts on every unit (`--salt-all`) | 112.5 s | 192,699 / 176,333 / 149,634 / 481,334 | 48%, and slower than no fix |
 
 ### Flink UI before and after
@@ -324,10 +330,10 @@ The job graph values while each job runs (screenshots below), per vertex:
 | Vertex (parallelism) | Flink UI metric | `hot` (before) | `two_phase` (after) |
 |---|---|---:|---:|
 | Kafka source (1) | backpressured (max) | 100% | 100% |
-| `to unit`, map before `key_by` (4) | backpressured (max) | **88%** | **48%** |
+| `to unit`, map before `key_by` (4) | backpressured (max) | 88% | 48% |
 | | busy (max) | 24% | 51% |
 | `count per key` (4) | busy (max) | 99% | 99% |
-| | data skew | **100%** | **28%** |
+| | data skew | 100% | 28% |
 | `add partial counts` (4, two-phase only) | busy (max) / data skew | none | 34% / 33% |
 
 In `hot`, one counting subtask gets 84% of the records and is busy 100% while the other three are
@@ -407,7 +413,7 @@ Same input for both modes, screenshots 75 to 95 s after the producer started:
 | Records read by the source, job running about 82 s | 681,325 | 944,783 |
 | Kafka lag of the source (`pendingRecords`) | rises in steps to about 100,000 | 0 |
 | Source backpressured (max) | 98% | 1% |
-| `to unit` BackPressure tab | **HIGH** (30-68% per subtask) | **OK** (0% on all four) |
+| `to unit` BackPressure tab | HIGH (30-68% per subtask) | OK (0% on all four) |
 | `count per key` busy (max) / data skew | 100% / 100% | 71% / 29% |
 
 With `hot` the job falls behind: it counts about 13,300 of the 16,000 authorizations per second, so the lag grows for

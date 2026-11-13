@@ -9,8 +9,8 @@
   deployment         where every unit runs: host, Docker Desktop VM (compose profiles), kind cluster (namespaces),
                      internet
 
-A box shows a name and a logo, never a sentence: what a part does is told by the arrows, the tasks drawn inside a
-pipeline frame, and the tables under each picture. Logos: logos.json, each a data URI (Devicon, Simple Icons, the CNCF
+A box shows a name, a logo and at most a few short bullets: what a part does is told mostly by the arrows, the tasks
+drawn inside a pipeline frame, and the tables under each picture. Logos: logos.json, each a data URI (Devicon, Simple Icons, the CNCF
 and LF AI artwork repositories, the projects' own repositories). Coordinates are explicit: the script warns when an
 arrow crosses a box or a label overlaps one, so a layout change is checked before anyone looks at the picture.
 
@@ -503,8 +503,8 @@ def system_layers_1_2():
               desc="The mobile banking app's events (login, password reset, new payee, transfer, biometric check) to Kafka "
                    "topic app_events, replayed the same way; about 15 % arrive after the next event of their session"),
         Arrow("R", 3, "payments", [kafka.bottom(55 / kafka.w), B["flink"].top(55 / BW)], side="l",
-              desc="Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads app_events "
-                   "(account takeover patterns -> ato_alerts_cep)"),
+              desc="Flink reads card_authorizations (watermarks, dedup of network retries); ato_cep reads the app events "
+                   "(account takeover patterns -> ato_alerts_cep; so far on the replay topic app_events_replay)"),
         Arrow("R", 4, "features, alerts", [B["flink"].top(115 / BW), kafka.bottom(115 / kafka.w)],
               desc="Realtime features to card_features_rt, first (card, device) pairs to card_device_seen; ato_cep writes one "
                    "alert per matched pattern to ato_alerts_cep"),
@@ -523,7 +523,7 @@ def system_layers_1_2():
               desc="Airflow submits the Spark jobs of DP1, the two DP2 pipelines and DP3 (a call, no data); each pipeline checks "
                    "what it wrote with Great Expectations, then announces the new version of its zone, which starts the next one"),
         Arrow("B", 2, "source tables (JDBC)", [B["pg"].bottom(), B["spark"].top()], side="l",
-              desc="DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes)"),
+              desc="DP1 copies the core banking tables (customers, accounts, cards, merchants, disputes, province mapping)"),
         Arrow("B", 3, "export files", [(c(4) + 32, s3y), B["spark"].bottom(32 / BW)], side="l",
               desc="DP1 loads the new daily export folders from s3://core-banking-export"),
         Arrow("B", 4, "writes each zone", [B["spark"].bottom(138 / BW), (c(4) + 138, s3y)],
@@ -566,8 +566,8 @@ def system_layers_1_2():
         Arrow("M", 3, "per-minute counts", [B["drift"].top(0.3), (c(4) + 51, redis.y + 62), redis.right(62 / BH)], 0.7, "d",
               desc="Bin counts per feature and minute in Redis db 1; GET /v1/drift returns the PSI vs the training profile"),
         Arrow("M", 4, "7 days + labels", [(c(5) + 140, s3y), B["airflow"].bottom(140 / BW)],
-              desc="Data drift pipeline (DAG drift_monitoring, daily): the last 7 days of payments, their labels and point-in-time "
-                   "features"),
+              desc="Data drift pipeline (DAG drift_monitoring, daily): the last 7 days of payments, their labels (the simulation's "
+                   "ground truth) and point-in-time features"),
         Arrow("M", 5, "production model", [B["mlflow"].bottom(0.25), B["airflow"].top(0.25)], side="l",
               desc="Loads the production model to score them"),
         Arrow("M", 6, "drift metrics", [B["airflow"].top(0.75), B["mlflow"].bottom(0.75)],
@@ -679,7 +679,7 @@ def system_layer_3():
         Arrow("A", 1, "question", [b["staff"].right(), b["nginx"].left()],
               desc="A question in the support chat (https://support.<domain>, basic auth and rate limit at NGINX)"),
         Arrow("A", 2, "question", [b["nginx"].right(), b["ui"].left()],
-              desc="NGINX passes it to support-chat, which serves the chat page (streamed answers, no buffering)"),
+              desc="NGINX passes it to support-chat, which serves the chat page (one A2A message/send per question)"),
         Arrow("A", 3, "question", [b["ui"].right(), (k3 - 34, q(1) + 42), (k3 - 34, q(1) + BH + 36), (k4, q(1) + BH + 36)], 0.8,
               desc="support-chat forwards the question to the gateway route /a2a/coordinator and adds the support-app API key, "
                    "so the key never reaches the browser. The gateway is the first hop of every question"),
@@ -690,7 +690,7 @@ def system_layer_3():
               desc="The coordinator's A2A calls to the two agents and its LLM calls, all through the gateway "
                    "(kagent proxy.url)"),
         Arrow("A", 6, "sub-task", [(k4, q(2) + 28), b["card"].right(28 / BH)],
-              desc="Route agents-internal: a sub-task for card-data-agent; only the coordinator's key may call it"),
+              desc="Route card-support-data-agents-internal: a sub-task for card-data-agent; only the coordinator's key may call it"),
         Arrow("A", 7, "sub-task", [(k4, q(3) + 28), b["risk"].right(28 / BH)],
               desc="... and for risk-agent (risk-agent-b, the B side of its model-config A/B test, sits behind "
                    "the same route)"),
@@ -1316,9 +1316,9 @@ def overview():
     kafka = box(410, R2, 320, "Kafka", "the event stream", [
         "in: card_authorizations, app_events", "out: card_features_rt, card_device_seen", "out: ato_alerts_cep (alerts)"],
         "stream", "kafka")
-    flink = box(800, R2, 370, "Flink streaming jobs", "PyFlink · always on · results in seconds", [
-        "Card features per payment (DataStream API)", "First device of each card (DataStream API)",
-        "Raw payments to files, for DP1 (Flink SQL)", "Account takeover alerts (Flink SQL CEP)"], "job", "flink",
+    flink = box(800, R2, 370, "Flink streaming jobs", "PyFlink · results in seconds", [
+        "Card features (DataStream, always on)", "First device per card (DataStream, always on)",
+        "Raw payments to files, for DP1 (SQL, by hand)", "Account takeover alerts (SQL CEP, replay)"], "job", "flink",
         "NOVEL IDEA: THE ALERTS")
     push_off = box(1240, R2, 300, "Push offline", "Python + Feast · always on", [
         "Live features to Delta, for training"], "job", "python")
@@ -1437,7 +1437,7 @@ def overview():
         "llm-d picks a model server for each prompt", "Qwen3-8B writes the answers",
         "A Qwen3 embedding model turns text into vectors"], "svc", "llamacpp")
     gw = box(40, bot(chat, models) + 56, 1000, "agentgateway",
-             "the first stop of every call: from the chat, between agents, to the tools and to the model", [
+             "the first stop of every call: from the chat, between agents, to the tools and to the chat model", [
         "Checks the API key of every caller", "Decides which agents and tools that key may use",
         "Limits requests and tokens, masks personal data"], "gate", "agentgateway")
     RC = bot(gw) + 55
@@ -1494,14 +1494,14 @@ def overview():
     for i, (title, tech, bullets, kind, ico, nov) in enumerate([
             ("GitHub", "the code", ["Jenkins polls main every 5 minutes"], "out", "github", ""),
             ("Jenkins", "5 pipelines", ["MCP servers, data agents, coordinator, RAG pipeline, push jobs",
-                                        "Tests, builds and signs each image (cosign)",
+                                        "Tests and builds each image; signs the tool servers' (cosign)",
                                         "A new production prompt also starts a release"], "job", "jenkins", ""),
             ("Docker registry", "local registry", ["images and their signatures"], "store", "docker", ""),
             ("Deploy", "Helm, Airflow or compose", ["agents and tool servers: Helm", "RAG steps: a new image for Airflow",
                                                     "push jobs: recreated containers"], "job", "helm", ""),
             ("Signed images only", "Kyverno + cosign", ["A tool server pod starts only if CI signed its image"], "gate",
              "kyverno", "NOVEL IDEA"),
-            ("Eval gate", "Jenkins + a Langfuse dataset", ["After each agent release: 20 test questions",
+            ("Eval gate", "Jenkins + a Langfuse dataset", ["After each risk-agent release: 20 test questions",
                                                           "Under 0.6 accuracy: rolled back"], "gate", "langfuse",
              "NOVEL IDEA")]):
         cbox.append(box(190 + i * 405, cy + 44, 350, title, tech, bullets, kind, ico, nov))
@@ -1614,7 +1614,7 @@ def overview():
 def render(name: str, svg: str, prefix: str = "platform-") -> None:
     """Write the SVG and, when Chrome or Edge is installed, a 2x PNG screenshot of it next to it."""
     path = OUT / f"{prefix}{name}.svg"
-    path.write_text(svg, encoding="utf-8")
+    path.write_text(svg, encoding="utf-8", newline="\n")   # LF on Windows too (.gitattributes)
     chrome = next((p for p in (shutil.which("chrome"), shutil.which("google-chrome"), shutil.which("chromium"),
                                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")

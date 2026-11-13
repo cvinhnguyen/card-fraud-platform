@@ -22,7 +22,7 @@ and monitor the model on history, which means a data platform that brings togeth
 
 | Source | Owner | How it arrives | Problems it brings |
 |---|---|---|---|
-| Customers, accounts, cards, merchants, disputes | core banking (Postgres) | DP1 (the ingest pipeline) reads it over JDBC | SCD2 history, province names before / after the 2025-07-01 reorganization (63 -> 34 units) |
+| Customers, accounts, cards, merchants, disputes | core banking (Postgres) | DP1 (the ingest pipeline) reads it over JDBC | SCD2 history (slowly changing dimension type 2: every past version of a customer kept), province names before / after the 2025-07-01 reorganization (63 -> 34 units) |
 | Settled transactions | core banking nightly export (files on S3) | DP1 loads the new export folders | 2% duplicates from export re-runs, auth columns added on 2024-07-01 (schema evolution), merchant and city skew |
 | Card authorizations | card network | Kafka `card_authorizations` | late events from offline POS terminals, network-retry duplicates |
 | App events | mobile app | Kafka `app_events` | events out of order within a session |
@@ -32,7 +32,7 @@ and monitor the model on history, which means a data platform that brings togeth
 The same customers then call card support: why was my payment declined, what does a withdrawal abroad cost, am I
 liable for a payment I did not make. Layer 3 answers with agents that use the platform's own data: the card's
 features from the feature store, the fraud model's verdict through the Scoring API, and the bank's card documents
-through a RAG pipeline.
+through a RAG (retrieval-augmented generation) pipeline.
 
 All data is synthetic (`generator/`), with every problem injected at a measured rate and checked
 ([docs/data-platform/data_characteristics.md](docs/data-platform/data_characteristics.md)). Layer 1 is the data platform; Layer 2 (feature
@@ -53,8 +53,8 @@ Four pictures describe the platform, each answering one question:
 Start with the overview. The bank's data comes in on the left. Layer 1 (the top band) turns it into clean tables
 and features. In Layer 2 (bottom right) a model scores every card payment in real time and is retrained when the
 data drifts. In Layer 3 (bottom left) agents answer the support staff's questions about a card with the same
-data. Under the layers, the CI/CD row shows how a change reaches the platform, and the last row holds the services
-every layer uses.
+data. Under the layers, the CI/CD row shows how a change reaches the platform, the next row holds the services
+every layer uses, and the flow key closes the page.
 
 | In the picture | Means |
 |---|---|
@@ -123,7 +123,7 @@ last committed version, never a half-written one.
 | DP2, silver to gold | `dp2_silver_to_gold` | when silver is published | dbt build of gold (and its docs) next to the labels job; validate gold; publish gold | silver, bronze reference tables | gold `dim_*` / `fact_*`, `gold.label_transaction` |
 | DP3, gold to features | `dp3_gold_to_features` | when gold is published | build the features; validate them; publish features | gold | `gold.feat_card_txn_stats_daily` |
 | Incremental materialize | `feast_materialize` | when the features are published | copy the rows newer than the last run into Redis; read a sample back to check it | the feature table (Feast offline store) | Redis (Feast online store) |
-| Data drift | `drift_monitoring` | daily, on its own schedule | compute drift and accuracy on the last 7 labelled days; decide; start a training pipeline run, or do nothing | payments, labels, point-in-time features, the `production` model | an MLflow run; a Kubeflow training run on drift |
+| Data drift | `drift_monitoring` | daily, on its own schedule | compute drift and accuracy on the last 7 days (labels from the simulation's ground truth); decide; start a training pipeline run, or do nothing | payments, labels, point-in-time features, the `production` model | an MLflow run; a Kubeflow training run on drift |
 | RAG data pipeline (Layer 3) | `rag_ingest` | after each new image (Jenkins), or by hand | chunk the documents; embed the chunks; write them to the feature store; validate | `s3://bank-documents` | Feast `card_support_kb` (pgvector online, Parquet offline) |
 | DataHub metadata | `datahub_metadata` | daily | ingest the source tables, the Kafka topics and the dbt models | Postgres, Kafka, dbt artifacts | DataHub |
 
@@ -143,10 +143,10 @@ Five classes carry the ML logic:
 
 | Class | File | Job |
 |---|---|---|
-| `TrainingDataService` | [`ml/fraud_ml/data.py` L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L55) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
+| `TrainingDataService` | [`ml/fraud_ml/data.py` L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L55) | Labels as of a date, Feast point-in-time join, versioned training set (Delta) |
 | `FraudModelTrainer` | [`ml/fraud_ml/train.py` L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L27) | Logistic-regression baseline + distributed `SparkXGBClassifier` |
 | `ModelEvaluator` | [`ml/fraud_ml/evaluate.py` L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/evaluate.py#L30) | Thresholds on validation, test metrics, gate vs baseline and `production` |
-| `ModelRegistry` | [`ml/fraud_ml/registry.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py#L26) | MLflow logging, model versions and aliases |
+| `ModelRegistry` | [`ml/fraud_ml/registry.py` L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py#L26) | MLflow logging, model versions and aliases |
 | `FraudScorer` | [`services/scoring_api/app/scorer.py` L24](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/scorer.py#L24) | Request -> features -> score -> decision, fallback when KServe is down |
 
 ### Layer 3: LLM and agent platform
@@ -169,7 +169,7 @@ call between them passes one gateway that decides what each agent may do.
 | Agent Substrate | Sandboxed copies of the agents: one gVisor sandbox per conversation, restored from a warm snapshot on a shared worker pool | [agents.md](docs/llm-platform/agents.md#sandboxed-agents-on-agent-substrate-warm-up) |
 | agentregistry | Catalog of the agents and the three MCP servers they use, for people; not on the call path | [agents.md](docs/llm-platform/agents.md#agent-registry) |
 | Operations | Prometheus + Grafana (metrics), VictoriaLogs (logs), Jaeger (traces), Vault (secrets) | [observability.md](docs/operations/observability.md), [edge_security.md](docs/operations/edge_security.md) |
-| CI/CD | Jenkins, five pipelines: the MCP servers, the data agents, the coordinator, the RAG data pipeline and the push jobs. Agent prompts come from Langfuse; images are signed (Layer 3 novel idea 2); each agent release passes an eval gate (Layer 3 novel idea 1) | [cicd.md](docs/operations/cicd.md) |
+| CI/CD | Jenkins, five pipelines: the MCP servers, the data agents, the coordinator, the RAG data pipeline and the push jobs. Agent prompts come from Langfuse; the MCP server image is signed and the cluster runs only signed images of it (Layer 3 novel idea 2); each release of the data agents passes an eval gate on the risk agent (Layer 3 novel idea 1) | [cicd.md](docs/operations/cicd.md) |
 
 ### System diagram, Layers 1 and 2
 
@@ -267,7 +267,8 @@ infra/                docker-compose (profiles), secrets bootstrap (make_env.py,
   sql/                Postgres serving SQL (indexes + EXPLAIN)
 docs/                 architecture.md, then one folder per area (data-platform/, performance/, ml-platform/,
                       llm-platform/, operations/); images/ = screenshots and diagrams; diagrams/ = the scripts that draw
-                      them (platform.py: the 5 above, logos.json: the logos they use)
+                      them (platform.py: the 4 platform diagrams, er.py: the ER
+                      diagrams, label_delay.py and hcmc_spend.py: two data charts, logos.json: the logos they use)
 ```
 
 ## Quick start
@@ -313,6 +314,8 @@ docker build -f ml/Dockerfile -t fraud/ml-train:latest .           # code image:
 docker compose -f infra/docker-compose.yaml --profile core --profile ml up -d
 docker compose -f infra/docker-compose.yaml exec notebook feast -c /opt/ml/feature_repo apply   # order + bootstrap: docs/ml-platform/feature_store.md
 bash infra/k8s/up.sh && bash infra/k8s/platform.sh                 # kind cluster, KFP 2.17, KServe 0.21
+pip install kfp==2.17.0 kfp-kubernetes==2.17.0                      # host venv: the KFP client
+kubectl -n kubeflow port-forward svc/ml-pipeline 31888:8888 &      # the KFP API on 127.0.0.1:31888
 python ml/pipelines/train_fraud_model.py --run --label-as-of 2026-10-15                # see docs/ml-platform/ml_training.md
 ```
 
@@ -325,7 +328,7 @@ then the cluster scripts in this order; each is idempotent and reads its secrets
 sh infra/k8s/vault.sh                  # Vault + External Secrets; secrets.sh writes every secret into Vault
 sh infra/k8s/llm-platform.sh           # Gateway API, agentgateway, llm-d router, kagent, Agent Substrate, KEDA, agentregistry
 sh infra/k8s/observability.sh          # Prometheus + Grafana (dashboards), VictoriaLogs, Jaeger
-sh infra/k8s/tls.sh && sh infra/k8s/edge.sh   # HTTPS certificate (DuckDNS, Let's Encrypt), NGINX Ingress + routes
+sh infra/k8s/edge.sh && sh infra/k8s/tls.sh   # NGINX Ingress + routes, then the HTTPS certificate (DuckDNS, Let's Encrypt)
 .venv/Scripts/python generator/load_source.py --part documents && docker exec airflow-scheduler airflow dags trigger rag_ingest
 sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines build, test and deploy the MCP servers and the agents
 arctl apply -f agents/registry/catalog.yaml   # the registry catalog (kubectl -n agentregistry port-forward svc/agentregistry 12121:12121)
@@ -396,7 +399,7 @@ and what was measured.
 | Doc | What it tells you |
 |---|---|
 | [CI/CD](docs/operations/cicd.md) | the five Jenkins pipelines: what each tests, builds and deploys, and what happens on a bad release |
-| Novel idea 2: [Only signed images run](docs/operations/novel_supply_chain.md) | images are signed in CI and the cluster refuses unsigned ones |
+| Novel idea 2: [Only signed images run](docs/operations/novel_supply_chain.md) | the MCP server image is signed in CI and the cluster refuses unsigned ones in namespace `card-support` |
 | [Testing](docs/operations/testing.md) | the tests of the APIs and MCP servers: kinds, coverage, mutation, load |
 | [Edge and secrets](docs/operations/edge_security.md) | HTTPS, login and rate limits in front of every UI; secrets in Vault |
 | [Observability](docs/operations/observability.md) | the dashboards, logs and traces, and what each one shows |

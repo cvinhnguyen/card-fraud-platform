@@ -2,7 +2,7 @@
 
 When an agent answers slowly or a tool server fails, the team has to see where: which service, which call, which
 log line. Metrics say that something is wrong, logs say what happened, and traces follow one conversation through
-every service it touched. One stack watches the Layer 3 platform, installed by
+every service it touched. One stack watches the Layer 3 platform and the Layer 2 Scoring API, installed by
 [`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability.sh)
 into the `monitoring` namespace and published by NGINX at `https://grafana|logs|traces.<domain>`
 ([edge_security.md](edge_security.md)). Prometheus and Grafana hold the metrics, VictoriaLogs the logs and Jaeger the
@@ -12,14 +12,14 @@ traces.
 |---|---|
 | Code | [`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability.sh), [`infra/k8s/observability-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability-values.yaml), [`infra/k8s/monitors.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/monitors.yaml), [`infra/k8s/tracing.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tracing.yaml), [`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/dashboards) |
 | Runs on | kind namespace `monitoring`; UIs behind NGINX at `https://grafana|logs|traces.<domain>` |
-| Reads | `/metrics` of the three MCP servers, agentgateway's proxy and the Scoring API; every pod's stdout; spans from agentgateway and the kagent agents (OTLP, the OpenTelemetry protocol) |
+| Reads | `/metrics` of the three MCP (Model Context Protocol) servers, agentgateway's proxy and the Scoring API; every pod's stdout; spans from agentgateway and the kagent agents (OTLP, the OpenTelemetry protocol) |
 | Related | [edge_security.md](edge_security.md), [ab_testing.md](../llm-platform/ab_testing.md), [agents.md](../llm-platform/agents.md), [llm_platform.md](../llm-platform/llm_platform.md) |
 
 ## Where it fits
 
 The stack watches Layer 3 (LLM and agent platform) and the Layer 2 Scoring API: the O flow of the Layer 3 picture
 ([architecture.md](../architecture.md#system-diagram-layer-3)). Prometheus scrapes the metrics of agentgateway, the
-three MCP (Model Context Protocol) tool servers and the Scoring API. Vector ships every pod's log lines to
+three MCP tool servers and the Scoring API. Vector ships every pod's log lines to
 VictoriaLogs. The gateway and the agents send their spans to Jaeger. People read all of it in Grafana, the
 VictoriaLogs UI and the Jaeger UI, behind NGINX ([edge_security.md](edge_security.md)). KEDA reads the same gateway
 metrics to scale the agents ([agents.md](../llm-platform/agents.md)).
@@ -91,8 +91,8 @@ and REST calls through NGINX), 7 to the Scoring API, and 13 failures, the 404s a
 Grafana's "Node Exporter / Nodes" dashboard (from kube-prometheus-stack) shows CPU, load, memory, disk I/O, disk space
 and network of the kind node, which is the whole Docker VM; "Kubernetes / Compute Resources / Namespace (Pods)" breaks
 CPU and memory down per pod. In the node dashboard below, the load spike and the disk reads around 10:12 are the VM
-running out of page cache while Prometheus, Grafana and the agents ran together; this machine's limits are in the
-README:
+running out of page cache while Prometheus, Grafana and the agents ran together. The machine has 16 GB of RAM
+([README](../../README.md#deployment)):
 
 ![Node Exporter dashboard: CPU, load, memory, disk and network of the kind node, with a load spike and disk reads around 10:12](../images/obs_compute_node.png)
 

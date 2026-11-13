@@ -24,9 +24,9 @@ flowchart LR
     j -->|"1. cosign sign --key env://COSIGN_KEY<br/>by digest"| r
     h["helm upgrade<br/>card-data / fraud-score / policy-rag"] --> api["kube-apiserver"]
     api -->|"3. admission webhook"| k["Kyverno<br/>policy card-support-signed-images"]
-    k -->|"verify the signature<br/>with cosign.pub"| r
+    k -->|"3. verify the signature<br/>with cosign.pub (2. key in the policy)"| r
     k -->|"4. signed: admit, image@digest"| p["Pods of the MCP servers"]
-    k -.->|"4. unsigned / other registry: deny"| x["rejected"]
+    k -.->|"3. unsigned / other registry: deny"| x["rejected"]
 ```
 
 ## Where it fits
@@ -35,8 +35,9 @@ The signing happens in the Jenkins pipeline of the MCP (Model Context Protocol) 
 ([cicd.md](cicd.md#mcp-servers)). The check happens in the kind cluster, in the namespace `card-support` where those
 servers run ([agents.md](../llm-platform/agents.md#the-three-mcp-servers)). Jenkins pushes the image and its
 signature to the platform registry. Kyverno reads both when a Pod is created, and either admits the Pod, pinned to
-the verified digest, or refuses it. The agents' own images come from the kagent project and are outside the policy
-([Limits](#limits)).
+the verified digest, or refuses it. In the Layer 3 picture these are arrows C3 (signature) and C4 (deploy)
+([architecture.md](../architecture.md#numbered-arrows-layer-3)). The agents' own images come from the kagent project
+and are outside the policy ([Limits](#limits)).
 
 ## How it works
 
@@ -65,12 +66,21 @@ Replace `<tag>` with the tag CI pushed: the short commit SHA (`git rev-parse --s
 
 The key pair comes from `cosign generate-key-pair`, run once (see [Limits](#limits) for the file permissions).
 
+## Problem
+
+The MCP servers in `card-support` serve the card data, and two of them (card-data, policy-rag) get the passwords of
+the online stores from their Secrets ([`infra/k8s/secrets.sh` L65-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L65-L69)).
+Before this change the cluster ran whatever image a Deployment named. The compose registry
+(`registry:3`, published on `127.0.0.1:5001`) asks for no login, so a pushed image was enough to run there. A tag
+proves nothing either: build #16 pushed commit `7da43e5` again under the same tag with a new digest ([Proof](#proof)),
+so the tag that was tested can point at other bytes the next time a Pod starts.
+
 ## Pieces
 
 The private key `infra/.secrets/cosign.key` (gitignored) is encrypted with `COSIGN_PASSWORD` (`infra/.env`, from
 [`infra/make_env.py` L45](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/make_env.py#L45));
 Jenkins gets both as credentials `cosign-key` and `cosign-password`: Docker secrets in
-[`infra/docker-compose.yaml` L815-L816](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L811-L812)
+[`infra/docker-compose.yaml` L811-L812](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L811-L812)
 that
 [`infra/jenkins/casc.yaml` L28-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/casc.yaml#L28-L29)
 turns into credentials. The public half is
@@ -199,7 +209,8 @@ run:
   The key file has to be written by the host user (it stays encrypted with `COSIGN_PASSWORD`).
 - The registry is plain HTTP: `cosign verify` needs `--allow-http-registry --allow-insecure-registry`, and with no
   Rekor upload, `--insecure-ignore-tlog=true` (cosign warns about it, as in step 2 of the run).
-- `kyverno.io/v1 ClusterPolicy` is deprecated in Kyverno 1.19 in favour of `ImageValidatingPolicy` (CEL); it still
+- `kyverno.io/v1 ClusterPolicy` is deprecated in Kyverno 1.19 in favour of `ImageValidatingPolicy` (CEL, the Common
+  Expression Language); it still
   enforces, and the migration is a rewrite of this one file.
 - The policy covers `card-support` (the MCP servers, our own image). The agents run kagent's published images, which
   are not ours to sign; Kyverno could verify them against the kagent project's keys the same way.

@@ -4,24 +4,25 @@ Lineage, the record of which job read which tables and wrote which, goes stale t
 OpenLineage is an open standard for lineage events (a job run read these datasets and wrote those, with column-level
 detail) plus integrations that emit them without code changes. Here a Spark listener reads the query plan of every
 Layer 1 Spark job, dbt included, and posts the events to DataHub's OpenLineage endpoint; DataHub turns them into
-datasets, jobs and lineage edges. No Spark job declares its lineage; two DAG tasks declare theirs where OpenLineage
-misses a hop ([below](#how-it-is-wired)).
+datasets, jobs and lineage edges. No Spark job declares its lineage; three tasks of the Airflow DAGs (pipeline
+definitions) declare theirs where OpenLineage misses a hop ([below](#how-it-is-wired)).
 
 | | |
 |---|---|
-| Code | [`infra/conf/spark/spark-defaults.conf` L34-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/conf/spark/spark-defaults.conf#L34-L44), [`infra/spark/Dockerfile` L8-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/spark/Dockerfile#L8-L14), [`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76) |
-| Runs on | inside every Spark driver: the Spark containers, the Airflow image (drivers of DAG tasks, dbt's session) and the Thrift Server; DataHub GMS in compose profile `gov` receives the events |
+| Code | [`infra/conf/spark/spark-defaults.conf` L34-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/conf/spark/spark-defaults.conf#L34-L44), [`infra/spark/Dockerfile` L8-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/spark/Dockerfile#L8-L14), [`pipelines/airflow/dags/common.py` L68-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76) |
+| Runs on | inside every Spark driver: the Spark containers, the Airflow image (drivers of DAG tasks, dbt's session) and the Thrift Server; DataHub GMS (its metadata service) in compose profile `gov` receives the events |
 | Reads | the query plan of every Spark action |
 | Writes | lineage events to GMS `/openapi/openlineage/api/v1/lineage` |
 | Related | [datahub.md](datahub.md), [dbt_gold.md](dbt_gold.md), [airflow.md](airflow.md) |
 
 ## Where it fits
 
-OpenLineage sits between Layer 1's Spark jobs and DataHub. It reads the query plan of every Spark action in the
+OpenLineage sits between Layer 1's Spark jobs
+([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)) and DataHub. It reads the query plan of every Spark action in the
 batch pipelines ([spark_jobs.md](spark_jobs.md), [dbt_gold.md](dbt_gold.md)), and of any job someone runs by hand.
 It sends one lineage event per action to DataHub ([datahub.md](datahub.md)), which turns them into the lineage graph
 a reader opens when a number looks wrong. The Airflow DAGs ([airflow.md](airflow.md)) add one setting, the job name.
-Two of their tasks declare a hop the plan cannot show.
+Three of their tasks declare the hops the plan cannot show.
 
 ## How it works
 
@@ -33,7 +34,8 @@ Two of their tasks declare a hop the plan cannot show.
 3. Each Airflow task sets the job name to its DAG id, so every table in DataHub shows which pipeline's job produced it.
 4. Where the plan has no view of a hop, the DAG task declares it with `inlets` and `outlets`: DP1 (the data pipeline
    that ingests to bronze) publishes its export with a lakeFS merge, an API call, and DP2's MERGE into silver is
-   reported without its source. Two tasks in all ([How it is wired](#how-it-is-wired)).
+   reported without its source. Three tasks in all: DP1's `ingest_exports` and `merge_to_main`, and DP2's
+   `build_silver` ([How it is wired](#how-it-is-wired)).
 5. The listener resolves each Delta path to its hive table name, the same name the validation assertions use, so
    lineage and checks land on one entity; GMS keeps the column-level detail too
    ([Column-level lineage](#column-level-lineage)).
@@ -74,7 +76,7 @@ spark.openlineage.namespace                    card-fraud-platform
 Each Airflow task adds one setting, `spark.openlineage.appName = {{ dag.dag_id }}`, so the jobs carry the name of the
 DAG that ran them. Every `spark_job()` of the DAGs gets it from `SPARK_CONF`, next to the executor memory and the
 driver's bind address
-([`pipelines/airflow/dags/common.py` L41-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76)):
+([`pipelines/airflow/dags/common.py` L68-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76)):
 
 ```python
 SPARK_CONF = {
@@ -88,12 +90,14 @@ SPARK_CONF = {
 }
 ```
 
-Apart from these settings, no Spark job declares lineage. Two DAG tasks declare their tables with `inlets` /
+Apart from these settings, no Spark job declares lineage. Three DAG tasks declare their tables with `inlets` /
 `outlets` (added 2026-10-25), where OpenLineage misses a hop:
 
-- DP1 (the data pipeline that ingests to bronze) writes the export on a lakeFS branch and publishes it with a merge, an API call OpenLineage cannot see; there,
+- DP1 (the data pipeline that ingests to bronze) writes the export on a lakeFS branch and publishes it with a merge,
+  an API call OpenLineage cannot see. `ingest_exports` declares the export -> repository hop and `merge_to_main` the
+  repository -> table hop; there,
   [`infra/conf/spark/spark-defaults.conf` L42-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/conf/spark/spark-defaults.conf#L42-L44) also drops the branch from the written dataset's name
-  ([`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L39-L43), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L54), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L59); [novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)).
+  ([`pipelines/airflow/dags/dp1_source_to_bronze.py` L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L39-L43), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L54), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L59); [novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)).
 - DP2's `build_silver`: OpenLineage reports its MERGE into `silver.stg_transactions` with the target only, without
   `bronze.raw_transactions`. A probe on 2026-10-25 (OpenLineage 1.53, Delta 4) gave the same with a SQL MERGE,
   without the cache and without source materialization, while a MERGE from `bronze.raw_ref_province_mapping` kept
@@ -137,7 +141,7 @@ above), and the jobs that read it:
 
 The listener also reports, for every output column, the input columns it comes from and whether it is a copy or a
 computation; GMS keeps them because of `DATAHUB_OPENLINEAGE_CAPTURE_COLUMN_LEVEL_LINEAGE`
-([`infra/docker-compose.yaml` L535-L537](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L537-L539)).
+([`infra/docker-compose.yaml` L537-L539](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L537-L539)).
 For the fact built in
 [`pipelines/spark/build_gold_pyspark.py` L68-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py#L68-L79),
 DataHub shows 16 column mappings, for example:

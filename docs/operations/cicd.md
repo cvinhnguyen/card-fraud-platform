@@ -3,7 +3,7 @@
 A change to a service, an agent prompt or a data pipeline should reach the running platform tested, the same way every
 time, and a broken release should never stay up. Five Jenkins pipelines (CI/CD: continuous integration and
 delivery) do that: one for the three MCP (Model Context Protocol) tool servers, two for the agents, one for the RAG
-data pipeline (Layer 3) and one for the push jobs that feed the feature store (Layer 2). Each one is a Jenkinsfile
+(retrieval-augmented generation) data pipeline (Layer 3) and one for the push jobs that feed the feature store (Layer 2). Each one is a Jenkinsfile
 next to the code it ships, and each one ends with a check against the running platform, so a green build means the
 new version answers.
 
@@ -28,13 +28,16 @@ signatures in [novel_supply_chain.md](novel_supply_chain.md) and the eval gate i
 ## How it works
 
 1. Each pipeline watches its own paths. A poll that finds commits elsewhere in the repo checks out and stops.
-2. Before a deploy: unit tests (with a coverage gate for the tool servers), a mutation test, the image build, and
-   for the tool servers' image a cosign signature.
-3. The deploy: `helm upgrade --atomic` into kind for the tool servers and the agents, a Variable update plus a DAG
-   run in Airflow for the RAG pipeline, recreated containers for the push jobs.
+2. Before a deploy: unit tests and the image build for the tool servers, the RAG steps and the push jobs. The tool
+   servers also pass a coverage gate and a mutation test, and their image gets a cosign signature. The agent
+   pipelines pull the prompts from Langfuse and validate the Helm chart.
+3. The deploy: `helm upgrade --atomic` into kind for the tool servers and the agents, a Variable update plus a run
+   of the DAG (the Airflow workflow) for the RAG pipeline, recreated containers for the push jobs.
 4. After the deploy, a check against the running platform: a smoke test (one real request, for the agents over A2A,
    the agent-to-agent protocol, through the gateway), and for the data agents the eval gate. A release that fails
-   is rolled back, so a green build means the new version answers.
+   any step after its upgrade (readiness wait, smoke test, eval gate) is rolled back by the pipeline's failure
+   handler; one whose pods never get Ready is rolled back by `--atomic` already. A green build means the new version
+   answers.
 5. The pipelines chain: tool servers, then data agents, then coordinator. Each starts the next when it succeeds, so
    the agents are deployed against the tool servers that just passed.
 6. Secrets stay out of the Jenkinsfiles. They come from `infra/.env` as Docker secrets and become Jenkins
@@ -71,14 +74,14 @@ What each pipeline checks, where it deploys, and what happens when a release is 
 ## Jenkins setup
 
 Jenkins 2.580.1 runs in compose (profile `cicd`, UI on `127.0.0.1:8095`, login required;
-[`infra/docker-compose.yaml` L757-L778](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L753-L774)).
+[`infra/docker-compose.yaml` L753-L774](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L753-L774)).
 The image
 ([`infra/jenkins/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/Dockerfile))
 adds the Docker CLI with buildx and compose, kubectl v1.37.0, Helm v3.22.1 and jq, plus the plugins in
 [`infra/jenkins/plugins.txt`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/plugins.txt).
 Nothing is clicked together in the UI:
 [`infra/jenkins/casc.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/casc.yaml)
-(configuration as code) creates the admin user, the credentials and the five jobs. The jobs poll GitHub `main` every 5
+(Jenkins Configuration as Code, JCasC) creates the admin user, the credentials and the five jobs. The jobs poll GitHub `main` every 5
 minutes, because no webhook can reach this machine. One executor runs one pipeline at a time, since two image builds
 do not fit in the machine's RAM.
 
@@ -107,7 +110,10 @@ the values stay hidden, the username/password one only shows `admin/******`:
 Jenkins deploys with its own ServiceAccount
 ([`infra/jenkins/rbac.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/rbac.yaml))
 instead of the cluster admin. The role is bound only in `card-support`, `kagent` and `agentgateway-system`, the
-namespaces the MCP and agents charts write to, so a pipeline cannot touch Vault, the monitoring stack or kube-system.
+namespaces the MCP and agents charts write to, so a pipeline's `kubectl` and `helm` calls cannot touch Vault, the
+monitoring stack or kube-system. The role allows Secrets in those namespaces, because Helm keeps its release records
+there. The real trust boundary is the host's Docker socket: a Jenkinsfile can run any container, also one on the kind
+node with its admin kubeconfig, so whoever can change a Jenkinsfile on `main` is as strong as a cluster admin.
 [`infra/jenkins/setup.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/jenkins/setup.sh)
 writes its kubeconfig to `infra/.secrets/jenkins-kubeconfig`.
 
@@ -116,8 +122,9 @@ Every Jenkinsfile wraps its stages in a `when { changeset ... }` on its own path
 A poll that finds commits elsewhere in the repo checks out and stops: these are the rows with only "Checkout SCM" in
 the stage views below. Jenkins keeps the host's Docker socket because it builds images. Airflow only runs the RAG
 image, so it reaches Docker through `docker-proxy` on an internal network, which allows the container and image API
-calls and denies exec, build, volumes and the rest
-([`infra/docker-compose.yaml` L435-L453](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L437-L455));
+calls and denies exec, build, volumes and the rest (it still allows creating a container, so a DAG could start a
+privileged one)
+([`infra/docker-compose.yaml` L437-L455](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L437-L455));
 the DAG itself only accepts a `fraud/ml-train` image as `rag_image`
 ([`pipelines/airflow/dags/rag_ingest.py` L40-L45](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py#L40-L45)).
 
@@ -251,15 +258,15 @@ deploys card-data-agent and risk-agent (Helm release `card-support-data-agents`)
 | Validate | `helm lint`, then `helm template` through a server-side dry run against the cluster |
 | Deploy | `helm upgrade --atomic`, then waits until both Agents are Ready |
 | Smoke test (A2A through the gateway) | asks each agent one question through agentgateway, the way the coordinator calls it (coordinator key, header `x-kagent-host`); the answer must complete and match the expected pattern (the fee question: its citation `fee_schedule` / "fee schedule" or the 2.5% fact) |
-| Eval gate (Langfuse experiment) | the risk agent answers the eval dataset as a Langfuse experiment; below 0.6 accuracy, `helm rollback` and the build fails ([novel_eval_gate.md](../llm-platform/novel_eval_gate.md)) |
+| Eval gate (Langfuse experiment) | the risk agent answers the eval dataset as a Langfuse experiment; below 0.6 accuracy the build fails and the failure handler runs `helm rollback` ([novel_eval_gate.md](../llm-platform/novel_eval_gate.md)) |
 
-The eval gate stage
-([`agents/Jenkinsfile.data-agents` L85-L107](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L85-L107)):
+The eval gate stage and the failure handler
+([`agents/Jenkinsfile.data-agents`](../../agents/Jenkinsfile.data-agents)):
 
 ```groovy
     stage('Eval gate (Langfuse experiment)') {
       // the risk agent just deployed answers the eval dataset as a Langfuse experiment (agents/eval/langfuse_gate.py);
-      // below EVAL_MIN_ACCURACY the release goes back to its previous revision and the build fails
+      // below EVAL_MIN_ACCURACY the build fails and the release goes back to its previous revision (post)
       when { environment name: 'DEPLOY', value: 'true' }
       steps {
         withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
@@ -275,12 +282,33 @@ The eval gate stage
                 -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
                 --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
             ''')
-            if (gate != 0) {
-              sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
-              error "eval gate failed: $RELEASE rolled back to its previous revision"
-            }
+            if (gate != 0) { error "eval gate failed" }
           }
+        }
+      }
+    }
+  }
+  post {
+    success {
+      script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
+    }
+    failure {
+      // a release that is live but failed its readiness wait, smoke test or eval gate goes back to the previous revision
+      script {
+        if (env.DEPLOYED == 'true') {
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
+          }
+          echo "$RELEASE rolled back to its previous revision"
+        }
+      }
+    }
+  }
 ```
+
+The builds below ran the earlier version, in which the gate stage ran `helm rollback` itself and a failed smoke test
+left the release in place. Since 2026-11-12 the failure handler covers every step after the upgrade; it has not run
+in Jenkins yet.
 
 - #20 (a commit under `agents/`): deploy and smoke test passed, the eval scored 0.583 against the 0.6 gate, Helm rolled
   the release back and the build failed.

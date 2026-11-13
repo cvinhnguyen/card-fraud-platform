@@ -4,7 +4,8 @@ When a card is used, the card network waits for the bank's answer before the sho
 fraud decision has to come back in milliseconds and must never fail outright. The Layer 2 serving path decides each
 card authorization in real time. KServe, a Kubernetes model server, serves the fraud model with the booster inside
 the image, and the Fraud Scoring API (FastAPI) reads the card's features from the Feast online store, asks
-KServe for a score, turns it into approve, step_up (ask the cardholder for an OTP or biometric check) or decline, and logs every decision to Kafka as the record of decisions.
+KServe for a score, turns it into approve, step_up (ask the cardholder for a one-time password, OTP, or a biometric
+check) or decline, and logs every decision to Kafka as the record of decisions.
 KServe's payload logger copies every request and response of the model to the drift detector.
 An outage of any dependency gives a safe fallback decision instead of an error.
 
@@ -18,7 +19,8 @@ An outage of any dependency gives a safe fallback decision instead of an error.
 
 ## Where it fits
 
-The features come from the Feast online store that Layer 1's pipelines and the push jobs keep fresh
+Serving is the left side of Layer 2 in the
+[overview](../architecture.md#layer-2-the-ml-platform-right-panel). The features come from the Feast online store that Layer 1's pipelines and the push jobs keep fresh
 ([feature_store.md](feature_store.md)); the model is the one a reviewer promoted to `production` in MLflow
 ([ml_training.md](ml_training.md)); every decision goes to the Kafka topic `fraud_predictions`, the record of
 decisions. The drift monitoring does not read that topic: KServe's payload logger sends every request and response
@@ -53,12 +55,13 @@ flowchart LR
 With the production model in MLflow and the kind cluster with KServe (`infra/k8s/platform.sh`):
 
 ```bash
-python services/predictor/fetch_model.py --alias production      # MLflow alias -> services/predictor/model/
+MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python services/predictor/fetch_model.py --alias production   # MLflow alias -> services/predictor/model/
 docker build -t localhost:5001/fraud/predictor:<version> services/predictor && docker push localhost:5001/fraud/predictor:<version>
-kubectl apply -f infra/k8s/kserve-card-fraud.yaml                    # image tag = the registry version; also the Broker and Trigger
+sed 's/MODEL_VERSION/<version>/' infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -   # also the Broker and Trigger
 ```
 
-Replace `<version>` with the model version in the MLflow registry; the image tag is that version.
+Replace `<version>` with the model version in the MLflow registry. The manifest holds the placeholder
+`MODEL_VERSION` in the image tag, so the `sed` sets the tag to that version.
 
 ## Model server (KServe)
 
@@ -137,7 +140,8 @@ Async end to end: Feast `get_online_features_async`, `httpx.AsyncClient` (one po
 
 The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step-up (OTP), else approve. The thresholds
 come from configuration (`T_LOW`, `T_HIGH`), not from the model, so risk can tune them without a release; the model
-version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR)
+version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR, FPR = false
+positive rate, the share of legitimate payments flagged)
 ([`services/scoring_api/app/policy.py` L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/policy.py#L20-L37)):
 
 ```python
@@ -163,7 +167,7 @@ class FallbackPolicy:
 
 Fallback, never an error: each stage has a time budget (`asyncio.wait_for`, 50 ms by default, 200 ms in compose
 where KServe is reached through the kind NodePort). A timeout or failure of the feature store or the model gives
-`FallbackPolicy`: approve below 2,000,000 VND, step-up from it, never decline without evidence. The response says
+`FallbackPolicy`: approve below 2,000,000 VND (Vietnamese dong), step-up from it, never decline without evidence. The response says
 `fallback: true` and the counter `fraud_fallbacks_total{cause}` records why (`features_timeout`, `model_error`, ...).
 A payment is never blocked by an outage of the fraud system
 ([`services/scoring_api/app/scorer.py` L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/scorer.py#L35-L60)):
@@ -297,3 +301,15 @@ The fix
 
 - In KServe 0.21 the Helm chart is `oci://ghcr.io/kserve/charts/kserve-resources`; the old `kserve` chart name no
   longer resolves.
+
+## Limits
+
+- One Scoring API container with one worker, about 45 requests a second ([Capacity](#capacity-and-a-bug-the-first-load-found)).
+  Nothing scales it: more traffic needs more replicas behind a load balancer.
+- The decision thresholds are configuration (`T_LOW`, `T_HIGH` in compose), set to model v1's values. Promoting a new
+  model does not change them; its own recommended values are MLflow tags of its version and have to be copied into
+  the configuration by hand.
+- `auth_ts` is the bank's local time without an offset, as in the training data. A switch that sends an offset (for
+  example `+07:00`) has not been tested, and the hour behind `is_night` could then be off.
+- A Kafka outage after start costs only the prediction log: a record that cannot be queued within 50 ms is dropped
+  and logged, and the decision goes out as usual.

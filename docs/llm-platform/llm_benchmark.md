@@ -4,8 +4,8 @@ Every agent answer waits for the model, so the model server's speed sets how lon
 many conversations the platform can hold at once. The model server behind the agents is llama.cpp (build b11755) serving Qwen3-8B Q4_K_M on the host's GTX 1070 (8 GB,
 Pascal: no vLLM), reached through agentgateway, the llm-d router and the InferencePool `qwen3-8b` (the Layer 3
 platform, installed by [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/llm-platform.sh),
-see [llm_platform.md](llm_platform.md)). This page measures that server under the agents' kind of load, tries three
-configurations, and keeps the one that holds the speed without the memory growth.
+see [llm_platform.md](llm_platform.md)). The benchmark measures that server under the agents' kind of load, tries
+three configurations, and keeps the one that holds the speed without the memory growth.
 
 | | |
 |---|---|
@@ -19,8 +19,9 @@ configurations, and keeps the one that holds the speed without the memory growth
 
 The model server is the last hop of every agent call in Layer 3 (LLM and agent platform). An agent calls the
 agentgateway route `/v1`, the llm-d router picks the endpoint, and llama.cpp on the host GPU answers
-([llm_platform.md](llm_platform.md)). It takes the agents' prompts, a long system prompt per agent followed by a
-question, and returns the answer tokens. This page measures how fast it does that. The flags it keeps go into the
+([architecture.md](../architecture.md#system-diagram-layer-3), arrow A16; [llm_platform.md](llm_platform.md)). It
+takes the agents' prompts, a long system prompt per agent followed by a question, and returns the answer tokens. The
+benchmark measures how fast it does that. The flags it keeps go into the
 platform's llama.cpp start command, and the capacity it finds sets what agent autoscaling can and cannot buy
 ([What it means for agent autoscaling](#what-it-means-for-agent-autoscaling)).
 
@@ -104,6 +105,8 @@ load:
 
 ## Results
 
+p50 is the median, p90 the value that 90 % of the requests stay under.
+
 | run | in flight | req/s | output tok/s | TTFT p50 (s) | TTFT p90 (s) | TPOT p50 (ms) | latency p50 (s) | latency p90 (s) | prompt cached | failures |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | e1-baseline | 1 | 0.16 | 23.3 | 0.39 | 3.35 | 36 | 5.7 | 8.7 | 70% | 0 |
@@ -181,7 +184,7 @@ The measuring loop
 | none (e3) | 28.8 | 0 | 0 | 40 / 40 |
 | `--spec-type ngram-mod` (defaults, tuned for code: 24-token lookup, 48-64-token drafts) | 29.7 | 448 | 19 % | 40 / 40 |
 | `--spec-type ngram-simple`, lookup 4, draft 16 | 39.9 | 1,894 | 33 % | 40 / 40 |
-| **`--spec-type ngram-simple --spec-ngram-simple-size-n 3 --spec-ngram-simple-size-m 8`** | **42.1 (+46 %)** | 1,526 | 44 % | 40 / 40 |
+| `--spec-type ngram-simple --spec-ngram-simple-size-n 3 --spec-ngram-simple-size-m 8` (kept) | 42.1 (+46 %) | 1,526 | 44 % | 40 / 40 |
 
 End to end through the gateway, the risk agent on the same 20 questions (`run_eval.py --mode agent`): p50 5.25 s
 without, 4.88 s with (accuracy 0.85 both). The gain is smaller there because an agent turn is mostly prefill

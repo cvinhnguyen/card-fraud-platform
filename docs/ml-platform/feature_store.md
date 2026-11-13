@@ -5,8 +5,8 @@ last 30 days" one way and the Scoring API another, the model sees numbers it nev
 removes that risk: the 20 features are defined once in one Feast repository, and that one definition is read two
 ways, from the offline store (the Delta tables of the lakehouse, read with Spark) to build training sets, and from
 the online store (Redis) when the Scoring API scores a payment in milliseconds. Feast is the hand-over between the
-layers: Layer 1 (data platform) writes the features into it and Layer 2 (ML platform) reads them. Feast 0.66, SQL
-registry in Postgres (`ml-db`, database `feast`).
+layers: Layer 1 (data platform) writes the features into it and Layer 2 (ML platform) reads them. The platform runs
+Feast 0.66 with a SQL registry in Postgres (`ml-db`, database `feast`).
 
 | | |
 |---|---|
@@ -18,7 +18,8 @@ registry in Postgres (`ml-db`, database `feast`).
 
 ## Where it fits
 
-Features come in from three places and go out to two:
+Feast is the hand-over between Layers 1 and 2 in the
+[overview](../architecture.md#the-hand-over-feast). Features come in from three places and go out to two:
 
 | In or out | What | Through |
 |---|---|---|
@@ -38,7 +39,7 @@ How the features flow into Feast and out to training and serving:
 
 ```mermaid
 flowchart LR
-    DP3["DP3 feature pipeline<br/>(Spark, nightly)"] --> stats["gold.feat_card_txn_stats_daily"]
+    DP3["DP3 feature pipeline<br/>(Spark, on each new gold version)"] --> stats["gold.feat_card_txn_stats_daily"]
     dbt["dbt (DP2)"] --> dim["gold.dim_card"]
     auth["Kafka card_authorizations"] --> rt["Flink rt_features.py"] --> trt["Kafka card_features_rt"]
     auth --> dev["Flink device_seen.py"] --> tdev["Kafka card_device_seen"]
@@ -106,7 +107,7 @@ model with other inputs gets `fraud_model_v2`.
 
 ## TTL
 
-TTL is how old a stored value may be and still describe the card. One Feast behaviour drives every choice: the
+TTL (time to live) is how old a stored value may be and still describe the card. One Feast behaviour drives every choice: the
 Redis lookup returns the stored value however old it is. TTL bounds the point-in-time join (training) and the
 materialization window, and online reads ignore it. Anything the model must see "aged" is therefore computed in the
 on-demand view from the value's own timestamp, so training and serving age it the same way.
@@ -139,7 +140,7 @@ Three decisions keep the training rows identical to what the API sees:
 
 1. Entity timestamp = payment time - 1 ms. When the API scores a payment, Flink has not processed it yet: the
    online store holds features of the *previous* authorizations. Training joins at `txn_ts - 1 ms`
-   ([`ml/fraud_ml/data.py` L88-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L105-L108)),
+   ([`ml/fraud_ml/data.py` L105-L108](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L105-L108)),
    so the point-in-time join also excludes the payment itself.
 2. DP3 rows land the night after the activity. A row for day L has `event_timestamp = L + 1` and windows that
    end at L
@@ -156,7 +157,7 @@ Three decisions keep the training rows identical to what the API sees:
 
 | What | How | When |
 |---|---|---|
-| Daily stats to Redis | incremental materialize pipeline, DAG `feast_materialize` ([`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/feast_materialize.py), [run of 2026-11-03](#materialize-run-on-2026-11-03)): `feast materialize-incremental <day+1>` then `ml/tools/check_online.py` (sample of cards active on the business day read back from Redis, values compared with Delta); the day comes from the dataset event | dataset event `lakehouse://features`, emitted by DP3 |
+| Daily stats to Redis | incremental materialize pipeline, DAG `feast_materialize` ([`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/feast_materialize.py), [run of 2026-11-12](#materialize-run-on-2026-11-12)): `feast materialize-incremental <day+1>` then `ml/tools/check_online.py` (sample of cards active on the business day read back from Redis, values compared with Delta); the day comes from the dataset event | dataset event `lakehouse://features`, emitted by DP3 |
 | Streaming to Redis | `push-online` (`ml/jobs/push_job.py --to online`), consumer group per job, offsets committed after the write | continuous |
 | Streaming to Delta | `push-offline` (`--to offline`), `deltalake` append (Feast's Spark offline push appends plain Parquet next to the Delta log, which Delta readers ignore) | continuous; `--until-idle` for the backfill |
 | Definitions | `feast apply` from `ml/feature_repo/` | after a change |
@@ -189,9 +190,10 @@ message to Kafka and waits for it in both stores. Build #2: `ci_smoke_fabe0b34: 
 
 ![Jenkins stage view of stream-feature-jobs: build #2 ran tests, image, deploy and the online + offline smoke test](../images/cicd_stream-feature-jobs.png)
 
-### Materialize run on 2026-11-03
+### Materialize run on 2026-11-12
 
-The run of 2026-11-12, started by DP3's `lakehouse://features/` event for business day 2026-11-08:
+The run of 2026-11-12, started by DP3's `lakehouse://features` dataset event (Airflow shows it as
+`lakehouse://features/`) for business day 2026-11-08:
 `materialize-incremental` to 2026-11-09, then `check_online` over 200 cards active that day: 0 missing online,
 0 stale. The long red bar in the grid is a run left over from October, stopped by hand:
 
@@ -219,7 +221,7 @@ runs to reach a steady rate:
 |---|---|---|
 | 1 | 4 slots, parallelism 1, Python state cache 1,000 keys (default) | 188 events/s (12 h) |
 | 2 | 8 slots (4 GB TaskManager), parallelism 5, state cache 200k keys | 1,020 events/s for 2 minutes, then the 8 GB Docker VM swapped (91 MB free, 2.2 GB swap) and it nearly stopped |
-| 3 | 6 slots (3.5 GB), parallelism 4, state cache 30k keys, push jobs started only after Flink | **~870 events/s, steady** (~2.5 h) |
+| 3 | 6 slots (3.5 GB), parallelism 4, state cache 30k keys, push jobs started only after Flink | ~870 events/s, steady (~2.5 h) |
 
 Each element of a PyFlink function crosses to a Python worker, and one worker uses one core, so the job scales with
 parallelism (state is keyed by card) until memory runs out: every slot adds a Python process (~0.3 GB). The state

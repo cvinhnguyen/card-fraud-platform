@@ -18,7 +18,8 @@ dedup.
 ## Where it fits
 
 The 100 GB dataset is a second, larger output of the Layer 1 (data platform) generator
-([data_characteristics.md](../data-platform/data_characteristics.md)), kept under its own prefix in the export
+([data_characteristics.md](../data-platform/data_characteristics.md),
+[architecture.md](../architecture.md#layer-1-the-data-platform-top-band)), kept under its own prefix in the export
 bucket. The 1 GB dataset the platform runs on stays as it is. Two Spark benchmarks run on the large one: the merchant
 join skew of [spark_optimization.md](spark_optimization.md#merchant-join-skew) and the silver dedup of DP2 (bronze to
 silver and gold, [spark_jobs.md](../data-platform/spark_jobs.md)). The results back two choices in the pipeline
@@ -129,12 +130,12 @@ and sets Spark's AQE defaults back
 4,131,056,674 rows (4.05B + 2% duplicates), biggest merchant 23.9% of all rows (~990M rows), top 10 merchants
 70.0%; one executor, 8 cores, 2 GB heap; 2,000 shuffle partitions; one run per method (a run is a full pass).
 
-| Method | Wall time | Slowest task | Median task | Biggest shuffle read | |
+| Method | Wall time | Slowest task | Median task | Biggest shuffle read | Note |
 |---|---:|---:|---:|---:|---|
-| baseline (sort-merge, AQE off) | **did not finish** | | | | `OutOfMemoryError: Java heap space` after 106 min, in the reduce task that holds the hot merchant |
-| salting (32 buckets) | **9,060 s** (151 min) | 377 s | 16 s | 181 MB | hot keys spread over 32 tasks |
-| AQE (Spark defaults: skew 256 MB, target 64 MB) | **6,784 s** (113 min) | 477 s | 94 s | 81 MB | 2,000 shuffle partitions coalesced to 218 tasks, the hot ones split |
-| broadcast | **2,866 s** (48 min) | 26 s | 20 s | 0 (no shuffle) | merchants (20k rows) copied to the executor; the scan is the whole cost |
+| baseline (sort-merge, AQE off) | did not finish | | | | `OutOfMemoryError: Java heap space` after 106 min, in the reduce task that holds the hot merchant |
+| salting (32 buckets) | 9,060 s (151 min) | 377 s | 16 s | 181 MB | hot keys spread over 32 tasks |
+| AQE (Spark defaults: skew 256 MB, target 64 MB) | 6,784 s (113 min) | 477 s | 94 s | 81 MB | 2,000 shuffle partitions coalesced to 218 tasks, the hot ones split |
+| broadcast | 2,866 s (48 min) | 26 s | 20 s | 0 (no shuffle) | merchants (20k rows) copied to the executor; the scan is the whole cost |
 
 With ~24% of 4.1B rows behind one key, the baseline cannot finish on this executor at all: one task must sort ~990M
 rows alone while 1,999 others finish in seconds. The 1 GB run only hinted at this.
@@ -256,7 +257,8 @@ against the ~4 days estimated from the HDD probe.
 
 ## Gotchas
 
-- The first AQE run of the skew benchmark also ran out of memory, after 67 min. `skew_join.configure` set the target
+- The first AQE run of the skew benchmark also ran out of memory, after 67 min (job 7 ran 58 min, then job 8 failed
+  after 8.6 min). `skew_join.configure` set the target
   partition size equal to the skew threshold
   ([`pipelines/spark/skew_join.py` L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/skew_join.py#L46);
   right for the 1 GB run, where both are 8 MB), so at 100 GB each task aimed at 256 MB instead of Spark's default

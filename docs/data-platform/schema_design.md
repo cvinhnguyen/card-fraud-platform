@@ -39,6 +39,16 @@ holds the same tables with their lineage ([datahub.md](datahub.md)).
    the choices: SCD2 (slowly changing dimension type 2: every past version of a customer kept, with a validity
    range), the point-in-time join, labels in their own table, month partitions.
 
+## Run it
+
+The tables are built by the Spark jobs and dbt (commands in [spark_jobs.md](spark_jobs.md#run-it)). The ER diagrams
+on this page are redrawn from the repo root (Python stdlib only; Chrome or Edge renders the PNGs):
+
+```bash
+python docs/diagrams/er.py              # all three zones -> docs/images/er-<zone>.svg + .png
+python docs/diagrams/er.py gold         # only the named zones (bronze, silver, gold)
+```
+
 ## Zones
 
 | Zone | Location | Written by | What it holds |
@@ -82,13 +92,14 @@ source.
 | `gold.dim_card` | one card | `card_id` | | dbt table |
 | `gold.dim_merchant` | one merchant | `merchant_id` | | dbt table |
 | `gold.dim_date` | one calendar day | `date_key` (`yyyyMMdd`) | | dbt table |
-| `gold.fact_transaction` | one **settled** transaction | `transaction_id` | `txn_month` | dbt incremental `MERGE` |
+| `gold.fact_transaction` | one settled transaction (reversed ones are left out) | `transaction_id` | `txn_month` | dbt incremental `MERGE` |
 | `gold.label_transaction` | one transaction (settled or reversed) as labelled on `label_as_of` | `transaction_id` | `event_month` | `MERGE` per `--as-of` run |
 | `gold.feat_card_txn_stats_daily` | one card after one day with activity (a settled transaction or a reported dispute) | `card_id`, `event_timestamp` | | overwrite |
 
 ## Zone flow
 
-Which job reads each table and what it writes (`pipelines/spark/*.py` and the dbt `source()` / `ref()` calls):
+Which job reads each table and what it writes (`pipelines/spark/*.py`, the dbt `source()` / `ref()` calls, and the
+one Layer 2 reader of bronze):
 
 | Table | Read by | Writes |
 |---|---|---|
@@ -98,7 +109,7 @@ Which job reads each table and what it writes (`pipelines/spark/*.py` and the db
 | `bronze.raw_cards`, `bronze.raw_accounts` | dbt, `build_labels.py` | `gold.dim_card`, `gold.label_transaction` |
 | `bronze.raw_merchants` | dbt | `gold.dim_merchant` (its city is already one of the 34 units) |
 | `bronze.raw_disputes` | `build_labels.py`, `build_features.py` (DP3) | `gold.label_transaction`, `gold.feat_card_txn_stats_daily` |
-| `bronze.raw_card_authorizations` | none | the raw stream, kept for replay and audit; the realtime features come from the Flink jobs through the push jobs ([feature_store.md](../ml-platform/feature_store.md)) |
+| `bronze.raw_card_authorizations` | no Layer 1 job; Layer 2's `TrainingDataService` ([`ml/fraud_ml/data.py` L94-L96](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L94-L96)) and `ml/jobs/drift_job.py` | each payment's `device_id`, joined into the training set and the drift window; the realtime features come from the Flink jobs through the push jobs ([feature_store.md](../ml-platform/feature_store.md)) |
 | `silver.stg_transactions` | dbt, `build_labels.py` | `gold.dim_date`, `gold.fact_transaction`, `gold.label_transaction` |
 | `silver.stg_customers` | dbt | `gold.dim_customer` (SCD2) |
 | `gold.fact_transaction` | `build_features.py` (DP3) | `gold.feat_card_txn_stats_daily` |
@@ -123,7 +134,7 @@ DP2 cleans two tables; the other bronze tables are already clean and gold reads 
 looks the 34 units up in it. The diagram shows `stg_transactions` and `stg_customers`, with badges on the columns DP2
 adds or changes:
 
-![Silver ER diagram: stg_transactions and stg_customers with their new and renamed columns, linked through raw_cards and raw_accounts](../images/er-silver.png)
+![Silver ER diagram: stg_transactions and stg_customers with their new, renamed and changed columns, linked through raw_cards and raw_accounts](../images/er-silver.png)
 
 The before / after numbers of each fix (rows, distinct ids, settled spend, NULL `auth_method`) are in
 [spark_jobs.md](spark_jobs.md#before--after-full-build-146-s) and
@@ -159,7 +170,7 @@ DataHub shows the feature table built from `gold.fact_transaction` and `bronze.r
   ([`pipelines/spark/build_silver.py` L28-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L28-L31)).
 - A fraud label can flip up to 60 days after the payment, so labels live in their own table, apart from the fact,
   updated with `MERGE`; each run is a Delta version tagged `label_as_of=<date>` (see [spark_jobs.md](spark_jobs.md),
-  [`pipelines/spark/build_labels.py` L51-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L69)).
+  [`pipelines/spark/build_labels.py` L67-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L69)).
 - A feature row describes an active day L and carries `event_timestamp` = L + 1 day, the night it is written, so a
   point-in-time join in Feast sees the card's last active day before the payment, never the payment being scored.
   `created` is the processing time
