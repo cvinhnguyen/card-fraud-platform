@@ -162,6 +162,7 @@ The LLM route has one AgentgatewayPolicy (several policies on the same route ove
 | `authorization` | user id `agents` only | the other keys (support app, coordinator, the MCP keys) belong to their own routes; checked on 2026-11-12: the support app's key gets 403 on `/v1`, the agents' key goes through |
 | `rateLimit` | 120 requests a minute with a burst of 20, and 60,000 tokens a minute | one GPU with two slots: a runaway agent loop must not starve the others |
 | `promptGuard` request and response, `Mask` | built-in CreditCard, Email and PhoneNumber, plus regexes for the 12-digit citizen ID (CCCD) and Vietnamese mobile numbers | customers type card and phone numbers into a support chat; the model needs neither, and masking lets the conversation go on where a reject would break it |
+| `promptGuard` `streaming: Enabled`, a second response guard with `Reject` | the same patterns | the gateway cannot mask a streamed answer, because its bytes are already on the way: Mask lets them through. The Reject guard ends such a stream with a `guardrail_blocked` error. In a buffered answer it runs after the mask and finds nothing |
 
 The keys themselves live in Vault: the gateway only stores their hashes, which
 [`infra/k8s/secrets.sh` L82-L88](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L82-L88)
@@ -172,7 +173,8 @@ The policy as written
 
 ```yaml
 # Security and policy of the LLM route: who may call (API key), how much (tokens and requests), and no PII to or
-# from the model (masked, not rejected: a support chat should go on with the number hidden).
+# from the model (masked, not rejected: a support chat should go on with the number hidden; a streamed answer
+# cannot be masked, so one with PII is stopped).
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -195,14 +197,19 @@ spec:
   backend:
     ai:
       promptGuard:
-        request: &pii
-          - regex:
+        streaming: Enabled   # without it the response guards skip streamed answers ("stream": true) altogether
+        request:
+          - regex: &pii
               action: Mask
               builtins: [CreditCard, Email, PhoneNumber]
               matches:
                 - "\\b0\\d{11}\\b"                       # Vietnamese citizen ID (CCCD): 12 digits, province code first
                 - "(?:\\+84|\\b0)[35789]\\d{8}\\b"      # Vietnamese mobile number
-        response: *pii
+        response:
+          - regex: *pii   # a buffered answer is masked
+          # A streamed answer cannot be masked: its bytes are already on the way, and Mask lets them through. This
+          # guard ends the stream with an error instead; in a buffered answer it only sees the masked text.
+          - regex: {<<: *pii, action: Reject}
 ```
 
 The same policy was then called from Git Bash through a port-forward to the gateway. `chat` is a shell function
@@ -217,6 +224,19 @@ answer with the agents' key, the masked phone and card number, and the burst of 
 
 In an earlier run of the same burst, 5 requests also got 504 after waiting 60 s for a connection to llama.cpp, whose
 two slots were busy with the requests already admitted.
+
+Streamed answers were checked on 2026-11-13 on version B of the route (`x-llm-variant: b`, Groq), because the local
+model cannot run next to the cluster on this machine. The prompt spelled out a phone number and an email in words, so
+the request guard had nothing to mask and only a response guard could catch the model's reply:
+
+| Answer | Before the change | After |
+|---|---|---|
+| with PII, buffered | `<masked>; <EMAIL_ADDRESS>` | `<masked>; <EMAIL_ADDRESS>` |
+| with PII, streamed | the number and the email in clear | stream ended: `guardrail_blocked` |
+| without PII, streamed | passes | passes |
+
+A false positive now ends a streamed answer instead of hiding one word. None of the 371 eval gate answers in
+Langfuse contains a masked value, so the response guard has not matched a real answer so far.
 
 ## Global model config for the agents
 

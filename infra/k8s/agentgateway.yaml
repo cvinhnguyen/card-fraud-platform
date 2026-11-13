@@ -84,7 +84,8 @@ spec:
       timeouts: {request: 300s}
 ---
 # Security and policy of the LLM route: who may call (API key), how much (tokens and requests), and no PII to or
-# from the model (masked, not rejected: a support chat should go on with the number hidden).
+# from the model (masked, not rejected: a support chat should go on with the number hidden; a streamed answer
+# cannot be masked, so one with PII is stopped).
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -107,14 +108,19 @@ spec:
   backend:
     ai:
       promptGuard:
-        request: &pii
-          - regex:
+        streaming: Enabled   # without it the response guards skip streamed answers ("stream": true) altogether
+        request:
+          - regex: &pii
               action: Mask
               builtins: [CreditCard, Email, PhoneNumber]
               matches:
                 - "\\b0\\d{11}\\b"                       # Vietnamese citizen ID (CCCD): 12 digits, province code first
                 - "(?:\\+84|\\b0)[35789]\\d{8}\\b"      # Vietnamese mobile number
-        response: *pii
+        response:
+          - regex: *pii   # a buffered answer is masked
+          # A streamed answer cannot be masked: its bytes are already on the way, and Mask lets them through. This
+          # guard ends the stream with an error instead; in a buffered answer it only sees the masked text.
+          - regex: {<<: *pii, action: Reject}
 ---
 # Pool endpoint for the host's llama.cpp: forwards to it with the model server's key (the agents never hold it).
 # Ready only when llama.cpp's /health is 200, so the endpoint picker skips it while the model loads.
