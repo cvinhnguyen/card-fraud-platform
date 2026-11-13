@@ -31,10 +31,27 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower())
 
 
+NEGATION = re.compile(r"\b(not|no|never|without)\b|n't\b")
+
+
+def states(a: str, alt: str) -> bool:
+    """True when the normalized answer states `alt` as a whole term: "3%" is not found in "1.3%" or "13%", "100,000" not
+    in "1,100,000", and a mention with a negation in the four words before it ("not free") does not count."""
+    for m in re.finditer(re.escape(alt), a):
+        before, after = a[:m.start()], a[m.end():]
+        if alt[0].isalnum() and re.search(r"(\w|\d[.,])$", before):
+            continue   # inside a longer word or number
+        if alt[-1].isalnum() and re.match(r"\w|[.,]\d", after):
+            continue
+        if not NEGATION.search(" ".join(before.split()[-4:])):
+            return True
+    return False
+
+
 def correct(answer: str, expect: list[list[str]]) -> bool:
     """True when the answer states every expected fact (each fact: a group of accepted spellings)."""
     a = norm(answer)
-    return all(any(norm(alt) in a for alt in group) for group in expect)
+    return all(any(states(a, norm(alt)) for alt in group) for group in expect)
 
 
 def post(url: str, body: dict, headers: dict, timeout: float) -> dict:
@@ -76,10 +93,12 @@ def ask_llm(gw: str, doc: str, question: str, variant: str | None) -> str:
 DOWN_CARD = ("card-data-agent: The card has not been used in the last hour. In the last 30 days it made 3 payments, "
              "averaging about 383,800 VND. Credit card on the Napas network, issued April 2016.")
 DOWN_RISK = "risk-agent: ERROR failed to call tool server /mcp/policy-rag: HTTP 500"
-# an invented risk level, score, fee or deadline: none of these can come from the answers above
-DOWN_INVENTED = re.compile(r"\b(high|low|medium) risk|risk (score )?(is|may be|might be|could be) |\d+ ?%|\d+ ?(working )?days?\b",
-                           re.I)
-DOWN_SAYS_SO = re.compile(r"could not|couldn't|cannot|can't|unable|not available|unavailable|try again|later", re.I)
+# an invented risk level, verdict, score, fee or deadline: none of these can come from the answers above
+DOWN_INVENTED = re.compile(r"\b(high|low|medium)[- ]risk|risk (score )?(is|may be|might be|could be) "
+                           r"|\b(is|looks|seems|appears|likely|probably|as)( to be)? (suspicious|fraud\w*|safe|legitimate)"
+                           r"|\d+ ?%|\d+ ?(working )?days?\b|\d[\d,.]* ?(vnd|đ|dong)\b", re.I)
+DOWN_SAYS_SO = re.compile(r"(could not|couldn't|cannot|can't|unable to) (be )?(check|verif|confirm|get|reach|retriev)"
+                          r"|not available|unavailable|try again|ask again", re.I)
 
 
 def ask_down(gw: str, question: str) -> str:
@@ -93,9 +112,13 @@ def ask_down(gw: str, question: str) -> str:
     return out["choices"][0]["message"]["content"] or ""
 
 
-def down_ok(answer: str) -> bool:
-    """True when the reply says the risk part failed and invents no risk, score, fee or deadline."""
-    own = re.sub(r"(last|past) \d+ days", "", answer, flags=re.I)  # the card data's own "last 30 days" is fine
+def down_ok(answer: str, question: str = "") -> bool:
+    """True when the reply says the risk part failed and invents no risk, score, fee or deadline. The card data's
+    "last 30 days" and an amount the question or the card data gave (2,500,000 VND, 383,800 VND) are not invented."""
+    given = {re.sub(r"\D", "", n) for n in re.findall(r"\d[\d,.]*\d", question + DOWN_CARD)}
+    own = re.sub(r"(last|past) \d+ days", "", answer, flags=re.I)
+    own = re.sub(r"\d[\d,.]*\d ?(vnd|đ|dong)\b", lambda m: "" if re.sub(r"\D", "", m.group(0)) in given else m.group(0),
+                 own, flags=re.I)
     return bool(DOWN_SAYS_SO.search(own)) and not DOWN_INVENTED.search(own)
 
 
@@ -131,7 +154,7 @@ def main() -> int:
             error = None
         except Exception as e:  # noqa: BLE001 - an error is a wrong answer, reported as such
             answer, error = "", str(e)[:200]
-        ok = down_ok(answer) if args.mode == "down" else correct(answer, it["expect"])
+        ok = down_ok(answer, it["question"]) if args.mode == "down" else correct(answer, it["expect"])
         r = {"id": it["id"], "correct": bool(answer) and ok,
              "seconds": round(time.monotonic() - t0, 2), "error": error, "answer": answer[:400]}
         results.append(r)
