@@ -1,6 +1,6 @@
 """The 7 steps of the training pipeline. The notebook calls them in order; each KFP component calls one of them.
 
-  1 load_labels        labels as of label_as_of (Delta time travel) -> 2-column label table + entity rows   (Spark)
+  1 load_labels        labels as of label_as_of (Delta time travel) -> entity rows with their labels         (Spark)
   2 get_training_data  Feast point-in-time features -> versioned training set (Delta MERGE)                   (Spark)
   3 validate_data      schema, nulls, label rates; stops the run on failure
   4 time_split         train / val / test parquet, gaps checked
@@ -74,8 +74,7 @@ def load_labels(label_as_of: str, negative_rate: float, feature_service: str, ta
     svc = TrainingDataService(spark, dt.date.fromisoformat(label_as_of), negative_rate, feature_service)
     reg = ModelRegistry()
     run_id = reg.start({"pipeline": "train_fraud_model", **(tags or {})})
-    labels, entities = svc.labels(), svc.entities()
-    labels.write.mode("overwrite").parquet(f"{run_dir(run_id)}/labels")          # (transaction_id, is_fraud)
+    entities = svc.entities()
     entities.write.mode("overwrite").parquet(f"{run_dir(run_id)}/entities")
     counts = {r["split"]: r["count"] for r in entities.groupBy("split").count().collect()}
     windows = TimeSplitter(svc.label_as_of).windows()

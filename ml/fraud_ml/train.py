@@ -55,9 +55,16 @@ class FraudModelTrainer:
         clf = SparkXGBClassifier(features_col=self.features, label_col=LABEL, weight_col=WEIGHT,
                                  validation_indicator_col="is_val", num_workers=self.num_workers,
                                  random_state=self.seed, **self.xgb_params)
-        booster = clf.fit(sdf).get_booster()
+        booster = self.best_trees(clf.fit(sdf).get_booster())
         booster.feature_names = list(self.features)
         return booster
+
+    @staticmethod
+    def best_trees(booster: xgb.Booster) -> xgb.Booster:
+        """Only the trees up to the best early-stopping round. The fitted booster still holds the rounds trained after
+        it (up to early_stopping_rounds more), and inplace_predict uses every tree it holds (xgboost 3.2)."""
+        best = getattr(booster, "best_iteration", None)
+        return booster[: best + 1] if best is not None and best + 1 < booster.num_boosted_rounds() else booster
 
     @staticmethod
     def predict(booster: xgb.Booster, df: pd.DataFrame) -> np.ndarray:

@@ -53,7 +53,9 @@ def delta_version(spark: SparkSession, path: str) -> int:
 
 @dataclass
 class TrainingDataService:
-    """Builds the training set of one pipeline run. Every input is pinned to a Delta version, recorded for MLflow."""
+    """Builds the training set of one pipeline run. The labels are read at a pinned Delta version; the versions of the
+    feature tables at step 1 are recorded for MLflow, while Feast reads their latest version in step 2 (a commit in
+    between would not show in the recorded versions)."""
 
     spark: SparkSession
     label_as_of: dt.date
@@ -71,7 +73,7 @@ class TrainingDataService:
         return max(ok)[0]
 
     def data_versions(self) -> dict[str, int]:
-        """Delta versions of every input table, logged as MLflow params."""
+        """Delta versions of the labels and the feature tables at the time of the call, logged as MLflow params."""
         out = {"label_transaction": self.label_version()}
         for t in FEATURE_TABLES:
             out[t] = delta_version(self.spark, f"{LAKE}/gold/{t}")
