@@ -96,6 +96,10 @@ spec:
     apiKeyAuthentication:
       mode: Strict
       configMapSelector: {matchLabels: {agentgateway.dev/apikey: "true"}}
+    authorization:   # only the agents' key: the support app's, coordinator's and MCP keys are for their own routes
+      action: Allow
+      policy:
+        matchExpressions: ['apiKey.user_id == "agents"']
     rateLimit:
       local:
         - {requests: 120, unit: Minutes, burst: 20}
