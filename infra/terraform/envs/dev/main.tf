@@ -43,13 +43,14 @@ module "vm" {
 }
 
 module "aks" {
-  source              = "../../modules/aks"
-  name                = "aks-${local.name}"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.this.name
-  kubernetes_version  = var.kubernetes_version
-  node_size           = var.aks_node_size
-  tags                = local.tags
+  source               = "../../modules/aks"
+  name                 = "aks-${local.name}"
+  location             = var.location
+  resource_group_name  = azurerm_resource_group.this.name
+  kubernetes_version   = var.kubernetes_version
+  node_size            = var.aks_node_size
+  authorized_ip_ranges = [var.admin_cidr]
+  tags                 = local.tags
 }
 
 module "acr" {

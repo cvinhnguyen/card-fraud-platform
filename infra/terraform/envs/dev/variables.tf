@@ -11,7 +11,7 @@ variable "location" {
 }
 
 variable "admin_cidr" {
-  description = "The admin's public IP as /32: the only source allowed to reach the VM"
+  description = "The admin's public IP as /32: the only source allowed to reach the VM and the AKS API server"
   type        = string
 
   validation {

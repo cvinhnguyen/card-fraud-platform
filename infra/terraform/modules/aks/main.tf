@@ -23,6 +23,11 @@ resource "azurerm_kubernetes_cluster" "this" {
     type = "SystemAssigned"
   }
 
+  # the API server is public: only the admin's address may reach it
+  api_server_access_profile {
+    authorized_ip_ranges = var.authorized_ip_ranges
+  }
+
   network_profile {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"

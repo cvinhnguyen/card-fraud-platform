@@ -28,3 +28,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "authorized_ip_ranges" {
+  description = "CIDRs allowed to reach the API server"
+  type        = list(string)
+}

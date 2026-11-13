@@ -51,6 +51,28 @@ x-datahub-env: &datahub-env
     DATAHUB_TELEMETRY_ENABLED: "false"
     ELASTICSEARCH_BUILD_INDICES_CLONE_INDICES: "false"
 
+# Environment of every Airflow container (orch profile).
+x-airflow-env: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # Added for Layer 2's live period (generate_drift.py), dated after the machine clock, when DP1 triggered DP2 / DP3 /
+    # feast_materialize (schedule None) with its own future logical date. They now run on dataset events, whose runs
+    # are dated when the event happens; the setting only applies to schedule None DAGs (today rag_ingest). Kept until
+    # a run of the live days through the dataset events shows it is no longer needed.
+    AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE: "true"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+    # 1 gunicorn worker, 10 min to start: with 4 workers and the 120 s default it failed to start on a busy machine
+    AIRFLOW__WEBSERVER__WORKERS: "1"
+    AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "600"
+    DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
+    # REST API with the admin user too (Jenkins releases and runs the RAG DAG: infra/jenkins, pipelines/rag/Jenkinsfile)
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+
 services:
   # Core banking database owned by another department (source for DP1).
   postgres:
@@ -360,28 +382,21 @@ services:
     user: "185:0"
     depends_on:
       airflow-db: {condition: service_healthy}
-    environment: &airflow-env
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db/airflow
-      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      # Added for Layer 2's live period (generate_drift.py), dated after the machine clock, when DP1 triggered DP2 / DP3 /
-      # feast_materialize (schedule None) with its own future logical date. They now run on dataset events, whose runs
-      # are dated when the event happens; the setting only applies to schedule None DAGs (today rag_ingest). Kept until
-      # a run of the live days through the dataset events shows it is no longer needed.
-      AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE: "true"
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
-      # 1 gunicorn worker, 10 min to start: with 4 workers and the 120 s default it failed to start on a busy machine
-      AIRFLOW__WEBSERVER__WORKERS: "1"
-      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "600"
-      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
-      AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
-      # REST API with the admin user too (Jenkins releases and runs the RAG DAG: infra/jenkins, pipelines/rag/Jenkinsfile)
-      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
-    # Only the init container sees the source credentials: it stores them as (Fernet-encrypted) Airflow connections.
-    env_file: .env
+    environment:
+      <<: *airflow-env
+      # Only the init container sees the source credentials (the ones setup_airflow.py reads): it stores them as
+      # Fernet-encrypted Airflow connections.
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      CORE_DB_USER: ${CORE_DB_USER}
+      CORE_DB_PASSWORD: ${CORE_DB_PASSWORD}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      ML_DB_PASSWORD: ${ML_DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      VECTOR_DB_PASSWORD: ${VECTOR_DB_PASSWORD}
+      LLM_API_KEY: ${LLM_API_KEY}
     command: >-
       bash -c "airflow db migrate >/dev/null && echo 'metadata db ready'
       && (airflow users create --role Admin --username admin --password \"$$AIRFLOW_ADMIN_PASSWORD\"
