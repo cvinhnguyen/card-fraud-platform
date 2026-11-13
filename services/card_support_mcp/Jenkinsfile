@@ -63,13 +63,16 @@ pipeline {
         }
         stage('Deploy (helm --atomic)') {
           // one release per server, one after the other; rolling update with maxUnavailable 0; a release whose pods
-          // never get Ready is rolled back by --atomic and stops the pipeline before the next server
+          // never get Ready is rolled back by --atomic and stops the pipeline before the next server. deployed.txt lists
+          // the releases already upgraded, which post rolls back when a later step fails.
           steps {
             withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
               sh '''
+                rm -f deployed.txt
                 for s in $SERVERS; do
                   helm upgrade --install $s-mcp $SVC/chart -f $SVC/chart/values-$s.yaml -n card-support \
                     --atomic --timeout 4m --set image.tag=$TAG
+                  echo $s >> deployed.txt
                   kubectl -n card-support rollout status deploy/$s-mcp --timeout=60s
                 done
               '''
@@ -104,6 +107,17 @@ pipeline {
     }
   }
   post {
+    failure {
+      // the servers already upgraded go back to their previous revision, so a failed build leaves the old set running
+      withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+        sh '''
+          if [ -f deployed.txt ]; then
+            for s in $(cat deployed.txt); do helm rollback $s-mcp -n card-support --wait --timeout 4m; done
+          fi
+        '''
+      }
+    }
     always { sh 'docker image rm card-support-mcp:test-$TAG >/dev/null 2>&1 || true' }
+    cleanup { sh 'rm -f deployed.txt' }   // cleanup runs after failure, which reads the file
   }
 }

@@ -51,6 +51,7 @@ pipeline {
       steps {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS --atomic --timeout 5m'
+          script { env.DEPLOYED = 'true' }   // from here on a failure rolls the release back (post)
           sh 'kubectl -n kagent wait --for=condition=Ready agent/coordinator --timeout=300s'
         }
       }
@@ -73,6 +74,19 @@ pipeline {
             # the fee came from the policy search: its citation (written fee_schedule#2 or "fee schedule") or the fact itself
             printf '%s' "$answer" | grep -q -i -E 'fee[_ ]schedule|2[.,]5 ?%'
           '''
+        }
+      }
+    }
+  }
+  post {
+    failure {
+      // a release that is live but failed its readiness wait or smoke test goes back to the previous revision
+      script {
+        if (env.DEPLOYED == 'true') {
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
+          }
+          echo "$RELEASE rolled back to its previous revision"
         }
       }
     }

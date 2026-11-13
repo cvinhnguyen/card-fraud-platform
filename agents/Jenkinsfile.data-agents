@@ -55,6 +55,7 @@ pipeline {
       steps {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS --atomic --timeout 5m'
+          script { env.DEPLOYED = 'true' }   // from here on a failure rolls the release back (post)
           sh 'for a in $AGENTS; do kubectl -n kagent wait --for=condition=Ready agent/$a --timeout=300s; done'
         }
       }
@@ -84,7 +85,7 @@ pipeline {
     }
     stage('Eval gate (Langfuse experiment)') {
       // the risk agent just deployed answers the eval dataset as a Langfuse experiment (agents/eval/langfuse_gate.py);
-      // below EVAL_MIN_ACCURACY the release goes back to its previous revision and the build fails
+      // below EVAL_MIN_ACCURACY the build fails and the release goes back to its previous revision (post)
       when { environment name: 'DEPLOY', value: 'true' }
       steps {
         withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
@@ -100,10 +101,7 @@ pipeline {
                 -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
                 --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
             ''')
-            if (gate != 0) {
-              sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
-              error "eval gate failed: $RELEASE rolled back to its previous revision"
-            }
+            if (gate != 0) { error "eval gate failed" }
           }
         }
       }
@@ -112,6 +110,17 @@ pipeline {
   post {
     success {
       script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
+    }
+    failure {
+      // a release that is live but failed its readiness wait, smoke test or eval gate goes back to the previous revision
+      script {
+        if (env.DEPLOYED == 'true') {
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
+          }
+          echo "$RELEASE rolled back to its previous revision"
+        }
+      }
     }
   }
 }

@@ -28,8 +28,10 @@ agents:
         examples: ["Am I liable if someone used my card abroad?"]
 
 # A/B test of the risk agent's model config: B samples near-greedily and caps its answers (the global config leaves
-# llama.cpp's defaults: temperature 0.8, no cap). Half of the coordinator's calls to risk-agent go to risk-agent-b.
+# llama.cpp's defaults: temperature 0.8, no cap). The test ran at weight 50 (half of the coordinator's calls to
+# risk-agent-b); B lost (docs/llm-platform/ab_testing.md), so it gets no live calls and stays reachable with header
+# x-agent-variant: b for later evaluations. Delete the entry to remove risk-agent-b.
 abTests:
-  risk-agent: {variant: risk-agent-b, modelConfig: qwen3-8b-precise, weight: 50}
+  risk-agent: {variant: risk-agent-b, modelConfig: qwen3-8b-precise, weight: 0}
 modelConfigs:
   qwen3-8b-precise: {temperature: "0.2", maxTokens: 512}
