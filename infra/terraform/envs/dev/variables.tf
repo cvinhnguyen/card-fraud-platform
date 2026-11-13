@@ -15,8 +15,8 @@ variable "admin_cidr" {
   type        = string
 
   validation {
-    condition     = can(cidrhost(var.admin_cidr, 0)) && var.admin_cidr != "0.0.0.0/0"
-    error_message = "admin_cidr must be a CIDR and not the whole internet."
+    condition     = can(cidrhost(var.admin_cidr, 0)) && endswith(var.admin_cidr, "/32")
+    error_message = "admin_cidr must be one address as /32 (the admin's public IP)."
   }
 }
 

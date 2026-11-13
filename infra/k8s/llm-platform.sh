@@ -22,7 +22,7 @@ helm upgrade -i agentgateway-crds oci://cr.agentgateway.dev/charts/agentgateway-
   --create-namespace --version "$AGW"
 helm upgrade -i agentgateway oci://cr.agentgateway.dev/charts/agentgateway -n agentgateway-system --version "$AGW" \
   --set inferenceExtension.enabled=true --wait
-for ns in kagent agentregistry; do kubectl create namespace $ns --dry-run=client -o yaml | kubectl apply -f -; done
+for ns in kagent agentregistry card-support; do kubectl create namespace $ns --dry-run=client -o yaml | kubectl apply -f -; done
 sh secrets.sh   # gateway keys (agentgateway-system), agent keys (kagent), catalog database URL (agentregistry)
 
 helm upgrade -i qwen3-8b oci://ghcr.io/llm-d/charts/llm-d-router-gateway -n agentgateway-system --version "$LLMD_ROUTER" \

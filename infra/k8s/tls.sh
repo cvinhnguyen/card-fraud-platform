@@ -22,5 +22,7 @@ email=$(val LETSENCRYPT_EMAIL || true)
 # the token reaches the container through the environment (-e NAME without a value), not the command line
 DUCKDNS_TOKEN=$(val DUCKDNS_TOKEN) MSYS_NO_PATHCONV=1 docker run --rm -e DUCKDNS_TOKEN -v "$dir:/data" \
   "goacme/lego:$LEGO" run --accept-tos --dns duckdns -d "*.$DOMAIN" --key-type ec256 --path /data ${email:+--email "$email"}
-sh infra/k8s/secrets.sh   # cert + key -> Vault -> nginx-ingress/wildcard-tls
+sh infra/k8s/secrets.sh   # cert + key -> Vault -> nginx-ingress/wildcard-tls (needs the namespace: edge.sh first)
+# ESO syncs the secret in the background: wait for it, or edge.sh would come up without TLS
+for i in $(seq 60); do kubectl -n nginx-ingress get secret wildcard-tls >/dev/null 2>&1 && break; sleep 2; done
 sh infra/k8s/edge.sh      # wildcard TLS on, HTTPS hosts

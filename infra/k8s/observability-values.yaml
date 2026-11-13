@@ -1,5 +1,5 @@
 # kube-prometheus-stack 91.9.0 (release monitoring, namespace monitoring): Prometheus + Grafana + node and
-# kube-state metrics, sized for the 10 GB Docker VM. Monitors in infra/k8s/monitors.yaml.
+# kube-state metrics, sized for the 8 GB Docker VM. Monitors in infra/k8s/monitors.yaml.
 alertmanager:
   enabled: false
 # kind runs these on the node's localhost: their targets would only show as down

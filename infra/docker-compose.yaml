@@ -1,4 +1,4 @@
-# Card fraud platform — Layer 1 infrastructure.
+# Card fraud platform: the services outside the kind cluster (Layers 1 and 2, CI/CD).
 #
 # Profiles keep RAM usage inside 16 GB: start only what the current phase needs.
 #   core  : postgres (core banking, "another department") + seaweedfs (S3 lake) + kafka
@@ -7,6 +7,9 @@
 #   stream: flink jobmanager + taskmanager (PyFlink jobs in pipelines/flink/); needs core
 #   orch  : airflow (webserver, scheduler, its postgres); runs DP1-DP3 on batch + dbt
 #   gov   : datahub (gms, frontend, opensearch, its postgres) on the core Kafka; lineage + validation
+#   ml    : Layer 2 (MLflow, notebook, Redis + Postgres for Feast, pgvector, push jobs, Scoring API, Drift API) and
+#           the image registry the kind cluster pulls from
+#   cicd  : Jenkins (needs ml for the registry)
 #
 # Usage (from repo root):
 #   python infra/make_env.py                       # once: secrets into infra/.env + s3.json
@@ -220,7 +223,7 @@ services:
     depends_on: [spark-master]
     environment:
       SPARK_WORKER_CORES: 8     # 12 on the host; skew only shows when the hot key is > 1/cores of the data
-      SPARK_WORKER_MEMORY: 3g   # one 2g executor + headroom; the Docker VM has 8 GB
+      SPARK_WORKER_MEMORY: 3g   # one 1.5g executor + the Thrift Server; the Docker VM has 8 GB
       # Each application gets a work dir with its own copy of the --packages jars (~600 MB) + logs, never deleted by
       # default: after a day of DAG runs the worker's container layer held 94 GB and filled the disk. Clean finished
       # apps' dirs every 30 min, keep 1 h for debugging.
@@ -288,11 +291,9 @@ services:
     volumes:
       - ./conf/trino/catalog:/etc/trino/catalog:ro
 
-# ponytail: named volumes live in Docker's WSL disk. Before the 100 GB phase, move Docker Desktop's
-# disk image to E: (Settings → Resources → Advanced → Disk image location) instead of bind-mounting NTFS.
   # Flink 2.2 session cluster; PyFlink jobs are submitted with `flink run -py /opt/flink/jobs/<job>.py`.
-  # UI on host 8088 (8081 is the Spark worker). ponytail: one TaskManager, 4 slots (the hot-key demo runs with
-  # parallelism 4; the other jobs use 1).
+  # UI on host 8088 (8081 is the Spark worker). ponytail: one TaskManager, 6 slots (the hot-key demo runs with
+  # parallelism 4).
   flink-jobmanager:
     build: ./flink
     image: fraud/flink:2.2.1
@@ -645,7 +646,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
     command: >-
       mlflow server --host 0.0.0.0 --port 5000 --workers 1 --serve-artifacts --artifacts-destination s3://mlflow
-      --allowed-hosts "mlflow,mlflow:5000,mlflow.ml.svc,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"
+      --allowed-hosts "mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"
     ports:
       - "127.0.0.1:5000:5000"   # UI + API
     healthcheck:
@@ -660,9 +661,8 @@ services:
     container_name: notebook
     command: >-
       jupyter lab --ip 0.0.0.0 --port 8888 --no-browser --notebook-dir /opt/ml/notebooks
-      --IdentityProvider.token="$$JUPYTER_TOKEN"
     environment:
-      JUPYTER_TOKEN: ${JUPYTER_TOKEN}
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN}   # Jupyter reads its login token from this variable
       ML_DB_PASSWORD: ${ML_DB_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
@@ -773,6 +773,8 @@ services:
               airflow_admin_password, cosign_key, cosign_password]
     mem_limit: 1g
 
+# ponytail: named volumes live in Docker's WSL disk. Before the 100 GB phase, move Docker Desktop's
+# disk image to E: (Settings > Resources > Advanced > Disk image location) instead of bind-mounting NTFS.
 volumes:
   lakefs_data:
   postgres_data:

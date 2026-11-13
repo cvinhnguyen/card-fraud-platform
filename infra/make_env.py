@@ -1,6 +1,6 @@
 """Create local secrets once: `infra/.env`, the SeaweedFS S3 identity file and the DataHub login file.
 
-Both files are gitignored. Values are random and never printed.
+All three files are gitignored. Values are random and never printed.
 Re-running is safe: existing values are kept (running containers keep working), only new keys are added.
 
 Usage: python infra/make_env.py
