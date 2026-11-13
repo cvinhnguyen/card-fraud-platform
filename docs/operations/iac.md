@@ -154,8 +154,9 @@ infra/terraform/
 - `admin_cidr` is required and must be one address (`/32`), so the VM is never open to a whole network. The AKS
   API server takes the same address as its only authorized IP range
   ([`infra/terraform/modules/aks/main.tf`](../../infra/terraform/modules/aks/main.tf), `api_server_access_profile`).
-  That block was added on 2026-11-13, after the run below: `terraform validate` passes, and it has not been
-  applied yet.
+  That block was added on 2026-11-13, after the run below, and applied the same day: 13 resources created again
+  (AKS in 3m33s), `az aks show` listed the admin address as the only authorized range, `kubectl get nodes` from
+  that address answered (1 node Ready), then everything was destroyed again.
 
 The environment wires the resource group and the four modules
 ([`infra/terraform/envs/dev/main.tf` L17-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/terraform/envs/dev/main.tf#L17-L61)).
