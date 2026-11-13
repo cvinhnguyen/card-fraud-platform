@@ -17,20 +17,27 @@ import base64
 import datetime as dt
 import json
 import os
+import urllib.error
 import urllib.request
 
 from pyspark.sql import SparkSession
 
 
-def lakefs(method: str, path: str, body: dict | None = None) -> dict:
-    """One call to the lakeFS API of repository bronze with the keys of the container env."""
+def lakefs(method: str, path: str, body: dict | None = None, ok: tuple = ()) -> dict:
+    """One call to the lakeFS API of repository bronze with the keys of the container env. An error status in `ok`,
+    or a 400 "no changes" (a re-run with nothing left to delete), counts as success, as in the DAGs' helper."""
     auth = base64.b64encode(f"{os.environ['LAKEFS_ACCESS_KEY_ID']}:{os.environ['LAKEFS_SECRET_ACCESS_KEY']}".encode())
     req = urllib.request.Request(f"http://lakefs:8000/api/v1/repositories/bronze{path}", method=method,
                                  data=None if body is None else json.dumps(body).encode(),
                                  headers={"Authorization": f"Basic {auth.decode()}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        data = r.read()
-        return json.loads(data) if data else {}
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            data = r.read()
+            return json.loads(data) if data else {}
+    except urllib.error.HTTPError as e:
+        if e.code in ok or (e.code == 400 and b"no changes" in e.read()):
+            return {}
+        raise
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -38,6 +45,7 @@ if __name__ == "__main__":
     first = ap.parse_args().first
     spark = SparkSession.builder.appName("rewind_days").getOrCreate()
     branch = f"rewind_{first:%Y%m%d}"
+    lakefs("DELETE", f"/branches/{branch}", ok=(404,))   # a branch left by an earlier failed run is replaced
     lakefs("POST", "/branches", {"name": branch, "source": "main"})
     for t in [f"delta.`s3a://bronze/{branch}/raw_transactions`", "silver.stg_transactions", "gold.fact_transaction"]:
         n = spark.sql(f"DELETE FROM {t} WHERE export_date > '{first}'").first()[0]   # export of day D = D + 1

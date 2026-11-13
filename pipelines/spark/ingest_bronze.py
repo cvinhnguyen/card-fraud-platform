@@ -81,7 +81,7 @@ def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool, r
     lakeFS main, or the run's branch in DP1."""
     table, path = "bronze.raw_transactions", f"{root}/raw_transactions"
     try:
-        done = str(spark.read.format("delta").load(path).agg(F.max("export_date")).first()[0])
+        done = str(spark.read.format("delta").load(path).agg(F.max("export_date")).first()[0] or "")   # empty table: ""
     except AnalysisException:   # first load: no table there yet
         done = ""
     new = [d for d in export_dates(spark) if d > done and (until is None or d <= until)]

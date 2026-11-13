@@ -77,7 +77,8 @@ def build(spark: SparkSession):
 
 def check(spark: SparkSession) -> None:
     """Re-compute SAMPLE random rows straight from the fact with a plain date filter over [E - 30, E - 1], E the
-    row's event day; any difference means a window includes day E or later (leakage) or misses a day."""
+    row's event day, for the 30-day count, the distinct merchants and the 180-day disputes; any difference means those
+    windows include day E or later (leakage) or miss a day. The 90-day features use the same window code."""
     f = spark.table(TABLE).orderBy(F.rand(1)).limit(SAMPLE).withColumn("d", F.to_date("event_timestamp"))
     fact = spark.table("gold.fact_transaction")
     t = fact.select("card_id", F.to_date("txn_ts").alias("td"), "merchant_id")

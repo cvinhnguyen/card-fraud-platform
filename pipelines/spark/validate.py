@@ -3,8 +3,8 @@
 Each check reads only the slice the run wrote (the export of business day ds, the labels as of ds, the features of
 day ds), so the cost does not grow with the table. Results go to
   s3a://lakehouse/_validation/<suite>/ds=<ds>/results.json
-and the job always exits 0 when the checks ran: the Airflow task after it publishes the results (and in P8 sends them
-to DataHub) and then fails the run if any expectation failed, so the reason is recorded before the pipeline stops.
+and the job always exits 0 when the checks ran: the Airflow task after it publishes the results (to S3 and
+DataHub) and then fails the run if any expectation failed, so the reason is recorded before the pipeline stops.
 
 GE 0.18 legacy API (`SparkDFDataset`, the same expect_* calls as the course's `ge.from_pandas`), run with the
 driver Python of /opt/venvs/ge in the Airflow image.

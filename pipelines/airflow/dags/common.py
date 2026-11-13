@@ -28,11 +28,13 @@ DEFAULT_ARGS = {"owner": "data-platform", "retries": 1, "retry_delay": timedelta
 BRONZE, SILVER, GOLD, FEATURES = (Published(f"lakehouse://{zone}") for zone in ("bronze", "silver", "gold", "features"))
 # Business day of a run: the day carried by the dataset event that started it, or the run's own ds when it is
 # scheduled (DP1) or started by hand. Each published version starts its own run; only versions published within one
-# scheduler loop share a run, which then takes the newest day (the loads are incremental, so no row is skipped).
+# scheduler loop share a run, which then takes the newest day (Airflow gives the events unsorted, so they are
+# sorted by time; the loads are incremental, so no row is skipped).
 # The day is rendered into shell commands and Spark arguments, and a dataset event can also be posted through the
 # Airflow API with any text in it. ds_format parses the value as YYYY-MM-DD and writes it back, so anything that is
 # not a date fails the task while it renders, before a command runs.
-DAY_EXPR = ("macros.ds_format(((triggering_dataset_events.values() | first | last).extra['ds'] "
+DAY_EXPR = ("macros.ds_format(((triggering_dataset_events.values() | first | sort(attribute='timestamp') | last)"
+            ".extra['ds'] "
             "if triggering_dataset_events else ds), '%Y-%m-%d', '%Y-%m-%d')")
 DAY = "{{ " + DAY_EXPR + " }}"
 
@@ -78,8 +80,8 @@ SPARK_CONF = {
 
 def spark_job(task_id: str, script: str, args: list[str] | None = None, env: dict | None = None,
               conf: dict | None = None, **kwargs) -> SparkSubmitOperator:
-    """spark-submit pipelines/spark/<script> to the standalone master. Pool `spark` (1 slot) runs one application at a time,
-    because the 3 GB worker fits one 2 GB executor next to the Thrift Server."""
+    """spark-submit pipelines/spark/<script> to the standalone master. Pool `spark` (1 slot) runs one application at a time:
+    the 3 GB worker holds one 1.5 GB executor with room left for the Thrift Server of the dbt profile."""
     return SparkSubmitOperator(task_id=task_id, conn_id="spark_lakehouse",
                                application="{{ var.value.spark_jobs_dir }}/" + script, application_args=args or [],
                                env_vars={**S3_ENV, **(env or {})}, conf={**SPARK_CONF, **(conf or {})}, pool="spark",

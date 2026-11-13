@@ -66,7 +66,7 @@ if __name__ == "__main__":
             s.add(c)
     for k, v in VARIABLES.items():
         Variable.set(k, v, description=None)
-    # One Spark application at a time: the worker has 3 GB, one 2 GB executor + the Thrift Server's 1 GB.
+    # One Spark application at a time: the worker has 3 GB, one 1.5 GB executor + the Thrift Server's 1 GB.
     Pool.create_or_update_pool("spark", slots=1, description="Spark applications on the 3 GB worker",
                                include_deferred=False)
     print(f"connections: {', '.join(c.conn_id for c in CONNECTIONS)}; variables: {', '.join(VARIABLES)}; pool: spark=1")

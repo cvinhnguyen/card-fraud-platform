@@ -29,7 +29,7 @@ def normalize(df: DataFrame, units: DataFrame, col: str, unit_col: str) -> DataF
     """Add unit_col (one of the 34 units) and rename col to <col>_raw. Fails if a name is not in the mapping."""
     out = (df.join(F.broadcast(units), df[col] == units["name"], "left")
            .withColumnRenamed(col, f"{col}_raw").withColumnRenamed("unit", unit_col).drop("name"))
-    # ponytail: assert as the quality gate until Great Expectations runs in Airflow (P7)
+    # ponytail: a hard stop on an unmapped place name; the validate stage (Great Expectations) checks the rest
     unmapped = out.where(F.col(unit_col).isNull()).count()
     assert unmapped == 0, f"{unmapped} rows with a {col} not in ref_province_mapping"
     return out
@@ -52,7 +52,7 @@ def build_transactions(spark: SparkSession, units: DataFrame) -> None:
     """Clean the new bronze export dates and MERGE them into silver.stg_transactions."""
     table = "silver.stg_transactions"
     exists = spark.catalog.tableExists(table)
-    done = str(spark.table(table).agg(F.max("export_date")).first()[0]) if exists else ""
+    done = str(spark.table(table).agg(F.max("export_date")).first()[0] or "") if exists else ""   # empty table: ""
     raw = spark.table("bronze.raw_transactions").where(F.col("export_date") > F.lit(done or "1900-01-01").cast("date"))
 
     latest = Window.partitionBy("transaction_id").orderBy(F.col("created_ts").desc())

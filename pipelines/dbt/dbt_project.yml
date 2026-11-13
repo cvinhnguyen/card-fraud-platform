@@ -1,4 +1,5 @@
-# dbt-spark project: gold layer (docs/data-platform/dbt_gold.md). Runs through the Spark Thrift Server (compose profile dbt).
+# dbt-spark project: gold layer (docs/data-platform/dbt_gold.md). DP2 runs it in a Spark session (target session);
+# by hand it can also run through the Spark Thrift Server (compose profile dbt).
 # Usage (repo root): .venv/Scripts/dbt build --project-dir pipelines/dbt --profiles-dir pipelines/dbt
 name: card_fraud
 version: "1.0"
