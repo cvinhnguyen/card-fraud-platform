@@ -22,17 +22,19 @@ QUERY_PREFIX = "Instruct: Given a customer question, retrieve the bank policy pa
 
 class FeatureReader:
     """The card's features from the fraud model's online store."""
+    timeout_s = 5.0
 
-    def __init__(self, repo: str):
-        """Open the Feast repo (registry in Postgres, online store Redis)."""
+    def __init__(self, repo: str, timeout_s: float = 5.0):
+        """Open the Feast repo (registry in Postgres, online store Redis); a read waits at most timeout_s."""
         from feast import FeatureStore
-        self.store = FeatureStore(repo_path=repo)
+        self.store, self.timeout_s = FeatureStore(repo_path=repo), timeout_s
         self.features = ([f"card_profile:{f}" for f in PROFILE] + [f"card_txn_stats_daily:{f}" for f in DAILY]
                          + [f"card_auth_realtime:{f}" for f in REALTIME])
 
     async def card(self, card_id: str) -> dict:
         """Feature name -> value for one card (None where the store has nothing)."""
-        resp = await self.store.get_online_features_async(features=self.features, entity_rows=[{"card_id": card_id}])
+        resp = await asyncio.wait_for(
+            self.store.get_online_features_async(features=self.features, entity_rows=[{"card_id": card_id}]), self.timeout_s)
         return {name: values[0] for name, values in resp.to_dict().items() if name != "card_id"}
 
     async def ready(self) -> bool:
@@ -42,12 +44,15 @@ class FeatureReader:
 
 
 class KnowledgeBase:
-    """Chunks of the bank's documents from the knowledge base's online store."""
+    """Chunks of the bank's documents from the knowledge base's online store. A read waits at most timeout_s; the
+    worker thread of a read that timed out still finishes in the background (ponytail: threads cannot be cancelled;
+    a statement timeout in Postgres would end them too)."""
+    timeout_s = 5.0
 
-    def __init__(self, repo: str):
+    def __init__(self, repo: str, timeout_s: float = 5.0):
         """Open the Feast repo (registry in Postgres, online store Postgres/pgvector)."""
         from feast import FeatureStore
-        self.store = FeatureStore(repo_path=repo)
+        self.store, self.timeout_s = FeatureStore(repo_path=repo), timeout_s
 
     def _chunks(self, ids: list[str]) -> dict[str, dict | None]:
         """Blocking Feast read of chunks by id (run in a thread by chunks)."""
@@ -58,7 +63,7 @@ class KnowledgeBase:
 
     async def chunks(self, ids: list[str]) -> dict[str, dict | None]:
         """chunk_id -> {document, section, text, embedding}, or None for an unknown id."""
-        return await asyncio.to_thread(self._chunks, ids) if ids else {}
+        return await asyncio.wait_for(asyncio.to_thread(self._chunks, ids), self.timeout_s) if ids else {}
 
     def _candidates(self, vector: list[float], n: int) -> list[str]:
         """Blocking Feast vector search for about n candidate chunk ids (run in a thread by candidates)."""
@@ -69,7 +74,7 @@ class KnowledgeBase:
 
     async def candidates(self, vector: list[float], n: int) -> list[str]:
         """Ids of about the n nearest chunks (order and attached values are not trusted, see logic.rank)."""
-        return await asyncio.to_thread(self._candidates, vector, n)
+        return await asyncio.wait_for(asyncio.to_thread(self._candidates, vector, n), self.timeout_s)
 
     async def ready(self) -> bool:
         """Registry loaded and Postgres answering."""

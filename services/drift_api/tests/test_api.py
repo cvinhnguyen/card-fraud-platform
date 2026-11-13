@@ -129,10 +129,16 @@ def test_drift_report_without_data(client):
 
 
 def test_psi_gauge_follows_the_report(client):
-    scored(client, [(5_000_000, 0.005)])
+    scored(client, [(5_000_000, 0.005)] * 100)
     psi = next(i["psi"] for i in client.get("/v1/drift").json()["inputs"] if i["name"] == "amount")
     assert REGISTRY.get_sample_value("drift_psi", {"input": "amount"}) == pytest.approx(psi, abs=1e-4)
     assert "http_requests_total" in client.get("/metrics").text
+
+
+def test_no_psi_gauge_for_too_few_events(client):
+    scored(client, [(5_000_000, 0.005)] * 9)   # 9 events gave PSI 12: noise, not drift
+    client.get("/v1/drift")
+    assert REGISTRY.get_sample_value("drift_psi", {"input": "amount"}) is None
 
 
 @settings(max_examples=30, deadline=None)

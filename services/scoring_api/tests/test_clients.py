@@ -127,3 +127,17 @@ async def test_prediction_log_disabled_when_kafka_down(monkeypatch):
     await log.send({"card_id": "c"})   # no error: scoring must not depend on the log
     await log.stop()
     assert log.producer is None
+
+
+@pytest.mark.parametrize("fault", ["raises", "hangs"])
+async def test_prediction_log_drops_a_record_when_kafka_goes_away(monkeypatch, fault):
+    class Gone(Producer):
+        async def send(self, *args, **kwargs):
+            if fault == "raises":
+                raise ConnectionError("broker gone")
+            await asyncio.sleep(60)   # aiokafka waiting for metadata or buffer space
+
+    monkeypatch.setattr("aiokafka.AIOKafkaProducer", Gone)
+    log = PredictionLog("kafka:9092", "t")
+    await log.start()
+    await asyncio.wait_for(log.send({"card_id": "c", "auth_id": "a"}), 1)   # returns at once, no error

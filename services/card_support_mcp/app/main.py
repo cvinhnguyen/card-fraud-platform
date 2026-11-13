@@ -56,8 +56,8 @@ def build_service(s: Settings) -> CardSupportService:
     """Wire the real adapters this server's tools use; the others stay None (fraud-score never loads Feast)."""
     needs = SERVERS[s.mcp_server][1]
     return CardSupportService(
-        FeatureReader(s.fraud_repo) if "features" in needs else None,
-        KnowledgeBase(s.kb_repo) if "knowledge" in needs else None,
+        FeatureReader(s.fraud_repo, s.timeout_s) if "features" in needs else None,
+        KnowledgeBase(s.kb_repo, s.timeout_s) if "knowledge" in needs else None,
         Embedder(s.embeddings_url, s.llm_api_key, s.timeout_s) if "embedder" in needs else None,
         ScoringClient(s.scoring_url, s.timeout_s) if "scoring" in needs else None, s.candidate_factor)
 

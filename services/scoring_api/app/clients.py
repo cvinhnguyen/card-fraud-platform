@@ -102,8 +102,14 @@ class PredictionLog:
         if self.producer:
             await self.producer.stop()
 
-    async def send(self, record: dict) -> None:
-        """Queue one record keyed by card_id (no await on the broker ack)."""
-        if self.producer:
-            await self.producer.send(self.topic, json.dumps(record, default=str).encode(),
-                                     key=record["card_id"].encode())
+    async def send(self, record: dict, timeout_s: float = 0.05) -> None:
+        """Queue one record keyed by card_id (no await on the broker ack). aiokafka's send() waits when Kafka went away
+        after start (metadata, full buffer) and then raises: such a record is dropped and logged after timeout_s, so
+        a Kafka outage never delays or fails a decision."""
+        if not self.producer:
+            return
+        try:
+            await asyncio.wait_for(self.producer.send(self.topic, json.dumps(record, default=str).encode(),
+                                                      key=record["card_id"].encode()), timeout_s)
+        except Exception as e:   # noqa: BLE001 - scoring must not depend on the log
+            log.warning("prediction log: record of %s dropped: %r", record.get("auth_id"), e)

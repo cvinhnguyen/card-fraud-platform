@@ -1,4 +1,7 @@
 """The adapters: HTTP ones against respx mocks, Feast ones against a stand-in store (no Redis / Postgres)."""
+import asyncio
+import time
+
 import httpx
 import pandas as pd
 import pytest
@@ -107,3 +110,21 @@ async def test_knowledge_base_chunks_and_candidates():
     assert await kb.candidates([1.0], 6) == ["faq#3", "fee_schedule#2"]   # null ids dropped
     assert kb.store.asked[-1] == (["policy_chunks:section"], 6, "cosine")
     assert await kb.ready() is True
+
+
+class HungStore(FakeStore):
+    """A store that stopped answering (Redis or Postgres hung)."""
+
+    async def get_online_features_async(self, features, entity_rows):
+        await asyncio.sleep(60)
+
+    def get_online_features(self, features, entity_rows):
+        time.sleep(0.5)
+
+
+async def test_feast_reads_time_out():
+    for cls, read in [(FeatureReader, lambda a: a.card("card_1")), (KnowledgeBase, lambda a: a.chunks(["faq#3"]))]:
+        a = adapter(cls)
+        a.store, a.timeout_s = HungStore(), 0.05
+        with pytest.raises(TimeoutError):
+            await read(a)

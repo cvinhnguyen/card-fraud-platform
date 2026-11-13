@@ -3,7 +3,7 @@
   POST /v1/inference-events  CloudEvents of the KServe payload logger (InferenceService card-fraud -> Knative Broker
                              -> Trigger drift-detector, infra/k8s/kserve-card-fraud.yaml) -> live histograms
   GET  /v1/drift             PSI of every feature and of the score over the last WINDOW_MINUTES vs the training profile
-  /metrics                   drift_psi{input=...} gauges (refreshed on every /v1/drift and scrape),
+  /metrics                   drift_psi{input=...} gauges (refreshed on every /v1/drift; only inputs with enough events),
                              drift_events_total{type=request|response}
   /healthz /readyz           liveness / readiness (Redis answers)
 
@@ -15,7 +15,7 @@ Usage: uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from prometheus_client import REGISTRY, Counter, Gauge
@@ -115,8 +115,11 @@ def create_app(settings: Settings | None = None, redis_factory=None, reference: 
             v, n = psi(spec["shares"], live[name]), sum(live[name].values())
             lvl = level(v) if n == 0 or n >= settings.min_events else "too_few_events"   # 9 events gave PSI 12
             rows.append(FeatureDrift(name=name, psi=None if v is None else round(v, 5), level=lvl, live_count=n))
-            if v is not None:
+            if v is not None and lvl != "too_few_events":
                 PSI.labels(name).set(v)
+            else:   # too few events or none: no PSI to alert on
+                with suppress(KeyError):
+                    PSI.remove(name)
         LIVE.set(max((r.live_count for r in rows), default=0))
         rows.sort(key=lambda r: -1 if r.psi is None else r.psi, reverse=True)
         return DriftReport(window_minutes=settings.window_minutes, model_version=str(st.ref.get("model_version")),
