@@ -299,4 +299,4 @@ Jenkins is outside the cluster and keeps its own credentials, filled from Docker
   replicas and auto-unseal through a KMS (key management service).
 - The domain points at `127.0.0.1`, so the HTTPS hosts work only on this machine; the certificate is a real public one.
 
-Coursework rubric: A37 to A43, A54.
+Coursework rubric: C37 to C43, C54.
