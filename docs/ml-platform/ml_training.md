@@ -1,17 +1,15 @@
 # Model training
 
-The Scoring API needs a model that tells a fraudulent card payment from a good one, and fraud patterns change, so
-the model has to be retrained from time to time and every model has to be traceable to the data it learned from.
-Layer 2 (ML platform) trains it with one procedure that runs two ways: the notebook
+The Scoring API needs a model that tells a fraudulent card payment from a good one. Fraud patterns change, so the
+model has to be retrained from time to time, and every model has to be traceable to the data it learned from.
+Layer 2 (ML platform) trains it with one procedure that runs two ways. In the notebook
 [`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb),
-where a person explores the data and trains the first model step by step, and the training pipeline
-`train_fraud_model` on Kubeflow Pipelines (KFP), which trains every later model without anyone at the keyboard,
-started by hand or by the data drift pipeline (a daily Airflow job that starts a run when the model gets worse,
-[drift.md](drift.md)). Both call the same seven functions of
+a person explores the data and trains the first model step by step. The training pipeline `train_fraud_model` on
+Kubeflow Pipelines (KFP) trains every later model without anyone at the keyboard. It is started by hand or by the data
+drift pipeline, a daily Airflow job that starts a run when the model gets worse ([drift.md](drift.md)). Both call the
+same seven functions of
 [`ml/fraud_ml/steps.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py),
-so the notebook and the pipeline run the same code. The pipeline wires the seven steps in
-[`ml/pipelines/train_fraud_model.py` L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L102-L124);
-steps pass S3 paths and the MLflow run id, never data, and each run's files live in `s3://lakehouse/ml/runs/<run id>/`.
+so the notebook and the pipeline run the same code.
 
 | | |
 |---|---|
@@ -31,7 +29,8 @@ Training is the right side of Layer 2 in the
 into the MLflow registry as a new version. A model that passed evaluation also gets the alias `challenger`; a
 reviewer moves the alias `production` to it, and that model is built into
 the KServe image that the Scoring API calls ([serving.md](serving.md)). The data drift pipeline starts a new
-training run when the live data has moved away from the training data ([drift.md](drift.md)).
+training run when the live data has moved away from the training data or the model has got worse
+([drift.md](drift.md)).
 
 ## How it works
 
@@ -57,6 +56,11 @@ flowchart LR
     s6 -->|"passed (True or False)"| s7["7 register<br/>new MLflow version, tag passed<br/>alias challenger only if passed"]
 ```
 
+The pipeline wires the seven steps in
+[`ml/pipelines/train_fraud_model.py`
+L102-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L102-L124);
+steps pass S3 paths and the MLflow run id, never data, and each run's files live in `s3://lakehouse/ml/runs/<run id>/`.
+
 ## Run it
 
 The notebook needs the `ml` profile; the pipeline needs the kind cluster with Kubeflow Pipelines and the code image in
@@ -80,7 +84,8 @@ python ml/pipelines/train_fraud_model.py --compile    # only writes ml/pipelines
 A payment's label is final only 60 days after it (disputes arrive up to 60 days late). Training "as of" day D
 reads `gold.label_transaction` at the Delta version that `build_labels` wrote on D. Each commit carries
 `userMetadata label_as_of=D`, read back in
-[`ml/fraud_ml/data.py` L63-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L63-L71).
+[`ml/fraud_ml/data.py`
+L63-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L63-L71).
 That is time travel, so a retrain next month can rebuild exactly the labels this run saw. Rows from the last 60 days
 before D are immature and left out.
 
@@ -90,19 +95,22 @@ before D are immature and left out.
 
 The split is by time, never random: a random split puts next month's fraud pattern into training. Each gap is 60
 days because a model trained up to day T is only usable from T + 60 d, when T's labels are known (`TimeSplitter`,
-[`ml/fraud_ml/split.py` L32-L40](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/split.py#L32-L40)).
+[`ml/fraud_ml/split.py`
+L32-L40](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/split.py#L32-L40)).
 
 Fraud is ~0.3% of payments. Negatives of the train period are downsampled to 2% by a hash of `transaction_id`, so
 every run keeps the same rows and the versioned training set only changes where the data did. Their sample weight is
-50 ([`ml/fraud_ml/data.py` L101-L108](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L101-L108),
-which also sets the `event_timestamp` below). Validation and test keep every row, because their metrics must reflect
-the real fraud rate.
+50 ([`ml/fraud_ml/data.py`
+L101-L108](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L101-L108),
+which also sets the `event_timestamp` below). Validation and test keep every row, because their metrics must reflect the
+real fraud rate.
 
 ## Features and data versioning
 
 Entity rows = (card_id, device_id, `event_timestamp = txn_ts - 1 ms`, request fields). Feast's Spark offline store
 joins each row with the feature values valid at that instant (point-in-time join), the on-demand features included
-([`ml/fraud_ml/data.py` L110-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L110-L113)).
+([`ml/fraud_ml/data.py`
+L110-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L110-L113)).
 See [feature_store.md](feature_store.md) for why the timestamp is shifted by 1 ms.
 
 The result is MERGEd into one Delta table per feature service, `s3://lakehouse/ml/training_set_fraud_model_v1`,
@@ -111,11 +119,13 @@ MERGE has only two clauses: insert the source rows with no match (new or changed
 no match (rows gone, or the old copy of a changed row). An unchanged row matches and is left alone; a deleted row is
 only marked in a small deletion-vector file. So a run on almost the same data stores just its new rows, and
 `VERSION AS OF n` returns any run's exact training set. The validate and split steps read the table with Spark
-([`ml/fraud_ml/steps.py` L45-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L45-L52))
+([`ml/fraud_ml/steps.py`
+L45-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L45-L52))
 because the `deltalake` reader (0.25 and 1.1.4 tested) refuses deletion vectors.
 
 The MERGE, in `TrainingDataService.save_versioned`
-([`ml/fraud_ml/data.py` L115-L133](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L115-L133)):
+([`ml/fraud_ml/data.py`
+L115-L133](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L115-L133)):
 
 ```python
     def save_versioned(self, df: pd.DataFrame, path: str) -> int:
@@ -150,11 +160,13 @@ History of the table on 2026-10-19 (`DESCRIBE HISTORY` + the Delta log), each pi
 | 5 | 2026-11-04 | MERGE on id + hash, deletion vectors | 1.2 MB + 0.2 KB of DVs | 0 | 15,786 / 15,809 |
 
 Version 5 is the incremental behaviour the platform needs: one day later, 1.5% of the rows changed, and the
-version stores just those rows (60x less than version 3 for the same kind of change). Versions 1-3 show the two
-wrong turns on the way. In the second, deletion vectors had been switched off to fix the reader of the validate and
-split steps, and that is what made the versions full copies. MLflow records the training-set version together with the
+version stores just those rows (60x less than version 3 for the same kind of change). Versions 1-3 show two wrong
+turns on the way. First, the MERGE of version 1 ran without `row_hash`, which version 2 added. Second, deletion
+vectors had been switched off to fix the reader of the validate and split steps, and that is what made the versions
+full copies. MLflow records the training-set version together with the
 version of every input table (`data_version.label_transaction`, `data_version.feat_card_txn_stats_daily`, ...,
-logged in [`ml/fraud_ml/steps.py` L82-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L82-L86)),
+logged in [`ml/fraud_ml/steps.py`
+L82-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L82-L86)),
 so one run id points to its exact data.
 
 ## Models
@@ -171,21 +183,24 @@ In the KFP component `train`, the pod is the Spark driver (`k8s://https://kubern
 executor pods. `SparkXGBClassifier(num_workers=2)` runs two Spark tasks that train one model together: each holds a
 shard of the rows, and the gradient histograms are all-reduced every boosting round. The executors get their S3 keys
 from the Kubernetes secret `s3-credentials` (`spark.kubernetes.executor.secretKeyRef`, see the session in
-[`ml/fraud_ml/spark.py` L36-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/spark.py#L36-L48)).
-In the notebook the same code runs on `local[2]`. Which row goes to which worker follows the row order, so the rows
-are sorted by `transaction_id` first: the same training set then gives the same booster
-([notebook run](#notebook-run-on-2026-10-20-label_as_of-2026-10-15)).
+[`ml/fraud_ml/spark.py`
+L36-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/spark.py#L36-L48)).
+In the notebook the same code runs on `local[2]`. Which row goes to which worker follows the row order, so the rows are
+sorted by `transaction_id` first: the same training set then gives the same booster ([notebook
+run](#notebook-run-on-2026-10-20-label_as_of-2026-10-15)).
 
 The validation split is the early-stopping set (`validation_indicator_col`, stop after 30 rounds without a gain in
-PR-AUC, the area under the precision-recall curve, [`ml/fraud_ml/train.py` L21-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L21-L23)).
+PR-AUC, the area under the precision-recall curve, [`ml/fraud_ml/train.py`
+L21-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L21-L23)).
 The fitted booster still holds the up to 30 rounds after the best one, and `inplace_predict` (used by evaluation, the
 predictor and the drift job) runs every tree it holds, so `best_trees` cuts it at the best round before it is saved
-(since 2026-11-12, checked by `ml/jobs/tests/test_train.py`; the runs below kept the extra rounds). The 1/rate sample
-weight keeps the predicted probabilities on the real fraud rate, so there is no `scale_pos_weight`, which would
-distort them.
+(since 2026-11-12, checked by `ml/jobs/tests/test_train.py`; the runs below kept the extra rounds). The sample weight of
+50 on the downsampled negatives (1 / the 2% rate) keeps the predicted probabilities on the real fraud rate, so there is
+no `scale_pos_weight`, which would distort them.
 
 `FraudModelTrainer.fit_xgboost`
-([`ml/fraud_ml/train.py` L41-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L41-L60)):
+([`ml/fraud_ml/train.py`
+L41-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/train.py#L41-L60)):
 
 ```python
     def fit_xgboost(self, spark, train: pd.DataFrame, val: pd.DataFrame) -> xgb.Booster:
@@ -213,35 +228,40 @@ distort them.
 ## Evaluation and promotion
 
 `ModelEvaluator` in
-[`ml/fraud_ml/evaluate.py` L29-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/evaluate.py#L29-L56)
+[`ml/fraud_ml/evaluate.py`
+L29-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/evaluate.py#L29-L56)
 sets the thresholds on validation, computes the test metrics and decides whether the new model passed:
 
 | Output | Rule |
 |---|---|
 | `t_high` (decline) | score above which 0.1% of legitimate validation payments fall |
-| `t_low` (step-up: ask for a one-time password, OTP) | the 1% point |
-| metrics on test | PR-AUC (ROC-AUC, the area under the ROC curve, flatters weak models on rare classes), ROC-AUC, recall at 1% FPR (false positive rate: the share of legitimate payments flagged), decline precision / recall, decline and step-up rates |
+| `t_low` (step-up: ask for a one-time password, OTP) | score above which 1% of legitimate validation payments fall |
+| metrics on test | PR-AUC, ROC-AUC (the area under the ROC curve; it flatters weak models on rare classes, so PR-AUC leads), recall at 1% FPR (false positive rate: the share of legitimate payments flagged), decline precision / recall, decline and step-up rates |
 | `passed` | no production model yet, or PR-AUC gain >= 0.005 and recall at 1% FPR not worse than production's on the same test period |
 
 The production model is scored on the new test period too, so the comparison is fair: an old test score would
 come from easier or harder months
-([`ml/fraud_ml/steps.py` L213-L224](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L213-L224),
+([`ml/fraud_ml/steps.py`
+L213-L224](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L213-L224),
 which then applies the rule `ModelEvaluator.passed`). `register` runs for every model, passed or not. It logs the
 booster (JSON format, signature, input example), registers it as a new version, and tags the version with its
 thresholds, test PR-AUC, feature service and `passed` = True or False. Only a model that passed gets the alias
 `challenger`. A rejected model stays in the registry as a version without an alias, so it can still be inspected,
 compared or promoted by hand
 ([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py),
-[`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py): `register` gets the `passed` output of
-`evaluate`). A reviewer moves `production`; the very first model that passes takes both. Rollback = move the alias
-back. The unit test [`ml/jobs/tests/test_registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/tests/test_registry.py) checks this on a
-throwaway MLflow file store: a rejected model becomes a version tagged `passed=False` with no alias, and the next
-model that passes becomes `challenger` and, as the first to pass, `production`. It runs in the test stage of the ml
-image with the other job tests.
+[`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py):
+`register` gets the `passed` output of `evaluate`). A reviewer moves `production`; the very first model that passes
+takes both. Rollback = move the alias back. The unit test
+[`ml/jobs/tests/test_registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/tests/test_registry.py)
+checks this on a throwaway MLflow file store: a rejected model becomes a version tagged `passed=False` with no alias,
+and the next model that passes becomes `challenger` and, as the first to pass, `production`. It runs in the test stage
+of the ml image with the other job tests.
 
 `evaluate` also writes `reference_profile.json`
-([`ml/fraud_ml/steps.py` L233-L240](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L233-L240),
-built by [`ml/fraud_ml/profile.py` L23-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/profile.py#L23-L31)):
+([`ml/fraud_ml/steps.py`
+L233-L240](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/steps.py#L233-L240),
+built by [`ml/fraud_ml/profile.py`
+L23-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/profile.py#L23-L31)):
 decile edges and bin shares of every input and of the score on the validation period, the reference the drift API
 compares live traffic with ([drift.md](drift.md)).
 
@@ -249,9 +269,10 @@ compares live traffic with ([drift.md](drift.md)).
 
 The pipeline runs on the single 7.75 GiB kind node, where KFP itself uses ~2.9 GB. Every step requests 1 GiB and
 runs alone. The request is set in
-[`ml/pipelines/train_fraud_model.py` L96-L98](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L96-L98),
-the limit of each step where the pipeline wires it
-([`ml/pipelines/train_fraud_model.py` L111-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L111-L124));
+[`ml/pipelines/train_fraud_model.py`
+L96-L98](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L96-L98),
+the limit of each step where the pipeline wires it ([`ml/pipelines/train_fraud_model.py`
+L111-L124](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py#L111-L124));
 [Gotchas](#gotchas) explains how the limits were found:
 
 | Step | Limit | Holds |
@@ -295,9 +316,9 @@ reloaded booster gives the same scores: True
 | decline (`t_high` = 0.057): precision / recall | 0.72 / 0.90 | 0.66 / 0.64 |
 | share of payments declined / stepped up | 0.38% / 0.95% | 0.29% / 0.99% |
 
-The two models have the same ROC-AUC and recall at 1% FPR. PR-AUC and the decline row show the difference that
-matters to the bank: at its decline threshold XGBoost stops 90% of the frauds with 7 of 10 declines being fraud,
-the baseline 64%. Decision table of XGBoost on the test period:
+The two models have almost the same ROC-AUC (0.9875 and 0.9861) and the same recall at 1% FPR. PR-AUC and the
+decline row show the difference that matters to the bank: at its decline threshold XGBoost stops 90% of the frauds
+with 7 of 10 declines being fraud, the baseline 64%. Decision table of XGBoost on the test period:
 
 | decision | legitimate | fraud |
 |---|---:|---:|
@@ -305,8 +326,7 @@ the baseline 64%. Decision table of XGBoost on the test period:
 | step_up (OTP) | 4,459 | 26 |
 | decline | 507 | 1,277 |
 
-The notebook logs an MLflow run (experiment `card_fraud`) and registers nothing: registration belongs to the
-pipeline, after its evaluation step, and so does the `challenger` alias for a model that passed.
+The notebook logs an MLflow run (experiment `card_fraud`) and registers nothing; registering is the pipeline's step 7.
 
 ### Reproducible booster
 
@@ -330,7 +350,7 @@ its MLflow params `data_version.*`. 16 min end to end:
 | 3 validate_data | 22 s | 0 failed checks |
 | 4 time_split | 15 s | 3 parquet files, windows and gaps checked |
 | 5 train | 1 min 23 s | driver pod + executor pods `train-xgboost-exec-1/2` (the 2 XGBoost workers); best iteration 14 |
-| 6 evaluate | 30 s | `passed = True` (no production model yet: the gate is the baseline) |
+| 6 evaluate | 30 s | `passed = True` (no production model yet) |
 | 7 register | 19 s | `card_fraud_xgb` version 1, aliases `challenger` and `production` (first run) |
 
 | Test period | XGBoost v1 | Logistic regression |
@@ -349,15 +369,6 @@ its MLflow params `data_version.*`. 16 min end to end:
 
 Top features by gain: `is_otp`, `is_new_device`, `ecom_ratio_90d`, `days_since_card_issue`, `distinct_merchants_30d`.
 
-The run graph in the KFP UI of run `c9e6a2bd` (2026-11-12, `label_as_of` 2026-11-08) shows the 7 steps green and
-the metrics artifact. `register` has no condition around it: it always runs and takes `passed` from `evaluate`
-(this run: False, so version 4 was registered without an alias). It was the first end-to-end run with the
-always-register step and the 6 GiB limit, on 2 Spark workers. The new model gained 0.029 PR-AUC over production
-(0.8712 against 0.8424) but its recall at 1% FPR was lower (0.9265 against 0.9287), so it did not pass: version 4
-got the tag `passed=False` and no alias, and `challenger` and `production` stayed where they were.
-
-![KFP run graph of 2026-11-12: load-labels, get-training-data, validate-data, time-split, train, evaluate and register all succeeded, register without a condition, metrics artifact](../images/kfp_run_graph.png)
-
 Distributed training, from the `train` step's pod log and the cluster while it ran:
 
 ```text
@@ -369,15 +380,9 @@ train-xgboost-exec-1   1/1   Running   0     6s
 train-xgboost-exec-2   1/1   Running   0     4s
 ```
 
-The KFP runs list on 2026-11-12: the five failed attempts of that day (old label day, a DNS error at start-up, a
-second Spark worker that did not fit, two OOMKills of step 2 at 5 GiB; see [Gotchas](#gotchas)), then the run that
-succeeded in 32 minutes, and below them the October runs with the failed `drift-retrain-2026-11-02`:
-
-![KFP runs list of 2026-11-12: five failed train_fraud_model attempts, the successful run of 32 minutes, the October runs and the failed drift-retrain-2026-11-02](../images/kfp_runs.png)
-
-Later runs (2026-10-19 evening), each one Delta version of the training set. They ran when a model that did not pass
-was not registered at all. With the current code a run like `ce0b680c` registers a version tagged `passed=False`
-without an alias:
+The run above and the later runs of 2026-10-19 (evening), each one Delta version of the training set. They ran when
+a model that did not pass was not registered at all. With the current code a run like `ce0b680c` registers a version
+tagged `passed=False` without an alias:
 
 | Run | `label_as_of` | Gate | Registered |
 |---|---|---|---|
@@ -386,8 +391,7 @@ without an alias:
 | `d290160e` | 2026-11-03 | 0.879 vs 0.846, recall 0.9316 >= 0.9301: passed | v2 `challenger` |
 | `dc392583` | 2026-11-04 | 0.873 vs 0.846: passed | v3 `challenger` |
 
-`production` stays on v1: the pipeline only sets `challenger` (and `production` for the first model that passes), and
-a reviewer decides what moves to production. The
+`production` stays on v1 until a reviewer moves it ([Evaluation and promotion](#evaluation-and-promotion)). The
 MLflow registry shows `card_fraud_xgb` version 1 with the aliases `challenger` and `production` and the tags
 `t_low`, `t_high` and test PR-AUC:
 
@@ -405,9 +409,26 @@ training set path and the XGBoost parameters:
 ![MLflow run parameters: data versions, split windows, training set path and version, XGBoost parameters](../images/mlflow_data_versions.png)
 
 The training set is reproducible (`VERSION AS OF`), and since 2026-10-20 so is the booster for a given number of
-workers: `fit_xgboost` orders the rows by `transaction_id` before cutting them into worker shards (see
-[reproducible booster](#reproducible-booster) in the notebook run). The pipeline runs in this document predate that
-fix: their boosters depended on the row order the join happened to return.
+workers ([reproducible booster](#reproducible-booster)). The pipeline runs of 2026-10-19 predate that fix: their
+boosters depended on the row order the join happened to return.
+
+## Pipeline run on 2026-11-12 (KFP run `c9e6a2bd`)
+
+The run graph in the KFP UI (`label_as_of` 2026-11-08) shows the 7 steps green and the metrics artifact. `register`
+has no condition around it: it always runs and takes `passed` from `evaluate` (this run: False, so version 4 was
+registered without an alias). It was the first end-to-end run with the always-register step and the 6 GiB limit, on
+2 Spark workers. The new model gained 0.029 PR-AUC over production (0.8712 against 0.8424) but its recall at 1% FPR
+was lower (0.9265 against 0.9287), so it did not pass: version 4 got the tag `passed=False` and no alias, and
+`challenger` and `production` stayed where they were.
+
+![KFP run graph of 2026-11-12: load-labels, get-training-data, validate-data, time-split, train, evaluate and register all succeeded, register without a condition, metrics artifact](../images/kfp_run_graph.png)
+
+The KFP runs list on 2026-11-12 shows the five failed attempts of that day, then the run that succeeded in 32
+minutes, and below them the October runs with the failed `drift-retrain-2026-11-02`. The attempts failed on an old
+label day, a DNS error at start-up, a second Spark worker that did not fit, and two OOMKills of step 2 at 5 GiB;
+[Gotchas](#gotchas) has every cause except the DNS error:
+
+![KFP runs list of 2026-11-12: five failed train_fraud_model attempts, the successful run of 32 minutes, the October runs and the failed drift-retrain-2026-11-02](../images/kfp_runs.png)
 
 ## Gotchas
 
@@ -423,9 +444,9 @@ The first pipeline runs on kind:
 | step 3 `DeltaProtocolError: ... reader features: {'deletionVectors'}` | the training-set table has deletion vectors; the validate and split steps read it with `deltalake` 0.25, which cannot (nor can 1.1.4) | first: table without deletion vectors (next row shows why that was wrong); final: the validate and split steps read with Spark |
 | without deletion vectors, MERGEs were not incremental: all 108 files rewritten when the windows moved 18 days, all 3 for a 1-day shift (15k of 1.07M rows changed) | copy-on-write: Delta rewrites every file holding a matched or deleted row, and with a delete-by-source clause that was every file in our tests, whatever the layout | deletion vectors back on + MERGE on id + `row_hash` with only insert / delete-by-source clauses ([details](#features-and-data-versioning)); on a 20k-row test the same MERGE removed 0 files instead of 10 |
 | evaluate: `Failed to download 1 chunk(s) for MLmodel` (only once a `production` model existed) | MLflow 3 gives clients presigned S3 URLs for its own endpoint `seaweedfs:8333`, which in a kind pod is KFP's SeaweedFS | `MLFLOW_S3_ENDPOINT_URL=http://lakehouse-s3:8333` on the MLflow server ([`infra/docker-compose.yaml` L640-L642](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L640-L642)) |
-| step 2 `OOMKilled` at 5 GiB (2026-11-12, `label_as_of` 2026-11-08: one run passed, two were killed) | the peak sits right at 5 GiB | limit 6 GiB; the request stays 1 GiB, so scheduling is unchanged |
+| step 2 `OOMKilled` at 5 GiB (2026-11-12, `label_as_of` 2026-11-08: step 2 passed in one run, which then failed at step 5, and was killed in two) | the peak sits right at 5 GiB | limit 6 GiB; the request stays 1 GiB, so scheduling is unchanged |
 | step 1 `DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION` for `label_as_of` 2026-10-15 | Delta refuses time travel to a version older than `deletedFileRetentionDuration`, 7 days by default, even though nothing vacuums the table: a registered model could not be traced back to its labels after a week | both tables keep a year of versions: `build_labels.py` and `fraud_ml.data.keep_history` set `deletedFileRetentionDuration` and `logRetentionDuration` to 365 days before their own commit; afterwards the 2026-10-15 labels (version 14, 7,999,526 rows) read again |
-| step 5 `BarrierJobSlotsNumberCheckFailed`, executor 2 `Insufficient memory` | the train step (1 GiB request) and 2 executors (1408 MiB each) next to KFP's own requests leave no room on the 7.94 GiB node when other namespaces are up | run the pipeline with Layer 3 scaled down and without KFP's visualization server; then the default 2 workers fit |
+| step 5 `BarrierJobSlotsNumberCheckFailed`, executor 2 `Insufficient memory` | the train step (1 GiB request) and 2 executors (1408 MiB each) next to KFP's own requests leave no room on the 7.75 GiB node when other namespaces are up | run the pipeline with Layer 3 scaled down and without KFP's visualization server; then the default 2 workers fit |
 
 The notebook never hit the memory ones: its container has no memory limit.
 

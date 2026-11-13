@@ -2,13 +2,13 @@
 
 Layer 1 novel idea. In an account takeover, someone else gets into a customer's banking app: they reset the
 password, add a new payee and move money out within minutes. No single event is suspicious; the order of the events
-is. Finding such an order in a live stream is complex event processing (CEP). Here account
-takeovers in the bank app's events are found with Flink CEP, through Flink SQL's `MATCH_RECOGNIZE`: the pattern is
-written like a regular expression over the rows of one session. One job runs three takeover patterns and orders each session's events by event time without the
-hand-written buffer of the streaming job `ato_sequence.py`, in about 4 s per run against 14 to 26 minutes on the same
-300,000 events. Not covered in EDAI: complex event processing (row pattern recognition with `MATCH_RECOGNIZE`, the
-Flink CEP library). The course covered Flink windows, watermarks and keyed state, which is what the hand-written job
-uses.
+is. Finding such an order in a live stream is complex event processing (CEP). Here Flink CEP finds account takeovers
+in the bank app's events, through Flink SQL's `MATCH_RECOGNIZE`: the pattern is written like a regular expression over
+the rows of one session. One job runs three takeover patterns. It orders each session's events by event time without
+the hand-written buffer of the streaming job `ato_sequence.py`, and takes about 4 s per run where that job takes 14 to
+26 minutes on the same 300,000 events. Not covered in the EDAI course: complex event processing (row pattern
+recognition with `MATCH_RECOGNIZE`, the Flink CEP library). The course covered Flink windows, watermarks and keyed
+state, which is what the hand-written job uses.
 
 | | |
 |---|---|
@@ -32,7 +32,7 @@ flowchart LR
 
 ## Where it fits
 
-The job is one of the Flink jobs of Layer 1 (data platform) ([flink_jobs.md](flink_jobs.md)). It reads the mobile
+The job is one of the Flink jobs of Layer 1, the data platform ([flink_jobs.md](flink_jobs.md)). It reads the mobile
 banking app's events from Kafka (`app_events` in the platform, replayed here into `app_events_replay`) and writes
 one alert per match to the Kafka topic `ato_alerts_cep`. The check script reads the alerts to judge the result. No
 other part of the platform reads them yet; in a bank, a fraud team's queue would. The hand-written job it is compared
@@ -50,8 +50,8 @@ to R4 ([numbered arrows](../architecture.md#numbered-arrows)).
    hand-written buffer or timer is needed.
 3. Three `MATCH_RECOGNIZE` patterns, one per takeover type, run over the rows of each session like a regular
    expression over events: `takeover` (password reset, new payee, transfer), `blocked_takeover` (password reset,
-   then a failed identity check) and `split_transfers` (new payee, then two transfers just under the 10M VND (Vietnamese
-   dong) check).
+   then a failed identity check) and `split_transfers` (new payee, then two transfers each just under 10M VND, the
+   Vietnamese dong amount from which a transfer needs an identity check).
    Every match inside its time window becomes one alert ([The three patterns](#the-three-patterns)).
 4. The three inserts run as one statement set, so Kafka is read once and a run over 300,000 events takes about 4 s,
    against 14 to 26 minutes for the hand-written Python operator.
@@ -75,22 +75,22 @@ docker exec flink-jobmanager flink run -py /opt/flink/jobs/ato_cep.py           
 
 The bank app's events (`app_events`: login, password reset, add payee, transfer, identity check) show an account
 takeover as a sequence inside one session. Decision 2345/QĐ-NHNN brought identity checks from 2024-07-01: a face
-scan for a new device, for a transfer of 10M VND or more and above 20M VND a day
-([data_characteristics.md](data_characteristics.md#app_events)). Since then takeovers look different. Most stop at a failed
-identity check, and malware that drives the victim's own phone needs no password reset: it adds a payee and splits
-the money into transfers just below 10M. The Layer 1 streaming job
+scan for a new device, for any transfer of 10M VND or more, and when a day's transfers pass 20M VND
+([data_characteristics.md](data_characteristics.md#app_events)). Since then takeovers look different. Most stop at a
+failed identity check, and malware that drives the victim's own phone needs no password reset: it adds a payee and
+splits the money into transfers just below 10M. The Layer 1 streaming job
 [`pipelines/flink/ato_sequence.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_sequence.py)
 ([flink_jobs.md](flink_jobs.md#out-of-order-app-events)) codes one sequence (password reset, add payee, transfer) as a
-state machine with its own event-time buffer and timers. On the replays below it flags 10 and 8 takeover sessions out
-of about 1,340, and it is slow: a Python operator per event.
+state machine with its own event-time buffer and timers. On the replays below it flags 10 and 8 takeover sessions out of
+about 1,340, and it is slow: a Python operator per event.
 
 ## The three patterns
 
 Flink CEP, through Flink SQL's `MATCH_RECOGNIZE`, describes each sequence as a pattern over the rows of a partition
 in event time, much like a regular expression over events.
 [`pipelines/flink/ato_cep.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py)
-runs three patterns in one job. The SQL operator sorts each session's events by event time once the watermark
-passes, so the hand-written buffer is gone.
+runs three patterns in one job. The SQL operator sorts each session's events by event time once the watermark passes, so
+the hand-written buffer is gone.
 
 | Pattern | Sequence in one session | Takeover it describes |
 |---|---|---|
@@ -99,7 +99,8 @@ passes, so the hand-written buffer is gone.
 | `split_transfers` | `add_payee`, then two transfers of 9,000,000 to 9,999,999 VND to that payee, within 30 minutes | remote control of the victim's phone: no reset, no new device, amounts kept under the 10M check |
 
 The patterns (`X*?` and `Y*?` let any other events sit in between), in
-[`pipelines/flink/ato_cep.py` L20-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L20-L39):
+[`pipelines/flink/ato_cep.py`
+L20-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L20-L39):
 
 ```python
 PATTERNS = {
@@ -126,9 +127,10 @@ PATTERNS = {
 
 Each pattern becomes `INSERT INTO ato_alerts_cep SELECT ... FROM app_events MATCH_RECOGNIZE (PARTITION BY session_id
 ORDER BY ts ...)`, and the three inserts run as one statement set, so Kafka is read once
-([`pipelines/flink/ato_cep.py` L65-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L65-L71)).
-The source table takes `event_ts` as event time with a 30 s watermark
-([`pipelines/flink/ato_cep.py` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L50));
+([`pipelines/flink/ato_cep.py`
+L65-L71](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L65-L71)).
+The source table takes `event_ts` as event time with a 30 s watermark ([`pipelines/flink/ato_cep.py`
+L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/ato_cep.py#L50));
 the app delays an event by 20 s at most.
 
 ## The run of 2026-10-24, step by step
@@ -170,7 +172,8 @@ loads the replay, runs the hand-written job and the CEP job, and compares their 
 
 - the sessions each rule should flag, recomputed with pandas from the Parquet files in event time (an independent
   implementation of the same definitions,
-  [`pipelines/flink/check_ato_cep.py` L26-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/check_ato_cep.py#L26-L48));
+  [`pipelines/flink/check_ato_cep.py`
+  L26-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/check_ato_cep.py#L26-L48));
 - the generator's list of takeover sessions (`new_device`, `remote_access`).
 
 The run on the held-out window (2026-03-01 to 2026-05-03), in Git Bash:
@@ -181,7 +184,7 @@ The run on the held-out window (2026-03-01 to 2026-05-03), in Git Bash:
 
 The data is synthetic, and the generator that wrote it also decides what a takeover looks like. Patterns written
 by someone who read the generator will find what it generated, so the takeover numbers cannot be read as a fraud
-detection rate. The proof is split into what the numbers can show and what they cannot.
+detection rate.
 
 ### The technique works, independent of the data
 
@@ -194,7 +197,8 @@ and a new pattern is five lines of SQL against a new state machine.
 
 ### Coverage of the known takeover types, bounded by the data
 
-The patterns encode the takeover types of the data design, so finding them is a coverage check and an upper bound. To keep it honest, the patterns were written on a development window (300,000 events from 2024-09-01)
+The patterns encode the takeover types of the data design, so finding them is a coverage check, and the share found is
+an upper bound. To keep it honest, the patterns were written on a development window (300,000 events from 2024-09-01)
 and then frozen. On that window the first version of `blocked_takeover` (new-device check only) caught 717 of 788
 `new_device` takeovers; the 71 it missed had passed the face scan for the new phone and failed it at the transfer
 amount, so the rule was widened to both checks. That was the only change. The frozen patterns then ran once on a
@@ -209,7 +213,7 @@ The development run, before the frozen rules went to the held-out window:
 Legitimate sessions come from the generator's own customer behaviour (1% password resets, 10% new payees, transfer
 amounts drawn from a lognormal), not from the patterns, so the alerts they raise are the cost of each pattern.
 
-| Window | Pattern | Alerts | = expected | On takeover sessions | On other sessions |
+| Window | Pattern | Alerts | Also found by pandas | On takeover sessions | On other sessions |
 |---|---|---:|---:|---:|---:|
 | development, 2024-09-01 | `takeover` | 107 | 107 | 10 | 97 |
 | | `blocked_takeover` | 779 | 779 | 778 | 1 |

@@ -1,9 +1,8 @@
 # Tests
 
 A bug in the Scoring API declines good customers or lets fraud through; a bug in an MCP (Model Context Protocol)
-server feeds the agents wrong data. These are the tests that guard the platform's services: Layer 2's two APIs (Scoring API, Drift API) first, then Layer 3's three MCP
-servers ([below](#layer-3-the-card-support-mcp-servers)). Each code base runs its tests in the `test` stage of its
-own Docker image, so the tests run against the exact dependency pins of the image, behind a coverage gate of 90%.
+server feeds the agents wrong data. These are the tests that guard the platform's services: Layer 2's two APIs
+(Scoring API, Drift API) and Layer 3's three MCP servers ([below](#layer-3-the-card-support-mcp-servers)).
 Besides example tests they use fakes, equivalence partitioning and boundary values, property-based tests, mutation
 testing and a locust load test.
 
@@ -18,15 +17,15 @@ testing and a locust load test.
 The tests guard two kinds of service. In Layer 2 (ML platform), the Scoring API decides on every payment and the
 Drift API watches its inputs ([serving.md](../ml-platform/serving.md), [drift.md](../ml-platform/drift.md)). In
 Layer 3 (LLM and agent platform), the three MCP tool servers give the agents their card data, fraud scores and
-policy chunks ([agents.md](../llm-platform/agents.md)). Each code base runs its tests in the `test` stage of its own
-Docker image. For the tool servers, Jenkins runs the tests, the coverage gate and the mutation test on every change
-([cicd.md](cicd.md#mcp-servers)): arrow C3 of the Layer 3 picture
+policy chunks ([agents.md](../llm-platform/agents.md)). For the tool servers, Jenkins runs the tests, the coverage
+gate and the mutation test on every change ([cicd.md](cicd.md#mcp-servers)): arrow C3 of the Layer 3 picture
 ([architecture.md](../architecture.md#numbered-arrows-layer-3)). The two Layer 2 APIs have no pipeline; their tests
 run by hand with the commands under [Run it](#run-it).
 
 ## How it works
 
-Each kind of test answers its own question:
+Each code base runs its tests in the `test` stage of its own Docker image, so the tests run against the exact
+dependency pins of the image, behind a coverage gate of 90%. Each kind of test answers its own question:
 
 | Test | Question it answers |
 |---|---|
@@ -38,7 +37,7 @@ Each kind of test answers its own question:
 
 ## Run it
 
-From the repo root; each code base runs its tests in the `test` stage of its own image:
+From the repo root:
 
 ```bash
 # Layer 2: pytest + coverage gate (pytest.ini) in the image's test stage
@@ -57,11 +56,11 @@ docker run --rm card-support-mcp:test sh -c "mutmut run >/dev/null 2>&1; mutmut 
 ## Layer 2: the Scoring API and the Drift API
 
 Both Layer 2 services test in the `test` stage of their image
-([`services/scoring_api/Dockerfile` L7-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/Dockerfile#L7-L14)):
-the stage adds the dev requirements to the image's own dependencies, and its command is `pytest`, so the tests run
-when the test image runs. Coverage gate:
-`--cov-fail-under=90` in `pytest.ini`
-([`services/scoring_api/pytest.ini` L4](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/pytest.ini#L4),
+([`services/scoring_api/Dockerfile`
+L7-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/Dockerfile#L7-L14)):
+the stage adds the dev requirements to the image's own dependencies, and its command is `pytest`, so the tests run when
+the test image runs. Coverage gate: `--cov-fail-under=90` in `pytest.ini` ([`services/scoring_api/pytest.ini`
+L4](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/pytest.ini#L4),
 the same line in the Drift API).
 
 | Service | Tests | Coverage |
@@ -71,8 +70,8 @@ the same line in the Drift API).
 
 The Drift API used to take batches on `/v1/events`, fed by a Kafka forwarder. Its endpoint is now
 `POST /v1/inference-events` for KServe's CloudEvents ([drift.md](../ml-platform/drift.md)), and its tests changed
-with it. The test count and the coverage above were measured again on 2026-11-13 with the new endpoint (and the test that no
-PSI gauge is exported for too few events). The mutation
+with it. The test count and the coverage above were measured again on 2026-11-13 with the new endpoint, including the
+test that no PSI (population stability index) gauge is exported for too few events. The mutation
 results further down are still from the old endpoint and have not been measured again.
 
 The Scoring API's coverage report, 100% of 205 statements (the screenshot is from before the prediction-log fix of
@@ -80,20 +79,21 @@ The Scoring API's coverage report, 100% of 205 statements (the screenshot is fro
 
 ![Scoring API coverage report: 100%, 205 statements](../images/coverage_scoring_api.png)
 
-The Drift API's coverage report, 100% of 157 statements, 56 tests (2026-11-12, with the Knative endpoint
-`/v1/inference-events`):
+The Drift API's coverage report, 100% of 157 statements, 56 tests (2026-11-12, the day before the 57-test run in the
+table, already with the Knative endpoint `/v1/inference-events`):
 
 ![Drift API coverage report: 100%, 157 statements](../images/coverage_drift_api.png)
 
 ### Fakes over mocks
 
 The scorer gets fake feature / model / log objects
-([`services/scoring_api/tests/conftest.py` L17-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/conftest.py#L17-L72))
+([`services/scoring_api/tests/conftest.py`
+L17-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/conftest.py#L17-L72))
 that implement the same small interfaces as the real clients and can be told to fail or hang. The real clients are
 tested against recorded HTTP (respx) and a patched Kafka producer
 ([`services/scoring_api/tests/test_clients.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_clients.py)).
-No test needs Redis, KServe or Kafka. The price of fakes is a bug that only a real client triggers: the first live
-run found one ([Gotchas](#gotchas)).
+No test needs Redis, KServe or Kafka. The price of fakes is a bug that only a real client triggers: the first live run
+found one ([Gotchas](#gotchas)).
 
 ### Equivalence partitioning and boundary values
 
@@ -102,7 +102,8 @@ With `pytest.mark.parametrize` in
 [`services/scoring_api/tests/test_schemas.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_schemas.py)
 and the Drift API's
 [`services/drift_api/tests/test_api.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/tests/test_api.py)
-and [`services/drift_api/tests/test_psi.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/tests/test_psi.py):
+and
+[`services/drift_api/tests/test_psi.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/tests/test_psi.py):
 
 | Input | Partitions / boundaries tested |
 |---|---|
@@ -111,14 +112,15 @@ and [`services/drift_api/tests/test_psi.py`](https://github.com/cvinhnguyen/card
 | amount (fallback) | 1, inside, just below / at / above 2,000,000 VND, the largest valid amount |
 | request schema | amount -1 / 0 / 1 / 10 bn / 10 bn + 1, currency `VND` / `USD` / lower case / 2 or 4 letters, channel valid / unknown / empty, id lengths 0 / 1 / 64 / 65, device absent / 64 / 65 |
 | inference event | `ce-type` request / response / unknown (400) / missing (422); a GET call's event with no `instances` or `predictions` (accepted, not counted); malformed bodies: not JSON, positional instance of the wrong length, non-numeric value, an instance that is neither dict nor list, `instances` not a list, body not an object, a prediction that is not a number (400) |
-| PSI (population stability index) level | 0.1 and 0.25 exactly and either side |
+| PSI level | 0.1 and 0.25 exactly and either side |
 
 ### Property-based tests (hypothesis)
 
 Rules that must hold for *any* input, with hypothesis generating the cases
-([`services/scoring_api/tests/test_properties.py` L30-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_properties.py#L30-L54)
-for the Scoring API,
-[`services/drift_api/tests/test_api.py` L138-L146](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/tests/test_api.py#L138-L146)
+([`services/scoring_api/tests/test_properties.py`
+L30-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_properties.py#L30-L54)
+for the Scoring API, [`services/drift_api/tests/test_api.py`
+L138-L146](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/tests/test_api.py#L138-L146)
 for the drift report):
 
 - idempotency: scoring the same request twice gives the same response; the drift report over the same data is the
@@ -128,31 +130,36 @@ for the drift report):
 
 ### Mutation testing (mutmut 3.8)
 
-Mutation runs cover only the code changed in this phase, as set in each service's `setup.cfg`
+Mutation runs cover only the code changed in the phase that added Layer 2 (the rubric asks to mutate changed code
+only), as set in each service's `setup.cfg`
 ([`services/scoring_api/setup.cfg`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/setup.cfg),
 [`services/drift_api/setup.cfg`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/drift_api/setup.cfg)):
 `policy.py` and `scorer.py` of the Scoring API, `psi.py` and `store.py` of the Drift API. mutmut flips operators and
 constants (`>=` to `>`, `0.25` to `1.25`, ...) and reruns the tests; a mutant that survives is a line no test really
 checks. The commands are in [Run it](#run-it).
 
-| Service | First run | Survivors | After |
-|---|---|---|---|
-| Drift API | 104 / 116 killed | 13 | 106 / 106 |
-| Scoring API | 88 / 108 killed | 20 | 106 / 106 |
+| Service | First run (2026-10-20) | Survivors | After the fixes (2026-10-20) | Rerun on 2026-11-13 |
+|---|---|---|---|---|
+| Drift API | 104 / 116 killed | 12 | 106 / 106 | 99 / 99 |
+| Scoring API | 88 / 108 killed | 20 | 106 / 106 | 106 / 106 |
+
+The rerun used the commands in [Run it](#run-it) on the current code. The Drift API has fewer mutants than in October
+because its `store.py` changed on 2026-11-12, when the Knative event feed replaced the Kafka forwarder.
 
 What the survivors were:
 
 - Real gaps, with tests added. PSI had no exact-value test: `|` to `&` over the bins, `+=` to `=`, and the defaults
-  for a bin missing on one side all survived (now three exact cases, one of them the docs example 0.416). A
-  fallback event *followed by* a counted one (`continue` to `break`), the TTL (time to live) set on a key other than the bucket, bucket
-  names (`// 61`), the request passed to the feature store, stage latency labels and values, the fallback log line,
-  and the prediction log's timestamps (python mode writes `2026-10-16 09:30:00`, which is not ISO).
+  for a bin missing on one side all survived (now three exact cases, one of them the docs example 0.416). Tests were
+  also missing for a fallback event *followed by* a counted one (`continue` to `break`), the TTL (time to live) set on
+  a key other than the bucket, bucket names (`// 61`), the request passed to the feature store, stage latency labels
+  and values, the fallback log line, and the prediction log's timestamps (python mode writes `2026-10-16 09:30:00`,
+  which is not ISO).
 - Dead code, deleted: `b.decode() if isinstance(b, bytes) else b`. redis-py without `decode_responses` always
   returns bytes, so the other branch could never run.
 - Equivalent mutants, marked `# pragma: no mutate`: `pipeline(transaction=False)` to `True` / `None` (MULTI or not,
   the same counts) and the response half of the prediction log record (every field is JSON-native in either dump
-  mode). `int(clock // 60)` to `int(clock / 60)` was equivalent too; `int(clock) // 60` makes that mutant produce a
-  float bucket name, which the bucket-name test catches.
+  mode). `int(clock // 60)` to `int(clock / 60)` was equivalent too, so the code now reads `int(clock) // 60`: that
+  mutant then produces a float bucket name, which the bucket-name test catches.
 
 ### Load test (locust)
 
@@ -181,8 +188,8 @@ Replace `<repo>` with the absolute path of the repo and `<cards.txt>` with a fil
 - Overloaded, it never answers with an error: requests past their 200 ms budget get the fallback rule, as designed.
   To take more load, add replicas (KEDA on requests per second, course Module 2); the budget stays as it is.
 - Right after the overload, 100 serial requests: 21 ms median, 0% fallback. Before the `asyncio.shield` fix
-  ([serving.md](../ml-platform/serving.md#capacity-and-a-bug-the-first-load-found)) the API stayed at 100% fallback after a burst
-  until it was restarted.
+  ([serving.md](../ml-platform/serving.md#capacity-and-a-bug-the-first-load-found)) the API stayed at 100% fallback
+  after a burst until it was restarted.
 
 The SLA run's locust report shows 4,109 requests, 0 failures, 34.5 req/s, p50 31 ms and p99 77 ms:
 
@@ -192,10 +199,10 @@ The SLA run's locust report shows 4,109 requests, 0 failures, 34.5 req/s, p50 31
 
 [`services/card_support_mcp/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp)
 is one code base that runs as the three MCP servers the agents call
-([agents.md](../llm-platform/agents.md#the-three-mcp-servers)): card-data (the Web API that pulls a card's data from the online
-feature store by `card_id` and a policy chunk by `chunk_id`), fraud-score (the fraud model's verdict on a payment)
-and policy-rag (the policy search). The tests build each server with fakes of its adapters. They run in the image's
-`test` stage, and Jenkins runs them, the coverage gate and the mutation test on every change to the service
+([agents.md](../llm-platform/agents.md#the-three-mcp-servers)): card-data (the Web API that pulls a card's data from the
+online feature store by `card_id` and a policy chunk by `chunk_id`), fraud-score (the fraud model's verdict on a
+payment) and policy-rag (the policy search). The tests build each server with fakes of its adapters. They run in the
+image's `test` stage, and Jenkins runs them, the coverage gate and the mutation test on every change to the service
 ([cicd.md](cicd.md#mcp-servers)). The commands are in [Run it](#run-it).
 
 | Service | Tests | Coverage |
@@ -203,15 +210,18 @@ and policy-rag (the policy search). The tests build each server with fakes of it
 | Card support MCP servers (one code base) | 119 (118 in the build below; the Feast read timeout test was added on 2026-11-13) | 98.32% |
 
 Stage "Unit tests + coverage gate"
-([`services/card_support_mcp/Jenkinsfile` L31-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L31-L37))
-of Jenkins build #16 of `card-support-mcp` (2026-10-24, commit `7da43e5`) shows 118 tests passed and a total
-coverage of 98.31% against the 90% gate:
+([`services/card_support_mcp/Jenkinsfile`
+L31-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L31-L37))
+of Jenkins build #16 of `card-support-mcp` (2026-10-24, commit `7da43e5`) shows 118 tests passed and a total coverage of
+98.31% against the 90% gate:
 
 ![Jenkins console of card-support-mcp: 118 passed, total coverage 98.31% against the 90% gate](../images/test_mcp_jenkins_tests.png)
 
 The lines left uncovered are the constructors that open the real Feast repos, lines 28-30 and 49-50 of `clients.py`
-([`services/card_support_mcp/app/clients.py` L28-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/clients.py#L28-L30),
-[`services/card_support_mcp/app/clients.py` L49-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/clients.py#L49-L50)).
+([`services/card_support_mcp/app/clients.py`
+L28-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/clients.py#L28-L30),
+[`services/card_support_mcp/app/clients.py`
+L49-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/clients.py#L49-L50)).
 They need the registry database and the online stores, so the pipeline's smoke test exercises them on the deployed
 releases instead.
 
@@ -220,8 +230,8 @@ releases instead.
 [`services/card_support_mcp/tests/conftest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/tests/conftest.py)
 has fakes of the four adapters (feature store, knowledge base, embedder, Scoring API), each with the `ready()` its
 server's `/readyz` calls, and each can be told to fail. The `service` fixture wires the service with them at a fixed
-clock. `make_client` builds the real FastAPI app of one server (REST and MCP) on any service, with its own
-Prometheus registry so tests never share counters. On top of these,
+clock. `make_client` builds the real FastAPI app of one server (REST and MCP) on any service, with its own Prometheus
+registry so tests never share counters. On top of these,
 [`services/card_support_mcp/tests/test_api.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/tests/test_api.py)
 checks:
 
@@ -269,21 +279,25 @@ states rules for any input:
 
 One more rule, that a younger timestamp is never less fresh than an older one, runs on hypothesis's crosshair backend
 (`@settings(backend="crosshair")`, package `hypothesis-crosshair`,
-[`services/card_support_mcp/tests/test_properties.py` L52-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/tests/test_properties.py#L52-L54)).
-Crosshair executes `realtime_now` symbolically and uses a solver to reach its branches, so the window edges at 600
-and 3,600 seconds get tested on purpose.
+[`services/card_support_mcp/tests/test_properties.py`
+L52-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/tests/test_properties.py#L52-L54)).
+Crosshair executes `realtime_now` symbolically and uses a solver to reach its branches, so the window edges at 600 and
+3,600 seconds get tested on purpose.
 
 ### Mutation testing (mutmut 3.8)
 
 The Jenkins stage "Mutation test"
-([`services/card_support_mcp/Jenkinsfile` L38-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L38-L48))
+([`services/card_support_mcp/Jenkinsfile`
+L38-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L38-L48))
 runs mutmut after the unit tests and fails the build below 80% killed. Like every stage of this pipeline, it runs only
 when a commit changed the service (`changeset 'services/card_support_mcp/**'`) or someone starts the build by hand
-([`services/card_support_mcp/Jenkinsfile` L20-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L20-L23)).
-The file [`services/card_support_mcp/setup.cfg`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/setup.cfg)
+([`services/card_support_mcp/Jenkinsfile`
+L20-L23](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile#L20-L23)).
+The file
+[`services/card_support_mcp/setup.cfg`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/setup.cfg)
 limits mutation to the two modules that hold the tool rules, `app/logic.py` and `app/service.py`. `main.py`,
-`clients.py`, `schemas.py` and `settings.py` are wiring and declarations, listed under `do_not_mutate`. The command
-is in [Run it](#run-it).
+`clients.py`, `schemas.py` and `settings.py` are wiring and declarations, listed under `do_not_mutate`. The command is
+in [Run it](#run-it).
 
 243 of 245 mutants are killed (99.2%). The two survivors, one in `realtime_now` and one in `rank`, were read by hand
 and are equivalent mutants: neither changes anything the tools return. Stage "Mutation test" of the same build shows
@@ -299,7 +313,8 @@ plays an agent working a chat: card lookups and chunk reads over REST, plus the 
 (`tools/call get_card_data`), so the cost of the MCP layer shows next to the REST call. Run 2026-10-24 inside the
 cluster (a locust pod in `card-support`, so the network policy lets it in) against the Service
 `http://card-data-mcp:8000`, 10 users for 2 minutes, 5,000 card ids from the live period so every lookup hits Redis.
-Report: [`locust_card_data_mcp.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_card_data_mcp.html).
+Report:
+[`locust_card_data_mcp.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_card_data_mcp.html).
 
 | Request | Requests | Median | p95 | p99 |
 |---|---:|---:|---:|---:|
@@ -314,14 +329,15 @@ over REST, so the JSON-RPC layer adds about 20 ms. The locust report in Chrome s
 
 ![locust report in Chrome: 6,241 requests, 0 failures, 52.26 requests per second, response time percentiles](../images/locust_card_data_sla.png)
 
-The agents were load-tested the same way, one customer chat per A2A `message/send` to the coordinator through the
-gateway
+The agents were load-tested the same way, one customer chat per A2A (agent-to-agent) `message/send` to the
+coordinator through the gateway
 ([`agents/locustfile.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/locustfile.py)):
 6 users for 4 min 51 s gave 37 conversations, 0 failures, 34 s median and 85 s p95
-([`locust_agents_a2a.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_agents_a2a.html)). The KEDA scaling run, 6 users for 3 min 41 s with 31
-conversations and 0 failures, is in [`locust_agents_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_agents_scaling.html). A conversation
-takes tens of seconds because the coordinator waits for the sub-agents, and each of them makes its own LLM calls, all
-on one GPU.
+([`locust_agents_a2a.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_agents_a2a.html)).
+The KEDA scaling run, 6 users for 3 min 41 s with 31 conversations and 0 failures, is in
+[`locust_agents_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/images/locust_agents_scaling.html).
+A conversation takes tens of seconds because the coordinator waits for the sub-agents, and each of them makes its own
+LLM calls, all on one GPU.
 
 ## Gotchas
 
@@ -329,18 +345,20 @@ on one GPU.
   real `FeatureClient` does it) sets `PROMETHEUS_MULTIPROC_DIR` in the process, and `Instrumentator.expose()` then
   served an empty multiprocess directory: `/metrics` answered 200 with no body. The endpoint now renders the app's
   registry itself
-  ([`services/scoring_api/app/main.py` L50-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L50-L54)),
-  and `test_metrics_survive_feast_multiprocess_env`
-  ([`services/scoring_api/tests/test_api.py` L53-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_api.py#L53-L57))
+  ([`services/scoring_api/app/main.py`
+  L50-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L50-L54)),
+  and `test_metrics_survive_feast_multiprocess_env` ([`services/scoring_api/tests/test_api.py`
+  L53-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_api.py#L53-L57))
   sets that variable to pin the behaviour.
 - mutmut 3 runs the tests on a copy of the code with every function behind a trampoline, and the coverage gate of
   `pytest.ini` failed that run. So `setup.cfg` empties `addopts` for it (and uses the 3.x key names; the 2.x
   `paths_to_mutate` is deprecated), here in
-  [`services/scoring_api/setup.cfg` L12-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/setup.cfg#L12-L15):
+  [`services/scoring_api/setup.cfg`
+  L12-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/setup.cfg#L12-L15):
 
-```ini
-# the coverage gate belongs to the normal run: mutmut runs a trampolined copy of the code
-pytest_add_cli_args =
-    -o
-    addopts=
-```
+  ```ini
+  # the coverage gate belongs to the normal run: mutmut runs a trampolined copy of the code
+  pytest_add_cli_args =
+      -o
+      addopts=
+  ```

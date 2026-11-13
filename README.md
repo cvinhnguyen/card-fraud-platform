@@ -7,18 +7,24 @@ coursework in three layers: a data platform (Layer 1), an ML platform (Layer 2) 
 ## Table of contents
 - [Business domain](#business-domain)
 - [Architecture](#architecture)
-  - [Layer 1: data platform](#layer-1-data-platform) · [Pipelines on Airflow](#pipelines-on-airflow) · [Layer 2: ML platform](#layer-2-ml-platform) · [Layer 3: LLM and agent platform](#layer-3-llm-and-agent-platform)
-  - [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) · [System diagram, Layer 3](#system-diagram-layer-3) · [Deployment](#deployment)
+  - [Layer 1: data platform](#layer-1-data-platform) · [Pipelines on Airflow](#pipelines-on-airflow) · [Layer 2: ML
+    platform](#layer-2-ml-platform) · [Layer 3: LLM and agent platform](#layer-3-llm-and-agent-platform)
+  - [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) · [System diagram, Layer
+    3](#system-diagram-layer-3) · [Deployment](#deployment)
 - [Repo structure](#repo-structure)
-- [Quick start](#quick-start) · [Layer 3](#layer-3)
+- [Quick start](#quick-start)
+  - [Start Layer 3](#start-layer-3) · [UIs](#uis)
 - [Docs](#docs)
+  - [Data platform (Layer 1)](#data-platform-layer-1) · [Performance](#performance) · [ML platform (Layer
+    2)](#ml-platform-layer-2) · [LLM and agent platform (Layer 3)](#llm-and-agent-platform-layer-3) ·
+    [Operations](#operations)
 
 ## Business domain
 
 A Vietnamese digital bank issues debit and credit cards and runs a mobile banking app. Fraud shows up as card payments
 the cardholder did not make (mostly card-not-present, often abroad) and as account takeovers in the app (password
-reset, new device, new payee, transfer). The bank needs to score each card authorization in real time and to train
-and monitor the model on history, which means a data platform that brings together data owned by other departments:
+reset, new device, new payee, transfer). The bank needs to score each card authorization in real time, and to train
+and monitor the model on history. That needs a data platform that brings together data owned by other departments:
 
 | Source | Owner | How it arrives | Problems it brings |
 |---|---|---|---|
@@ -26,7 +32,7 @@ and monitor the model on history, which means a data platform that brings togeth
 | Settled transactions | core banking nightly export (files on S3) | DP1 loads the new export folders | 2% duplicates from export re-runs, auth columns added on 2024-07-01 (schema evolution), merchant and city skew |
 | Card authorizations | card network | Kafka `card_authorizations` | late events from offline POS terminals, network-retry duplicates |
 | App events | mobile app | Kafka `app_events` | events out of order within a session |
-| Fraud labels | disputes, reported days to weeks later | DP2 (`gold.label_transaction`) | label delay |
+| Fraud labels | disputes, reported days to weeks later | DP2 (the pipeline that builds silver and gold) writes `gold.label_transaction` | label delay |
 | Card documents (terms, fees, disputes, authentication rules, FAQ) | product and legal teams | markdown files in `s3://bank-documents` | must be searchable by meaning, kept in sync with what the agents cite |
 
 The same customers then call card support: why was my payment declined, what does a withdrawal abroad cost, am I
@@ -35,9 +41,10 @@ features from the feature store, the fraud model's verdict through the Scoring A
 through a RAG (retrieval-augmented generation) pipeline.
 
 All data is synthetic (`generator/`), with every problem injected at a measured rate and checked
-([docs/data-platform/data_characteristics.md](docs/data-platform/data_characteristics.md)). Layer 1 is the data platform; Layer 2 (feature
-store, training, serving, drift) consumes its `feat_*` tables and the realtime features; Layer 3 (agents) consumes
-Layer 2's online features and model.
+([docs/data-platform/data_characteristics.md](docs/data-platform/data_characteristics.md)).
+
+Layer 1 is the data platform. Layer 2 (feature store, training, serving, drift) reads its `feat_*` tables and the
+realtime features. Layer 3 (agents) reads Layer 2's online features and model.
 
 ## Architecture
 
@@ -50,27 +57,16 @@ Four pictures describe the platform, each answering one question:
 | [System diagram, Layer 3](#system-diagram-layer-3) | The same for the agents: a question, the knowledge ingest, CI/CD, monitoring |
 | [Deployment](#deployment) | Where does each container run: the PC, the Docker VM, the kind cluster, Azure, the internet? |
 
+All four pictures are drawn by `python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG
+next to each PNG).
+
 Start with the overview. The bank's data comes in on the left. Layer 1 (the top band) turns it into clean tables
 and features. In Layer 2 (bottom right) a model scores every card payment in real time and is retrained when the
 data drifts. In Layer 3 (bottom left) agents answer the support staff's questions about a card with the same
 data. Under the layers, the CI/CD row shows how a change reaches the platform, the next row holds the services
-every layer uses, and the flow key closes the page.
+every layer uses, and the flow key is at the bottom.
 
-| In the picture | Means |
-|---|---|
-| A box | one part of the platform: its name, the technology under the name, then what it does as short bullets |
-| Dashed frame with steps | a pipeline, drawn as its steps from top to bottom |
-| White step with pointed ends | a check inside a pipeline; its two outcomes, no and yes, sit under it |
-| Grey box | a system outside the platform: core banking, the card network, the mobile banking app |
-| Green box | a pipeline or a job: it processes data |
-| White box | a service: it answers requests |
-| Blue box | a store: where data rests (a lakehouse zone, a feature store, a Kafka topic) |
-| Yellow box | the event stream (Kafka) |
-| Purple box | an entry point or gateway |
-| Dashed box | a note for the reader |
-| Raspberry `NOVEL IDEA` pill | one of the four novel ideas, beyond the course |
-| Arrow | data or a call, from the part that sends it to the part that receives it; the words on it say what moves |
-| Arrow colour | its flow: orange payment scoring, blue streaming, green batch data, dashed purple training and release, brown monitoring, wine agent question (key at the bottom of the picture) |
+Each colour, box shape and arrow is explained in [docs/architecture.md](docs/architecture.md#overview).
 
 The whole platform on one page:
 
@@ -86,6 +82,7 @@ Words in the picture:
 | PSI | population stability index: how far a feature's values have moved away from the training data; above 0.25 counts as drift here |
 | MCP | Model Context Protocol: how an agent calls a tool server |
 | A2A | agent-to-agent protocol: how one agent asks another |
+| kind | the Kubernetes cluster inside the Docker VM on the PC; it holds Kubeflow Pipelines, KServe and the whole Layer 3 platform |
 
 ### Layer 1: data platform
 
@@ -96,10 +93,11 @@ Flink compute the realtime features within seconds of each payment.
 
 | Part | What it does | Docs |
 |---|---|---|
-| DP1, data pipeline: ingest to bronze | Spark copies the `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged, then validates them. The export lands on a lakeFS branch and is merged into `main` only after its checks pass (novel idea 2), so a broken export never reaches readers | [spark_jobs.md](docs/data-platform/spark_jobs.md), [novel_lakefs_wap.md](docs/data-platform/novel_lakefs_wap.md) |
-| DP2, data pipeline: bronze to silver and gold | Silver: removes duplicates, maps the 63 old province names to the 34 units, fills `auth_method` for rows before 2024-07-01 (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/skew_join.py)). Gold: dbt-spark builds the `dim_*` / `fact_*` star schema with the SCD2 `dim_customer` and an incremental fact, checked by 22 dbt tests; Spark writes the fraud labels as they were known on each day. Each zone is validated before the next step reads it | [spark_jobs.md](docs/data-platform/spark_jobs.md), [dbt_gold.md](docs/data-platform/dbt_gold.md) |
+| DP1, data pipeline: ingest to bronze | Spark copies the `core_banking` tables (JDBC), the daily export files (S3A, `mergeSchema` for the 2024-07-01 auth columns) and Flink's landing files into bronze `raw_*` Delta tables, unchanged, then validates them. The export lands on a lakeFS branch and is merged into `main` only after its checks pass (Layer 1 novel idea 2), so a broken export never reaches readers | [spark_jobs.md](docs/data-platform/spark_jobs.md), [novel_lakefs_wap.md](docs/data-platform/novel_lakefs_wap.md) |
+| DP2, data pipeline: bronze to silver | Removes duplicates, maps the 63 old province names to the 34 units, fills `auth_method` for rows before 2024-07-01 (join skew: salting, AQE and broadcast compared in [`pipelines/spark/skew_join.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/skew_join.py)). Silver is validated before the gold step reads it | [spark_jobs.md](docs/data-platform/spark_jobs.md) |
+| DP2, data pipeline: silver to gold | dbt-spark builds the `dim_*` / `fact_*` star schema with the SCD2 `dim_customer` and an incremental fact, checked by 22 dbt tests; Spark writes the fraud labels as they were known on each day. Gold is validated before DP3 reads it | [spark_jobs.md](docs/data-platform/spark_jobs.md), [dbt_gold.md](docs/data-platform/dbt_gold.md) |
 | DP3, feature pipeline: gold to features | `feat_*` tables of per-card statistics over 30, 90 and 180 days, with `event_timestamp` and `created`, which make them the Feast offline store for Layer 2 | [spark_jobs.md](docs/data-platform/spark_jobs.md#dp3-features) |
-| Streaming jobs (Flink) | Read the payments from Kafka with watermarks, late events, dedup and windows; write the raw events as `landing/` JSON files (DP1 loads them into bronze) and the realtime features to `card_features_rt`; find account takeover patterns in the app events with `MATCH_RECOGNIZE` (novel idea 1) | [flink_jobs.md](docs/data-platform/flink_jobs.md), [novel_flink_cep.md](docs/data-platform/novel_flink_cep.md) |
+| Streaming jobs (Flink) | Read the payments from Kafka with watermarks, late events, dedup and windows; write the raw events as `landing/` JSON files (DP1 loads them into bronze) and the realtime features to `card_features_rt`; find account takeover patterns in the app events with `MATCH_RECOGNIZE` (Layer 1 novel idea 1) | [flink_jobs.md](docs/data-platform/flink_jobs.md), [novel_flink_cep.md](docs/data-platform/novel_flink_cep.md) |
 | Push jobs | Two always-on containers: `push-online` writes the realtime features into Redis for scoring, `push-offline` appends them to Delta for training ([`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py)). Jenkins tests, builds and redeploys them | [feature_store.md](docs/ml-platform/feature_store.md), [cicd.md](docs/operations/cicd.md) |
 | Trino | SQL over every zone (`delta.<zone>.<table>`, the export as `lakefs.bronze.raw_transactions`): it finds a table's location in the Hive Metastore and reads its Delta files from S3 | [schema_design.md](docs/data-platform/schema_design.md) |
 | Airflow | Runs the pipelines below; connections and variables live in Airflow | [airflow.md](docs/data-platform/airflow.md) |
@@ -109,12 +107,12 @@ Flink compute the realtime features within seconds of each payment.
 
 Each pipeline is one Airflow DAG (DP2 is two, one per zone it writes) and has its own validate stage (Great
 Expectations), so bad data stops where it is found. The batch pipelines pass data only through the lakehouse, as in
-the overview. No pipeline starts another one. DP1 is the only one on a clock. Each pipeline ends with a publish
-task that emits an Airflow dataset event for the zone it wrote (`lakehouse://bronze`, `silver`, `gold`,
-`features`), with the business day on it, and the pipeline that reads that zone is scheduled on that dataset. So a
-pipeline depends on the table it reads and does not know which pipeline writes it. The publish task runs only after
-the checks pass. Each pipeline can also be started by hand at any time: a reader of a Delta table always gets the
-last committed version, never a half-written one.
+the overview, and no pipeline starts another one. Of DP1, DP2 and DP3, only DP1 runs on a clock. Each of them ends
+with a publish task, which runs only after the checks pass. It emits an Airflow dataset event for the zone it wrote
+(`lakehouse://bronze`, `silver`, `gold`, `features`), with the business day on it, and the pipeline that reads that
+zone is scheduled on that dataset. So a pipeline depends on the table it reads and does not know which pipeline
+writes it. Each pipeline can also be started by hand at any time: a reader of a Delta table always gets the last
+committed version, never a half-written one.
 
 | Pipeline | Airflow DAG | Runs | Stages | Reads | Writes |
 |---|---|---|---|---|---|
@@ -132,11 +130,11 @@ last committed version, never a half-written one.
 | Part | What it does | Docs |
 |---|---|---|
 | Feast feature store ([`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo)) | One definition of the model's 20 features, used twice: the offline store (the lakehouse Delta tables, read with Spark and point-in-time joins) builds training sets, the online store (Redis) answers the Scoring API. Daily features arrive through the materialize pipeline, realtime and device features through the push jobs | [feature_store.md](docs/ml-platform/feature_store.md) |
-| Notebook | Explores the data and trains the first model step by step, calling the same seven step functions as the training pipeline, and ends with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb)) | [ml_training.md](docs/ml-platform/ml_training.md) |
 | Training pipeline (Kubeflow Pipelines on kind) | `train_fraud_model`, one pod per step: (1) load the labels as of a date, (2) build the training set with a Feast point-in-time join and save it as a new Delta version, so the model can be traced back to its exact rows, (3) validate the data, (4) split by time, (5) train a logistic-regression baseline and a distributed XGBoost on Spark executor pods, (6) evaluate against the baseline and the `production` model, (7) register the model in MLflow as a new version, tagged `passed` True or False; only a model that passed gets the alias `challenger` | [ml_training.md](docs/ml-platform/ml_training.md) |
+| Notebook | Explores the data and trains the first model step by step, calling the same seven step functions as the training pipeline, and ends with both models saved and an MLflow run ([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb)) | [ml_training.md](docs/ml-platform/ml_training.md) |
 | MLflow | Experiment runs with their data versions; the model registry, where alias `challenger` marks a new candidate and `production` the model being served | [ml_training.md](docs/ml-platform/ml_training.md#evaluation-and-promotion) |
 | KServe | InferenceService (Standard mode) serving the `production` model baked into the image | [serving.md](docs/ml-platform/serving.md) |
-| Fraud Scoring API | FastAPI: the payment's online features from Feast and the KServe score give approve, step_up (ask for an OTP or biometric check) or decline, with a rule fallback when the model is late or down | [serving.md](docs/ml-platform/serving.md) |
+| Fraud Scoring API | FastAPI: the payment's online features from Feast and the KServe score give approve, step_up (ask for a one-time password, OTP, or a biometric check) or decline, with a rule fallback when the model is late or down | [serving.md](docs/ml-platform/serving.md) |
 | Drift monitoring | KServe's payload logger sends every request and response of the model through Knative Eventing to the Drift API, which counts them and returns the PSI of each feature against the training profile; the data drift pipeline checks accuracy on labelled payments daily and starts a training pipeline run on drift | [drift.md](docs/ml-platform/drift.md) |
 
 Five classes carry the ML logic:
@@ -157,15 +155,15 @@ call between them passes one gateway that decides what each agent may do.
 
 | Part | What it does | Docs |
 |---|---|---|
-| RAG data pipeline | Airflow `rag_ingest`: the bank documents become 57 chunks, each with a 1024-number vector, stored in Feast `card_support_kb` (pgvector online, Parquet offline); 7 checks and lineage go to DataHub | [rag_pipeline.md](docs/llm-platform/rag_pipeline.md) |
-| llama.cpp | Model servers on the host GPU (GTX 1070): Qwen3-8B Q4_K_M for chat and Qwen3-Embedding-0.6B for vectors | [llm_platform.md](docs/llm-platform/llm_platform.md) |
-| llm-d | The InferencePool `qwen3-8b` and its endpoint picker, which chooses a model server for each prompt | [llm_platform.md](docs/llm-platform/llm_platform.md) |
+| NGINX Ingress | Every UI and the Web API on `*.cvinhnguyen.duckdns.org`: Let's Encrypt HTTPS, basic auth, rate limits | [edge_security.md](docs/operations/edge_security.md) |
 | Support chat | The page the support staff open (`support.<domain>`, behind NGINX). It sends each question to the gateway route `/a2a/coordinator` and adds its API key on the server side, so the gateway is the first stop of a question, before any agent | [agents.md](docs/llm-platform/agents.md) |
 | agentgateway | The one entry for every agent call: the support chat's question (`/a2a/coordinator`), LLM prompts (`/v1`), tool calls (MCP, `/mcp`) and agent-to-agent calls (A2A). Each caller sends its own API key; the gateway uses it to decide which routes and tools that agent may call, limits its requests and tokens per minute, and masks card numbers, emails, phone numbers and citizen IDs before a prompt reaches the model | [llm_platform.md](docs/llm-platform/llm_platform.md), [agents.md](docs/llm-platform/agents.md) |
-| card-data-mcp, fraud-score-mcp, policy-rag-mcp | The agents' tools: three MCP servers from one FastAPI code base (pydantic, `/healthz` + `/readyz` probes, async), one Helm release each. card-data returns a card's features and a policy chunk by id (the Web API), fraud-score asks the Scoring API, policy-rag searches the policies | [agents.md](docs/llm-platform/agents.md) |
-| NGINX Ingress | Every UI and the Web API on `*.cvinhnguyen.duckdns.org`: Let's Encrypt HTTPS, basic auth, rate limits | [edge_security.md](docs/operations/edge_security.md) |
 | Coordinator agent | Receives the support staff's question from the gateway and asks the two specialist agents over A2A | [agents.md](docs/llm-platform/agents.md) |
 | Card-data and risk agents | kagent agents that call their MCP tools through the gateway; 2 to 4 replicas each, scaled by KEDA | [agents.md](docs/llm-platform/agents.md) |
+| card-data-mcp, fraud-score-mcp, policy-rag-mcp | The agents' tools: three MCP servers from one FastAPI code base (pydantic, `/healthz` + `/readyz` probes, async), one Helm release each. card-data returns a card's features and a policy chunk by id, and is also the Web API; fraud-score asks the Scoring API; policy-rag searches the policies | [agents.md](docs/llm-platform/agents.md) |
+| llm-d | The InferencePool `qwen3-8b` and its endpoint picker, which chooses a model server for each prompt | [llm_platform.md](docs/llm-platform/llm_platform.md) |
+| llama.cpp | Model servers on the host GPU (GTX 1070): Qwen3-8B Q4_K_M for chat and Qwen3-Embedding-0.6B for vectors | [llm_platform.md](docs/llm-platform/llm_platform.md) |
+| RAG data pipeline | Airflow `rag_ingest`: the bank documents become 57 chunks, each with a vector of 1024 numbers, stored in Feast `card_support_kb` (pgvector online, Parquet offline); 7 checks and lineage go to DataHub | [rag_pipeline.md](docs/llm-platform/rag_pipeline.md) |
 | Agent Substrate | Sandboxed copies of the agents: one gVisor sandbox per conversation, restored from a warm snapshot on a shared worker pool | [agents.md](docs/llm-platform/agents.md#sandboxed-agents-on-agent-substrate-warm-up) |
 | agentregistry | Catalog of the agents and the three MCP servers they use, for people; not on the call path | [agents.md](docs/llm-platform/agents.md#agent-registry) |
 | Operations | Prometheus + Grafana (metrics), VictoriaLogs (logs), Jaeger (traces), Vault (secrets) | [observability.md](docs/operations/observability.md), [edge_security.md](docs/operations/edge_security.md) |
@@ -180,13 +178,13 @@ flow has its own colour, letter and numbering:
 
 ![System diagram, Layers 1 and 2: deployable units and the numbered data flows between them](docs/images/platform-system-layers-1-2.png)
 
-| Flow | Who / when | Path |
-|---|---|---|
-| **S** Payment scoring | end user, every authorization | card network -> Scoring API (features from Redis, score from KServe) -> decision; every decision logged to Kafka |
-| **R** Streaming features | continuous | Kafka -> Flink -> Kafka -> push jobs -> Redis (online) and Delta (offline) |
-| **B** Batch data | daily, Airflow | Postgres + export files -> DP1 (bronze) -> DP2 silver pipeline (silver) -> DP2 gold pipeline (gold) -> DP3 (feat_*) -> materialize pipeline -> Redis; each one starts on the dataset event of the zone it reads |
-| **T** Training and deploy | ML engineer | lakehouse -> notebook / training pipeline -> MLflow -> model image -> KServe |
-| **M** Monitoring and retraining | live + daily | KServe payload logger -> Knative Broker -> Drift API (PSI); data drift pipeline (PR-AUC, PSI) -> MLflow -> training pipeline run |
+| Letter | Flow | Who / when | Path |
+|---|---|---|---|
+| S | Payment scoring | end user, every authorization | card network -> Scoring API (features from Redis, score from KServe) -> decision; every decision logged to Kafka |
+| R | Streaming features | continuous | Kafka -> Flink -> Kafka -> push jobs -> Redis (online) and Delta (offline) |
+| B | Batch data | daily, Airflow | Postgres + export files -> DP1 (bronze) -> DP2 silver pipeline (silver) -> DP2 gold pipeline (gold) -> DP3 (`feat_*`) -> materialize pipeline -> Redis; each one starts on the dataset event of the zone it reads |
+| T | Training and deploy | ML engineer | lakehouse -> notebook / training pipeline -> MLflow -> model image -> KServe |
+| M | Monitoring and retraining | live + daily | KServe payload logger -> Knative Broker -> Drift API (PSI); data drift pipeline (PR-AUC, PSI) -> MLflow -> training pipeline run |
 
 Every numbered arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows).
 
@@ -200,12 +198,12 @@ and vectors that the RAG data pipeline writes into a second Feast project (pgvec
 
 ![System diagram, Layer 3: agents, gateway, model servers, RAG data pipeline, CI/CD and observability, numbered per flow](docs/images/platform-system-layer-3.png)
 
-| Flow | Who / when | Path |
-|---|---|---|
-| **A** Agent conversation | support staff, every question | NGINX -> support chat -> gateway -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP servers card-data (Redis, pgvector), fraud-score (Scoring API), policy-rag (embeddings, pgvector); LLM calls -> gateway -> llm-d -> llama.cpp |
-| **K** Knowledge ingest | RAG data pipeline `rag_ingest`, per release | bank documents (S3) -> chunks -> embeddings -> pgvector online + Parquet offline -> DataHub checks and lineage |
-| **C** CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse) -> signed image in the registry -> helm --atomic -> eval gate through the gateway -> Langfuse experiment |
-| **O** Observability and scaling | continuous | gateway + MCP metrics -> Prometheus -> Grafana and KEDA (agent replicas 2-4); agent spans -> Jaeger |
+| Letter | Flow | Who / when | Path |
+|---|---|---|---|
+| A | Agent conversation | support staff, every question | NGINX -> support chat -> gateway -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP servers card-data (Redis, pgvector), fraud-score (Scoring API), policy-rag (embeddings, pgvector); LLM calls -> gateway -> llm-d -> llama.cpp |
+| K | Knowledge ingest | RAG data pipeline `rag_ingest`, per release | bank documents (S3) -> chunks -> embeddings -> pgvector online + Parquet offline -> DataHub checks and lineage |
+| C | CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse) -> signed image in the registry -> helm --atomic -> eval gate through the gateway -> Langfuse experiment |
+| O | Observability and scaling | continuous | gateway + MCP metrics -> Prometheus -> Grafana and KEDA (agent replicas 2-4); agent spans -> Jaeger |
 
 Every Layer 3 arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows-layer-3).
 
@@ -222,11 +220,10 @@ VM, the namespaces of the kind cluster, the Azure resources of an IaC run, and t
 | Azure (`rg-cardfraud-dev`, Poland Central) | during an IaC run only: Terraform creates the network, a VM, AKS and a container registry; Ansible deploys the fraud model server and node_exporter to the VM; AKS runs the same model image from the registry. `terraform destroy` removes all of it | [iac.md](docs/operations/iac.md) |
 | SaaS | GitHub (Jenkins polls it), Langfuse Cloud EU (agent prompts, eval experiments), Groq (side B of the LLM A/B test), Let's Encrypt with DuckDNS (the HTTPS certificate) | [cicd.md](docs/operations/cicd.md), [ab_testing.md](docs/llm-platform/ab_testing.md), [edge_security.md](docs/operations/edge_security.md) |
 
-The rest of the platform is containers and Helm charts that could run on Azure too. The Azure for Students
-subscription keeps it on the PC: 6 vCPU and 3 public IPs per region, a quota of 0 for the T4, A10, A100 and H100 GPU
-families, and $100 of credit, which a 16 GB VM would use up in about 18 days
-([what would move where, and the numbers](docs/operations/iac.md#why-not-all-of-it-on-azure)). Diagram sources:
-`python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG next to each PNG).
+The rest of the platform is containers and Helm charts that could run on Azure too. The limits of the Azure for
+Students subscription keep it on the PC: 6 vCPU and 3 public IPs per region, a quota of 0 for the T4, A10, A100 and H100
+GPU families, and $100 of credit, which a 16 GB VM would use up in about 18 days ([what would move where, and the
+numbers](docs/operations/iac.md#why-not-all-of-it-on-azure)).
 
 ## Repo structure
 
@@ -234,7 +231,7 @@ Grouped by role: data pipelines (Layer 1), ML code (Layer 2), online services, a
 paths differ from the paths inside the containers (`pipelines/spark/` is `/opt/jobs`, `ml/` is `/opt/ml` in the ML
 image).
 
-```
+```text
 pipelines/            Layer 1 data pipelines, and the Layer 3 RAG pipeline's CI
   airflow/            DAGs (DP1-DP3, DataHub ingestion, Feast materialization, drift monitoring, rag_ingest), connections/variables bootstrap
   spark/              Spark jobs (mounted at /opt/jobs), benchmarks (skew, storage layout, 100 GB)
@@ -273,8 +270,17 @@ docs/                 architecture.md, then one folder per area (data-platform/,
 
 ## Quick start
 
+The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server
+(`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG
+pipeline.
+
+Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to generate, `check_data.py` needs ~4.3 GB
+RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems:
+[docs/data-platform/data_characteristics.md](docs/data-platform/data_characteristics.md).
+
 From the repo root, with Docker and Python 3. The commands use the Windows venv path `.venv/Scripts`; on macOS or
-Linux it is `.venv/bin`:
+Linux it is `.venv/bin`. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are
+not rewritten:
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
@@ -286,7 +292,7 @@ docker compose -f infra/docker-compose.yaml --profile core up -d
 .venv/Scripts/python generator/load_source.py                 # Postgres core_banking (127.0.0.1:5433) + s3://core-banking-export
 .venv/Scripts/python generator/producer.py --speed 200            # replay card_authorizations into Kafka (--topic app_events, --replay-from, --limit)
 
-# Batch stack: Spark + Hive Metastore + Trino, then the DP1, DP2 and DP3 jobs by hand
+# Batch stack: Spark + Hive Metastore + Trino, then the DP1 job and DP2's silver and labels jobs by hand
 docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build
 docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/ingest_bronze.py --txn-root s3a://lakehouse/bronze
 .venv/Scripts/python infra/init_lakefs.py                     # the export table moves under lakeFS (zero-copy); later loads: DP1 branches
@@ -319,10 +325,12 @@ kubectl -n kubeflow port-forward svc/ml-pipeline 31888:8888 &      # the KFP API
 python ml/pipelines/train_fraud_model.py --run --label-as-of 2026-10-15                # see docs/ml-platform/ml_training.md
 ```
 
-### Layer 3
+### Start Layer 3
 
-The model servers run on the host first (llama.cpp start commands in [docs/llm-platform/llm_platform.md](docs/llm-platform/llm_platform.md#start-the-model-servers)),
-then the cluster scripts in this order; each is idempotent and reads its secrets from `infra/.env`.
+Start the model servers on the host first (llama.cpp start commands in
+[docs/llm-platform/llm_platform.md](docs/llm-platform/llm_platform.md#start-the-model-servers)), then run the cluster
+scripts in this order. Each script is idempotent and reads its secrets from `infra/.env`. The `rag_ingest` line needs
+Airflow (profile `orch`); see the note on memory at the top of the Quick start.
 
 ```bash
 sh infra/k8s/vault.sh                  # Vault + External Secrets; secrets.sh writes every secret into Vault
@@ -334,15 +342,39 @@ sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines
 arctl apply -f agents/registry/catalog.yaml   # the registry catalog (kubectl -n agentregistry port-forward svc/agentregistry 12121:12121)
 ```
 
-By hand instead of Jenkins: `docker build --target runtime -t localhost:5001/card-support-mcp:<tag> services/card_support_mcp`,
-push it, then for each server `s` in card-data, fraud-score, policy-rag:
-`helm upgrade --install $s-mcp services/card_support_mcp/chart -f services/card_support_mcp/chart/values-$s.yaml -n card-support --atomic --set image.tag=<tag>`,
-then `helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml` and
-the same with `card-support-coordinator` / `values-coordinator.yaml`.
+By hand instead of Jenkins:
 
-UIs: Spark master http://127.0.0.1:8080, running job http://127.0.0.1:4040, finished jobs http://127.0.0.1:18080, Trino http://127.0.0.1:8090, lakeFS http://127.0.0.1:8001, Flink http://127.0.0.1:8088, Airflow http://127.0.0.1:8082 (user `admin`), DataHub http://127.0.0.1:9002 (user `datahub`), MLflow http://127.0.0.1:5000, Jupyter http://127.0.0.1:8899 (token `JUPYTER_TOKEN`), KFP UI http://127.0.0.1:31880 (port-forward, `infra/k8s/platform.sh`), Scoring API http://127.0.0.1:8000/docs, Drift API http://127.0.0.1:8002/docs, Jenkins http://127.0.0.1:8095 (user `admin`); Layer 3 behind NGINX: https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login); passwords are in `infra/.env`. The 8 GB Docker VM does not hold every profile at once: run `stream` on its own, keep `trino` and the Thrift Server (`dbt` profile) off while `orch` + `gov` run, and stop the kind cluster while Airflow and DataHub run for the RAG pipeline. From Git Bash, prefix `docker compose exec` with `MSYS_NO_PATHCONV=1` so `/opt/...` paths are not rewritten.
+```bash
+docker build --target runtime -t localhost:5001/card-support-mcp:<tag> services/card_support_mcp
+docker push localhost:5001/card-support-mcp:<tag>
+for s in card-data fraud-score policy-rag; do
+  helm upgrade --install $s-mcp services/card_support_mcp/chart -f services/card_support_mcp/chart/values-$s.yaml -n card-support --atomic --set image.tag=<tag>
+done
+helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml
+helm upgrade --install card-support-coordinator agents/chart -n kagent -f agents/chart/values-coordinator.yaml
+```
 
-Data volume is set in `generator/config.yaml` (`volume`, ~1 GB: about 7 min to generate, `check_data.py` needs ~4.3 GB RAM). For a quick smoke test: `generate.py --scale 0.05`. What the data contains and the measured problems: [docs/data-platform/data_characteristics.md](docs/data-platform/data_characteristics.md).
+### UIs
+
+Passwords are in `infra/.env`.
+
+| UI | Address |
+|---|---|
+| Spark master | http://127.0.0.1:8080 |
+| Spark, running job | http://127.0.0.1:4040 |
+| Spark, finished jobs | http://127.0.0.1:18080 |
+| Trino | http://127.0.0.1:8090 |
+| lakeFS | http://127.0.0.1:8001 |
+| Flink | http://127.0.0.1:8088 |
+| Airflow | http://127.0.0.1:8082 (user `admin`) |
+| DataHub | http://127.0.0.1:9002 (user `datahub`) |
+| MLflow | http://127.0.0.1:5000 |
+| Jupyter | http://127.0.0.1:8899 (token `JUPYTER_TOKEN`) |
+| KFP UI | http://127.0.0.1:31880 (port-forward, `infra/k8s/platform.sh`) |
+| Scoring API | http://127.0.0.1:8000/docs |
+| Drift API | http://127.0.0.1:8002/docs |
+| Jenkins | http://127.0.0.1:8095 (user `admin`) |
+| Layer 3, behind NGINX | https://agents, registry, grafana, logs, traces and api `.cvinhnguyen.duckdns.org` (user `admin`, `EDGE_ADMIN_PASSWORD`; Grafana has its own login) |
 
 ## Docs
 
@@ -350,7 +382,10 @@ Start with the [architecture](docs/architecture.md): every diagram explained, ar
 grouped by area; each one opens with what that part does and why the bank needs it, then how it works, how to run it
 and what was measured.
 
-**Layer 1, data platform** ([docs/data-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/data-platform))
+### Data platform (Layer 1)
+
+Folder:
+[docs/data-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/data-platform)
 
 | Doc | What it tells you |
 |---|---|
@@ -362,10 +397,13 @@ and what was measured.
 | [Flink jobs](docs/data-platform/flink_jobs.md) | the streaming jobs: late events, duplicates, live features, the hot key, each checked against the truth |
 | [DataHub](docs/data-platform/datahub.md) | the data catalog: every table, where it came from, its check results |
 | [OpenLineage](docs/data-platform/openlineage.md) | how every Spark job reports what it read and wrote, without lineage code |
-| Novel idea 1: [Flink CEP](docs/data-platform/novel_flink_cep.md) | account takeover patterns found in seconds with `MATCH_RECOGNIZE` |
-| Novel idea 2: [Write-Audit-Publish](docs/data-platform/novel_lakefs_wap.md) | the nightly export is checked on a lakeFS branch, so a broken export never reaches readers |
+| Layer 1 novel idea 1: [Flink CEP](docs/data-platform/novel_flink_cep.md) | account takeover patterns found in seconds with `MATCH_RECOGNIZE` |
+| Layer 1 novel idea 2: [Write-Audit-Publish](docs/data-platform/novel_lakefs_wap.md) | the nightly export is checked on a lakeFS branch, so a broken export never reaches readers |
 
-**Performance** ([docs/performance/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/performance))
+### Performance
+
+Folder:
+[docs/performance/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/performance)
 
 | Doc | What it tells you |
 |---|---|
@@ -374,7 +412,10 @@ and what was measured.
 | [Docker optimization](docs/performance/docker_optimization.md) | smaller images that start faster, and the jars baked in |
 | [The 100 GB run](docs/performance/scale_100g.md) | what breaks at bank scale and how the jobs were changed to finish |
 
-**Layer 2, ML platform** ([docs/ml-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/ml-platform))
+### ML platform (Layer 2)
+
+Folder:
+[docs/ml-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/ml-platform)
 
 | Doc | What it tells you |
 |---|---|
@@ -383,7 +424,10 @@ and what was measured.
 | [Serving](docs/ml-platform/serving.md) | how a payment gets its decision in milliseconds: Scoring API, KServe, thresholds, fallback |
 | [Drift](docs/ml-platform/drift.md) | how the platform sees the model getting worse, and when it retrains |
 
-**Layer 3, LLM and agent platform** ([docs/llm-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/llm-platform))
+### LLM and agent platform (Layer 3)
+
+Folder:
+[docs/llm-platform/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/llm-platform)
 
 | Doc | What it tells you |
 |---|---|
@@ -392,14 +436,17 @@ and what was measured.
 | [Agents](docs/llm-platform/agents.md) | the agents and their tools, one question followed end to end, who may call what |
 | [RAG pipeline](docs/llm-platform/rag_pipeline.md) | how the bank's documents become searchable text for the agents |
 | [A/B testing](docs/llm-platform/ab_testing.md) | how a new model or model config is tried on part of the traffic first |
-| Novel idea 1: [Eval gate](docs/llm-platform/novel_eval_gate.md) | every agent release answers a test set; below 0.6 accuracy it rolls back |
+| Layer 3 novel idea 1: [Eval gate](docs/llm-platform/novel_eval_gate.md) | every agent release answers a test set; below 0.6 accuracy it rolls back |
 
-**Operations** ([docs/operations/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/operations))
+### Operations
+
+Folder:
+[docs/operations/](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/docs/operations)
 
 | Doc | What it tells you |
 |---|---|
 | [CI/CD](docs/operations/cicd.md) | the five Jenkins pipelines: what each tests, builds and deploys, and what happens on a bad release |
-| Novel idea 2: [Only signed images run](docs/operations/novel_supply_chain.md) | the MCP server image is signed in CI and the cluster refuses unsigned ones in namespace `card-support` |
+| Layer 3 novel idea 2: [Only signed images run](docs/operations/novel_supply_chain.md) | the MCP server image is signed in CI and the cluster refuses unsigned ones in namespace `card-support` |
 | [Testing](docs/operations/testing.md) | the tests of the APIs and MCP servers: kinds, coverage, mutation, load |
 | [Edge and secrets](docs/operations/edge_security.md) | HTTPS, login and rate limits in front of every UI; secrets in Vault |
 | [Observability](docs/operations/observability.md) | the dashboards, logs and traces, and what each one shows |

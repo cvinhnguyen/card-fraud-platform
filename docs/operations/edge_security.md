@@ -1,9 +1,9 @@
 # Edge routing, HTTPS and secrets
 
 The platform holds card data, so the way in has to be one door that is encrypted, asks who you are and cannot be
-flooded, and no password may sit in the code. Nothing in the cluster is reached through a port-forward or a NodePort
-by people: every UI and the public Web API sit
-behind one NGINX Ingress Controller, on their own host name under a real domain, with HTTPS, a login and a rate limit.
+flooded, and no password may sit in the code. People reach nothing in the cluster through a port-forward or a
+NodePort. Every UI and the public Web API sit behind one NGINX Ingress Controller, each on its own host name under a
+real domain, with HTTPS, a login and a rate limit.
 Every secret the platform uses lives in HashiCorp Vault and reaches the cluster through the External Secrets
 Operator (ESO), which copies each one into a Kubernetes Secret for the pods that need it.
 
@@ -35,10 +35,10 @@ flowchart LR
 
 The edge is the front door of Layer 3 (LLM and agent platform) in the kind cluster, the A1 arrow of the Layer 3
 picture ([architecture.md](../architecture.md#system-diagram-layer-3)). A browser or a client reaches the UIs
-(support chat, kagent, agentregistry, Grafana, VictoriaLogs, Jaeger) and the card support Web API only through NGINX, each on its
-own host name under the domain. NGINX ends the HTTPS, asks for the login and limits the request rate, then passes the
-request to the service. Vault and External Secrets supply what NGINX and the pods need: the htpasswd file, the
-certificate and every API key or password ([agents.md](../llm-platform/agents.md), [cicd.md](cicd.md)).
+(support chat, kagent, agentregistry, Grafana, VictoriaLogs, Jaeger) and the card support Web API only through NGINX,
+each on its own host name under the domain. NGINX ends the HTTPS, asks for the login and limits the request rate, then
+passes the request to the service. Vault and External Secrets supply what NGINX and the pods need: the htpasswd file,
+the certificate and every API key or password ([agents.md](../llm-platform/agents.md), [cicd.md](cicd.md)).
 
 ## How it works
 
@@ -48,8 +48,9 @@ certificate and every API key or password ([agents.md](../llm-platform/agents.md
 2. The domain `cvinhnguyen.duckdns.org` points at `127.0.0.1` (`tls.sh` sets it through the DuckDNS API). One
    Let's Encrypt wildcard certificate covers every host. The lego tool gets it with the DNS-01 challenge through the
    DuckDNS API, because the machine is not reachable from the internet ([Domain and HTTPS](#domain-and-https)).
-3. Every host asks for a login (basic auth with the user `admin`; Grafana uses its own login) and allows 20 requests
-   per second per client IP, the Web API and the support chat 5. Above that NGINX answers 429 ([Login and rate limit](#login-and-rate-limit)).
+3. Every host asks for a login (basic auth with the user `admin`; Grafana uses its own login). NGINX allows 20
+   requests per second per client IP, and 5 for the Web API and the support chat. Above that it answers 429
+   ([Login and rate limit](#login-and-rate-limit)).
 4. The Web API publishes only `/v1`, `/healthz` and the OpenAPI page. The MCP endpoint stays reachable only through
    agentgateway, and `/metrics` only by Prometheus inside the cluster.
 5. Every secret is written once into Vault from the gitignored `infra/.env`. External Secrets copies each one into a
@@ -70,7 +71,8 @@ sh infra/k8s/secrets.sh   # after a value in infra/.env changes or a namespace i
 ## NGINX Ingress Controller
 
 F5 NGINX Ingress Controller 5.6.3 (chart 2.7.3) runs on the kind node's ports 80 and 443, which
-[`infra/k8s/kind.yaml` L12-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kind.yaml#L12-L14)
+[`infra/k8s/kind.yaml`
+L12-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kind.yaml#L12-L14)
 maps to `127.0.0.1`.
 [`infra/k8s/edge.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/edge.sh)
 installs it and then the small chart
@@ -90,14 +92,12 @@ by
 | `registry.<domain>` | agentregistry UI | C41 | basic auth | 20 r/s, burst 60 |
 | `api.<domain>` | card support Web API, only `/v1`, `/healthz` and the OpenAPI page (`/docs`, `/openapi.json`) | C43 | basic auth | 5 r/s, burst 10 |
 
-The annotations in the template do the work: `nginx.org/basic-auth-secret` points at `edge-basic-auth` (an htpasswd
-file for the user `admin`, from Vault), `nginx.org/limit-req-rate` and `limit-req-burst` set the per-IP limit and
-`limit-req-reject-code: 429` the answer above it, `redirect-to-https` sends plain HTTP to HTTPS. The Web API route
-lists its paths instead of `/` (`/v1` and `/healthz`, plus `/docs` and `/openapi.json` for the OpenAPI page): the MCP
-endpoint is only reachable through agentgateway (with an agent's key) and `/metrics` only by Prometheus inside the
-cluster.
+The annotations in the template do the work. `nginx.org/basic-auth-secret` points at `edge-basic-auth`, an htpasswd
+file for the user `admin` from Vault. `nginx.org/limit-req-rate` and `limit-req-burst` set the per-IP limit, and
+`limit-req-reject-code: 429` sets the answer above it. `redirect-to-https` sends plain HTTP to HTTPS.
 
-[`infra/k8s/edge/templates/ingresses.yaml` L9-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/edge/templates/ingresses.yaml#L9-L29):
+[`infra/k8s/edge/templates/ingresses.yaml`
+L9-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/edge/templates/ingresses.yaml#L9-L29):
 
 ```yaml
   annotations:
@@ -123,9 +123,12 @@ spec:
     - hosts: [{{ printf "%s.%s" $r.host $.Values.domain }}]   # no secretName: the controller's wildcard TLS secret
 ```
 
-The Web API route sends the public paths to the card-data MCP server (the Web API that pulls data by id; the other
-two servers are reached only through agentgateway),
-[`infra/k8s/edge/values.yaml` L54-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/edge/values.yaml#L54-L65):
+The Web API route lists its paths instead of `/` (`/v1` and `/healthz`, plus `/docs` and `/openapi.json` for the
+OpenAPI page) and sends them to the card-data MCP server, the Web API that pulls data by id. The other two servers are
+reached only through agentgateway. The MCP endpoint is only reachable through agentgateway (with an agent's key), and
+`/metrics` only by Prometheus inside the cluster,
+[`infra/k8s/edge/values.yaml`
+L54-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/edge/values.yaml#L54-L65):
 
 ```yaml
   - name: web-api             # Web API that pulls data by id: card data and policy chunks (MCP server card-data)
@@ -142,17 +145,19 @@ two servers are reached only through agentgateway),
       - {path: /openapi.json, type: Exact}
 ```
 
-The controller and the Ingresses in the cluster (the last line is KServe's own Istio ingress from
-[serving.md](../ml-platform/serving.md), not part of the edge). The screenshot predates the `support-chat` Ingress, the
-seventh route:
+The next screenshot shows the controller and the Ingresses in the cluster. Its last line is KServe's own Istio ingress
+from [serving.md](../ml-platform/serving.md), not part of the edge. The screenshot predates the `support-chat` Ingress,
+the seventh route:
 
 ![Git Bash: the NGINX Ingress Controller pod and service, and the six Ingresses of class nginx with their hosts on ports 80 and 443](../images/edge_ingress.png)
 
-Every host opened in Chrome, logged in as `admin`, one screenshot per host (the support chat came later and has no screenshot
-yet; its path is in [agents.md](../llm-platform/agents.md#support-chat-gateway-first)). First
+The screenshots below open each host in Chrome, logged in as `admin`, one per host. The support chat came later and has
+no screenshot yet; its path is in [agents.md](../llm-platform/agents.md#support-chat-gateway-first). First
 `https://agents.cvinhnguyen.duckdns.org` (C40, C42), the kagent UI with the card support agents:
 
 ![kagent UI over HTTPS at agents.cvinhnguyen.duckdns.org: the card support agents, each on model qwen3-8b](../images/edge_https_agents.png)
+
+The agents' chat UI over HTTPS is in [agents.md](../llm-platform/agents.md#chat-with-the-agents-kagent-ui).
 
 `https://registry.cvinhnguyen.duckdns.org` (C41), the agentregistry catalog:
 
@@ -184,7 +189,8 @@ runs lego v5.5.2 in a container with the DNS-01 challenge through the DuckDNS AP
 Vault, and External Secrets syncs them to `nginx-ingress/wildcard-tls`, NGINX's default wildcard TLS secret.
 Certificates last 90 days: re-run `tls.sh` within the last 30 (this one expires on 2027-01-18).
 
-[`infra/k8s/tls.sh` L22-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tls.sh#L22-L26):
+[`infra/k8s/tls.sh`
+L22-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tls.sh#L22-L26):
 
 ```sh
 # the token reaches the container through the environment (-e NAME without a value), not the command line
@@ -209,7 +215,7 @@ The next screenshot checks three things from Git Bash. First, the status code of
 wrong password and with the `admin` login (Grafana is not behind basic auth and redirects to its own login page).
 Second, the Web API paths: the routes listed above answer, and the server's MCP endpoint and its metrics are not
 published. Third, the rate limit: the Web API allows 5 requests per second per client IP with a burst of 10, and 40
-requests sent at once get 12 answers and 28 `429`. The password comes from the environment; only its variable name
+requests sent at once get 12 `200` and 28 `429`. The password comes from the environment; only its variable name
 appears:
 
 ![Git Bash: 401 / 401 / 200 on the four protected hosts and 302 on Grafana; /v1, /healthz and /docs answer 200, /mcp and /metrics are 404; 40 requests at once give 12 x 200 and 28 x 429](../images/edge_auth.png)
@@ -217,8 +223,6 @@ appears:
 The same limit in the browser, right after such a burst:
 
 ![NGINX answers 429 Too Many Requests on the Web API](../images/edge_rate_limit_429.png)
-
-The agents' chat UI over HTTPS is in [agents.md](../llm-platform/agents.md#chat-with-the-agents-kagent-ui).
 
 ## Secrets: HashiCorp Vault + External Secrets
 
@@ -229,19 +233,22 @@ installs Vault 2.0.4 (chart 0.34.1) and External Secrets Operator 2.11.0 and con
   `secret/card-fraud/<namespace>/<name>`.
 - External Secrets logs in to Vault with Kubernetes auth: the role `external-secrets` is bound to that operator's
   ServiceAccount and has the read-only policy `card-fraud-read` on `secret/card-fraud/*`
-  ([`infra/k8s/vault.sh` L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/vault.sh#L30-L34)).
-  External Secrets holds no Vault token. Vault itself runs in dev mode, so its root token is in its own Helm release
-  and pod environment (see [Limits](#limits)).
+  ([`infra/k8s/vault.sh`
+  L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/vault.sh#L30-L34)).
+  External Secrets holds no Vault token. Vault itself runs in dev mode, so its root token is in its own Helm release and
+  pod environment (see [Limits](#limits)).
 - [`infra/k8s/secrets.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh)
-  writes the values from the gitignored `infra/.env` into Vault (JSON on stdin to the HTTP API, never on a command
-  line or in a log) and one ExternalSecret per secret (ClusterSecretStore `vault`, refreshed hourly). Changing a value
-  in Vault changes it in the cluster within the hour.
+  writes the values from the gitignored `infra/.env` into Vault (JSON on stdin to the HTTP API, never on a command line
+  or in a log) and one ExternalSecret per secret (ClusterSecretStore `vault`, refreshed hourly). Changing a value in
+  Vault changes it in the cluster within the hour.
 - Values never enter git: `infra/.env` and `infra/.secrets/` are gitignored and
   [`infra/make_env.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/make_env.py)
-  generates random local values. The gateway keeps only SHA-256 hashes of its API keys.
+  generates random local values.
+- The gateway keeps only SHA-256 hashes of its API keys.
 
-One call per secret: the value goes to Vault, the ExternalSecret tells ESO where to read it
-([`infra/k8s/secrets.sh` L35-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L35-L55)):
+One call per secret: the value goes to Vault, the ExternalSecret tells External Secrets where to read it
+([`infra/k8s/secrets.sh`
+L35-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L35-L55)):
 
 ```sh
 secret() {
@@ -267,8 +274,9 @@ EOF
 }
 ```
 
-The NGINX login is one of them; only the apr1 hash of `EDGE_ADMIN_PASSWORD` is stored
-([`infra/k8s/secrets.sh` L73-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L73-L74)):
+The NGINX login is one of these secrets; only the apr1 hash of `EDGE_ADMIN_PASSWORD` is stored
+([`infra/k8s/secrets.sh`
+L73-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L73-L74)):
 
 ```sh
 htpasswd="admin:$(printf '%s' "$(val EDGE_ADMIN_PASSWORD)" | openssl passwd -apr1 -stdin)"
@@ -282,10 +290,9 @@ pod (`$VAULT_DEV_ROOT_TOKEN_ID` is expanded there, never typed or shown):
 
 The next screenshot lists the secrets in Vault (names only, `vault kv list` never prints values) and every
 ExternalSecret synced from them: 16 secrets in 7 namespaces, from the agents' gateway keys to the TLS certificate, all
-`SecretSynced`. It predates the MCP split (2026-10-24) and the support chat. Since then `card-data-mcp` and
-`policy-rag-mcp` have a Secret each in place of `card-support-mcp`'s, and the support chat's key
-`a2a-key-support-app` was added, so `infra/k8s/secrets.sh` writes 18 (17 without the optional Groq key). The secrets
-and their ExternalSecrets:
+`SecretSynced`. The screenshot predates the MCP split (2026-10-24) and the support chat. Since then `card-data-mcp`
+and `policy-rag-mcp` each have a Secret in place of `card-support-mcp`'s, and the support chat's key
+`a2a-key-support-app` was added. `infra/k8s/secrets.sh` now writes 18 secrets (17 without the optional Groq key):
 
 ![Git Bash: vault kv list of secret/card-fraud and its kagent folder, the ClusterSecretStore vault Valid, 16 ExternalSecrets SecretSynced](../images/vault_eso.png)
 

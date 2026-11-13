@@ -42,8 +42,8 @@ metrics to scale the agents ([agents.md](../llm-platform/agents.md)).
 
 ## Run it
 
-The script installs the stack after `llm-platform.sh`; it is idempotent and pins the versions. Without NGINX the UIs
-are reached with a port-forward:
+The script installs the stack after `llm-platform.sh`; it is idempotent and pins the versions. Until
+`infra/k8s/edge.sh` has run, the UIs are reached with a port-forward:
 
 ```bash
 sh infra/k8s/observability.sh
@@ -63,19 +63,19 @@ kubectl -n monitoring port-forward svc/jaeger 16686:16686                      #
 The four dashboards are code in
 [`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/dashboards)
 (`*.json`), loaded into ConfigMaps labelled `grafana_dashboard=1`, which Grafana's sidecar picks up
-([`infra/k8s/observability.sh` L20-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability.sh#L20-L25)).
+([`infra/k8s/observability.sh`
+L20-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability.sh#L20-L25)).
 The fourth one, A/B tests, is described in [ab_testing.md](../llm-platform/ab_testing.md).
 
 ## Web API metrics
 
 Dashboard "Card Support - Web API"
 ([`infra/k8s/dashboards/card-support-api.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/dashboards/card-support-api.json))
-is built from `http_requests_total` and `http_request_duration_seconds` of the three MCP servers
-(prometheus-fastapi-instrumentator,
-[`services/card_support_mcp/app/main.py` L137](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L137);
-jobs `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp`) and of the Scoring API. It shows requests per second per
-handler, failed requests per second (4xx and 5xx), requests and failures in the time range, and p95 latency per
-handler.
+is built from `http_requests_total` and `http_request_duration_seconds`. It reads them from the three MCP servers
+(prometheus-fastapi-instrumentator, [`services/card_support_mcp/app/main.py`
+L137](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L137);
+jobs `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp`) and from the Scoring API. It shows requests per second per
+handler, failed requests per second (4xx and 5xx), requests and failures in the time range, and p95 latency per handler.
 
 The screenshot was taken before the split into three servers, when all handlers ran under one job,
 `card-support-mcp`; the dashboard's job filter matches the three new jobs. It was not retaken: with Grafana started on
@@ -91,8 +91,8 @@ and REST calls through NGINX), 7 to the Scoring API, and 13 failures, the 404s a
 Grafana's "Node Exporter / Nodes" dashboard (from kube-prometheus-stack) shows CPU, load, memory, disk I/O, disk space
 and network of the kind node, which is the whole Docker VM; "Kubernetes / Compute Resources / Namespace (Pods)" breaks
 CPU and memory down per pod. In the node dashboard below, the load spike and the disk reads around 10:12 are the VM
-running out of page cache while Prometheus, Grafana and the agents ran together. The machine has 16 GB of RAM
-([README](../../README.md#deployment)):
+running out of page cache while Prometheus, Grafana and the agents ran together. The VM is the 8 GB Docker VM, on a
+machine with 16 GB of RAM ([README](../../README.md#deployment)):
 
 ![Node Exporter dashboard: CPU, load, memory, disk and network of the kind node, with a load spike and disk reads around 10:12](../images/obs_compute_node.png)
 
@@ -131,7 +131,8 @@ Dashboard "Card Support - Agent telemetry"
 
 Each MCP server counts and times every tool call in one wrapper that all its tools go through, the same code in the
 three servers. The two metrics
-([`services/card_support_mcp/app/main.py` L71-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L71-L74)):
+([`services/card_support_mcp/app/main.py`
+L71-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L71-L74)):
 
 ```python
 calls = Counter("card_support_tool_calls_total", "Tool calls by tool and outcome", ["tool", "outcome"],
@@ -141,7 +142,8 @@ latency = Histogram("card_support_tool_seconds", "Tool latency", ["tool"], regis
 ```
 
 The wrapper `run`
-([`services/card_support_mcp/app/main.py` L80-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L80-L93)):
+([`services/card_support_mcp/app/main.py`
+L80-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/main.py#L80-L93)):
 
 ```python
 async def run(tool: str, call):
@@ -160,10 +162,10 @@ async def run(tool: str, call):
     return result
 ```
 
-In the hour shown the gateway counted about 2 calls to the coordinator, 3 to the card data agent, 1 to the risk agent
-and 1 to its B variant; the MCP tools ran 8 `get_card_data`, 5 `search_policy` and 4 `score_payment` calls, and none
-failed ("No data" in the failure panels means no failed call in the range). The replica panel shows KEDA scaling the
-agents between 2 and 4; the drop to 1 at 13:16 comes from a manual pause of KEDA
+In the hour shown the gateway counted about 2 calls to the coordinator, 3 to card-data-agent, 1 to risk-agent and 1
+to its B variant, risk-agent-b; the MCP tools ran 8 `get_card_data`, 5 `search_policy` and 4 `score_payment` calls,
+and none failed ("No data" in the failure panels means no failed call in the range). The replica panel shows KEDA
+scaling the agents between 2 and 4; the drop to 1 at 13:16 comes from a manual pause of KEDA
 (`autoscaling.keda.sh/paused-replicas`) to free memory on this machine. The dashboard for that hour:
 
 ![Agent telemetry over one hour: calls per agent (coordinator 2, card data agent 3, risk agent 1, risk-agent-b 1), 8 get_card_data, 5 search_policy and 4 score_payment calls, no failures, tool outcomes and latency, KEDA replicas between 2 and 4](../images/obs_agents.png)
@@ -171,7 +173,8 @@ agents between 2 and 4; the drop to 1 at 13:16 comes from a manual pause of KEDA
 ## Logs
 
 VictoriaLogs keeps every pod's log lines with their Kubernetes labels, queried with LogsQL in its UI (`/select/vmui`).
-The query in the screenshot shows the MCP server and the gateway, filtered by namespace: the gateway's request log
+The query in the screenshot, taken on 2026-10-21 before the split into three servers, shows the MCP server and the
+gateway, filtered by namespace: the gateway's request log
 lines carry the route, the MCP method, the status and a `trace.id`, the key into Jaeger:
 
 ![VictoriaLogs: 103 log lines of the MCP server and the gateway in 5 minutes, filtered by namespace card-support or agentgateway-system](../images/obs_logs.png)
@@ -179,7 +182,8 @@ lines carry the route, the MCP method, the status and a `trace.id`, the key into
 ## Traces
 
 The gateway's spans come from one policy on the whole Gateway
-([`infra/k8s/tracing.yaml` L43-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tracing.yaml#L43-L56)):
+([`infra/k8s/tracing.yaml`
+L43-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tracing.yaml#L43-L56)):
 
 ```yaml
 # Gateway-wide (all routes): sample every request, a demo-sized load
@@ -214,9 +218,11 @@ LLM calls and MCP tool call, and the coordinator's last LLM call (1.8 s) writes 
 - When VictoriaLogs restarts, the Vector agent backs off and sends nothing until it is restarted itself
   (`kubectl -n monitoring rollout restart ds/victoria-logs-vector`).
 - Jaeger 2's API is `/api/v3/...` (`/api/services` is 404) and it keeps traces in memory (20,000 at most,
-  [`infra/k8s/tracing.yaml` L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tracing.yaml#L20)):
+  [`infra/k8s/tracing.yaml`
+  L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/tracing.yaml#L20)):
   a restart empties it.
 - Grafana needs 640Mi here: at 384Mi its search API timed out and the liveness probe killed it
-  ([`infra/k8s/observability-values.yaml` L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability-values.yaml#L15-L17)).
+  ([`infra/k8s/observability-values.yaml`
+  L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability-values.yaml#L15-L17)).
 
 Coursework rubric: A46 to A51.

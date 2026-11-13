@@ -3,10 +3,10 @@
 The agents' pipelines deploy a new system prompt as soon as it is promoted in Langfuse, and the smoke test only checks
 that an agent answers. Whether it still answers correctly was checked nowhere, and an LLM agent can pass every unit
 test, deploy cleanly and still get worse. The pipeline now evaluates the agent it just deployed on a fixed set of
-questions with known facts, records the run as a Langfuse experiment (one per deploy, comparable side by side), and
-rolls the release back when accuracy falls below a threshold. Not covered in EDAI: evaluation-driven deployment of LLM
-agents (offline evals as a gate in CD, continuous delivery) and Langfuse datasets and experiments (the course used Langfuse for tracing and
-prompt management only).
+questions with known facts, records each run as a Langfuse experiment (two per deploy, comparable side by side), and
+rolls the release back when accuracy falls below a threshold. Two things here are not covered in the EDAI course:
+evaluation-driven deployment of LLM agents (offline evals as a gate in continuous delivery, CD), and Langfuse datasets
+and experiments (the course used Langfuse for tracing and prompt management only).
 
 | | |
 |---|---|
@@ -15,6 +15,18 @@ prompt management only).
 | Reads | Langfuse prompt `card-support/risk-agent` (label `production`); `agents/eval/dataset.jsonl` (20 questions) |
 | Writes | Langfuse dataset `card-support/risk-agent` (items, one experiment per run, `accuracy` scores); `helm rollback` of release `card-support-data-agents` below the bar |
 | Related | [ab_testing.md](ab_testing.md), [agents.md](agents.md), [cicd.md](../operations/cicd.md) |
+
+## Where it fits
+
+The gate is a stage of the Jenkins pipeline that deploys the two data agents (the card data agent and the risk agent)
+([cicd.md](../operations/cicd.md#data-agents)), in Layer 3 (LLM and agent platform; arrow C6 in
+[architecture.md](../architecture.md#system-diagram-layer-3)). It runs after `helm upgrade`
+and the smoke test. It asks the risk agent the 20 questions through the gateway, the same way the coordinator does
+([agents.md](agents.md)), and stores the answers and their scores in Langfuse Cloud. When the score is too low, it
+rolls the release back, and the coordinator pipeline does not run. The A/B evaluations ([ab_testing.md](ab_testing.md))
+use the same questions and the same scoring.
+
+## How it works
 
 The gate in the release of the data agents, step by step:
 
@@ -27,30 +39,19 @@ flowchart LR
     g -->|"7. accuracy < 0.6"| rb["helm rollback + build fails"]
 ```
 
-## Where it fits
-
-The gate is a stage of the Jenkins pipeline that deploys the two data agents
-([cicd.md](../operations/cicd.md#data-agents)), in Layer 3 (LLM and agent platform; arrow C6 in
-[architecture.md](../architecture.md#system-diagram-layer-3)). It runs after `helm upgrade`
-and the smoke test. It asks the risk agent the 20 questions through the gateway, the same way the coordinator does
-([agents.md](agents.md)), and stores the answers and their scores in Langfuse Cloud. When the score is too low, it
-rolls the release back, and the coordinator pipeline does not run. The A/B evaluations ([ab_testing.md](ab_testing.md))
-use the same questions and the same scoring.
-
-## How it works
-
 1. The risk agent's system prompt lives in Langfuse. The label `production` marks the version to deploy.
-2. The pipeline pulls that prompt, deploys the agents with `helm upgrade --atomic`, and asks each agent one question
-   (the smoke test).
-3. The 20 eval questions, each with the facts a correct answer must state, are a Langfuse dataset.
-4. The gate asks the deployed risk agent every question twice, over A2A (agent-to-agent) through the gateway. An
+2. The pipeline pulls that prompt and deploys the agents with `helm upgrade --atomic`.
+3. It asks each agent one question (the smoke test).
+4. The 20 eval questions, each with the facts a correct answer must state, are a Langfuse dataset.
+5. The gate asks the deployed risk agent every question twice, over A2A (agent-to-agent) through the gateway. An
    answer is correct when it states every expected fact.
-5. Each run is saved as a Langfuse experiment, so every deploy can be compared with the ones before it, question by
+6. Each run is saved as a Langfuse experiment, so every deploy can be compared with the ones before it, question by
    question.
-6. When the mean accuracy is below 0.6, the build fails and the pipeline's failure handler runs `helm rollback`.
+7. When the mean accuracy is below 0.6, the build fails and the pipeline's failure handler runs `helm rollback`.
    An eval that cannot finish counts as failed too.
-7. Why twice: the agent samples at temperature 0.8, so one run of 12 questions moved by one or two answers from run
-   to run. 40 answers make a rollback by chance rare ([Why two runs](#why-two-runs-of-20-questions)).
+
+The gate asks twice because the agent samples at temperature 0.8: one run of the earlier 12 questions moved by one or
+two answers from run to run. 40 answers make a rollback by chance rare ([Why two runs](#why-two-runs-of-20-questions)).
 
 ## Run it
 
@@ -86,10 +87,10 @@ eval found answers that gave up without a search (step 6 explains it). The promp
 [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents)
 pulls the production prompts with
 [`agents/fetch_prompts.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/fetch_prompts.sh),
-validates the chart, deploys with `helm upgrade --atomic`
-([`agents/Jenkinsfile.data-agents` L53-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L53-L61)),
-asks each agent one question through the gateway (the smoke test,
-[`agents/Jenkinsfile.data-agents` L62-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L62-L84)),
+validates the chart, deploys with `helm upgrade --atomic` ([`agents/Jenkinsfile.data-agents`
+L53-L61](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L53-L61)),
+asks each agent one question through the gateway (the smoke test, [`agents/Jenkinsfile.data-agents`
+L62-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L62-L84)),
 then runs the eval gate. The stage view shows the gate on every deploy of 2026-10-24: #35 passed it in 6 min 25 s, #37
 failed it after 5 min 52 s (step 7), #39 was cut off when the PC crashed during its eval, and #40 passed in 4 min 45 s.
 The rows without stages are timer runs that found nothing to deploy:
@@ -99,10 +100,10 @@ The rows without stages are timer runs that found nothing to deploy:
 ### 4. The eval dataset is a Langfuse dataset
 
 [`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/dataset.jsonl)
-has 20 card-policy questions over four of the five bank documents (none from `faq`), each with the facts a correct answer must state (several
-accepted spellings: "100,000" / "100000" / "100.000"). The gate upserts them into the Langfuse dataset
-`card-support/risk-agent`, and the item ids make that idempotent
-([`agents/eval/langfuse_gate.py` L35-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/langfuse_gate.py#L35-L41)).
+has 20 card-policy questions over four of the five bank documents (none from `faq`), each with the facts a correct
+answer must state (several accepted spellings: "100,000" / "100000" / "100.000"). The gate upserts them into the
+Langfuse dataset `card-support/risk-agent`, and the item ids make that idempotent ([`agents/eval/langfuse_gate.py`
+L35-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/langfuse_gate.py#L35-L41)).
 In Langfuse each item is a question with its expected facts and the document it comes from:
 
 ![Langfuse dataset card-support/risk-agent: each item is a question with the expected facts and the document it comes from](../images/eval_dataset.png)
@@ -112,8 +113,8 @@ In Langfuse each item is a question with its expected facts and the document it 
 [`agents/eval/langfuse_gate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/langfuse_gate.py)
 (Langfuse Python SDK 5.0.3, `dataset.run_experiment`) asks the deployed risk agent each question over A2A through the
 gateway, as the coordinator does. An item evaluator scores `accuracy` 1 or 0 (every expected fact stated) and a run
-evaluator takes the average
-([`agents/eval/langfuse_gate.py` L43-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/langfuse_gate.py#L43-L52)):
+evaluator takes the average ([`agents/eval/langfuse_gate.py`
+L43-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/langfuse_gate.py#L43-L52)):
 
 ```python
 def task(*, item, **kwargs):
@@ -135,10 +136,11 @@ Jenkins holds only the Langfuse keys and the A2A key as credentials. The same da
 [A/B testing](ab_testing.md)).
 
 The stage runs the dataset twice (`--repeats 2`,
-[`agents/Jenkinsfile.data-agents` L96-L102](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L96-L102))
-and passes when the mean is at least `EVAL_MIN_ACCURACY = 0.6`
-([`agents/Jenkinsfile.data-agents` L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L19)).
-Build #32's console: run 1 scored 0.90, run 2 0.95, mean 0.93, pass, and the pipeline starts the coordinator's:
+[`agents/Jenkinsfile.data-agents`
+L96-L102](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L96-L102))
+and passes when the mean is at least `EVAL_MIN_ACCURACY = 0.6` ([`agents/Jenkinsfile.data-agents`
+L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L19)).
+Build #32's console: run 1 scored 0.90, run 2 0.95, mean 0.93, pass, and the pipeline starts the coordinator pipeline:
 
 ![Jenkins console of card-support-data-agents #32: run 2/2 accuracy 0.95, accuracy 0.93 over 2 runs of 20 questions (gate 0.60): pass, then the coordinator pipeline is scheduled](../images/eval_console_pass.png)
 
@@ -156,29 +158,27 @@ Two runs compared item by item, here the two runs of build #32 (0.95 and 0.90):
 ![Langfuse experiment comparison: per question, the accuracy of run 2/2 and run 1/2 of build #32](../images/eval_run_compare.png)
 
 The same view for build #20 (prompt v1, 0.58) against the first hand run (0.83) shows what the gate caught: questions
-such as "How long is an OTP valid?" scored 0, because the agent replied "the policy could not be checked" without
-searching. The prompt's own rule ("if its hits do not cover the question, say the policy could not be checked") gave
-it that exit; prompt v2 changed only that rule (step 1):
+such as "How long is an OTP valid?" scored 0, because the agent took the exit the prompt's rule gave it
+([Problem](#problem)) without searching; prompt v2 changed only that rule (step 1):
 
 ![Langfuse experiment comparison: build #20 (0.58) against the hand run (0.83), questions answered without a search score 0](../images/eval_run20.png)
 
 ### 7. Below the threshold the release goes back
 
 When the mean is below 0.6, the stage fails the build and the pipeline's failure handler runs `helm rollback` to the
-previous revision
-([`agents/Jenkinsfile.data-agents`](../../agents/Jenkinsfile.data-agents); in the builds shown here the gate stage
-ran the rollback itself, with the same result),
-so the coordinator pipeline does not run
-([`agents/Jenkinsfile.data-agents` L112-L116](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L112-L116)).
-Build #20's console:
+previous revision ([`agents/Jenkinsfile.data-agents`](../../agents/Jenkinsfile.data-agents)), so the coordinator
+pipeline does not run
+([`agents/Jenkinsfile.data-agents`
+L112-L116](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/Jenkinsfile.data-agents#L112-L116)).
+In the builds shown here the gate stage ran the rollback itself, with the same result. Build #20's console:
 
 ![Jenkins console of card-support-data-agents #20: accuracy 0.58 (gate 0.60): FAIL, helm rollback card-support-data-agents, Rollback was a success](../images/eval_console_fail.png)
 
 The release history shows the rollbacks the gate made: revision 9 "Rollback to 7" (build #27, an eval that could not
 finish because Jenkins was restarted: the gate fails closed) and revision 15 "Rollback to 13" (build #37, accuracy
 0.45). Revisions 16 and 17 are the deploys of #39 and #40. Helm keeps the last 10 revisions, so the rollback of #20
-(revision 5) is no longer listed; its console above shows it. Revisions made by Jenkins carry UTC times, the ones made
-by hand (11) local time:
+(revision 5) is no longer listed; its console above shows it. Revisions made by Jenkins carry UTC times; revision 11,
+made by hand, carries local time:
 
 ![helm history card-support-data-agents: revision 9 Rollback to 7 and revision 15 Rollback to 13, both from the eval gate, then revisions 16 and 17](../images/eval_helm_history.png)
 
@@ -203,10 +203,8 @@ under it (the LLM A/B canary, see [A/B testing](ab_testing.md)) made a quarter o
 not go on to the coordinator. Build #27 shows the other side of the same rule: an eval that cannot finish counts as a
 failed eval, so the release went back to the revision that was running before.
 
-Build #37 caught a fault in the tool layer. For 28 s no fraud-score pod was Ready (the Docker VM was overloaded, and
-both pods failed their readiness check of the Scoring API at once), the gateway's connections to that server were
-refused, and the risk agent failed the 22 questions it got in that window, policy questions included; the 18 it got
-before and after were all right ([agents.md](agents.md#gotchas)). Build #40 ran the same deploy once the platform was
+Build #37 caught a fault in the tool layer: for 28 s no fraud-score pod was Ready, and the risk agent failed the 22
+questions it got in that window ([agents.md](agents.md#gotchas)). Build #40 ran the same deploy once the platform was
 healthy and passed with 0.90 and 0.95.
 
 Builds #32 and #35 re-ran the gate after the tools moved to three MCP servers (one per tool family,
@@ -216,9 +214,9 @@ did not cost answer quality.
 ### Why two runs of 20 questions
 
 The agent samples at temperature 0.8, and one run of 12 questions moved by one or two answers from run to run (v1:
-0.58 to 0.83). With the bar one question below a true 0.67, an unchanged deploy could have been rolled back by chance
-(binomial: 28 % of the runs for an agent that is right 70 % of the time). 40 answers instead of 12 bring that to 6 %,
-and to almost nothing for v2 (about 0.9), without lowering the bar that caught build #20.
+0.58 to 0.83). The bar of 0.6 sat one question below 0.67 (8 of 12), so an unchanged deploy could have been rolled
+back by chance (binomial: 28 % of the runs for an agent that is right 70 % of the time). 40 answers instead of 12
+bring that to 6 %, and to almost nothing for v2 (about 0.9), without lowering the bar that caught build #20.
 
 ## Limits
 

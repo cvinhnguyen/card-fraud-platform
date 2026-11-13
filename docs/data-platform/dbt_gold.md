@@ -2,11 +2,11 @@
 
 Analysts, the fraud labels job and the feature pipeline all need the same clean, joined view of the business:
 customers with their history, cards, merchants, dates, and one fact row per settled transaction. That view is the
-gold star schema, and it is built in the second half of DP2 (data pipeline: bronze to silver and gold), the Airflow
-DAG (pipeline of tasks) `dp2_silver_to_gold`, by dbt on Spark. dbt is a SQL build tool: each table is a `SELECT` model, dbt renders the SQL, works out the build order from
-`ref()` / `source()`, runs it on Spark (Spark still does all the work), runs the tests, and writes docs and lineage
-for DataHub. The tables are `dim_customer` (SCD2: every past version of a customer kept),
-`dim_card`, `dim_merchant`, `dim_date` and the incremental `fact_transaction`.
+gold star schema. dbt on Spark builds it in `dp2_silver_to_gold`, the Airflow DAG (pipeline of tasks) that runs the
+second half of DP2 (data pipeline: bronze to silver and gold). dbt is a SQL build tool: each table is a `SELECT`
+model, dbt renders the SQL, works out the build order from `ref()` / `source()`, runs it on Spark (Spark still does
+all the work), runs the tests, and writes docs and lineage for DataHub. The tables are `dim_customer` (SCD2: every
+past version of a customer kept), `dim_card`, `dim_merchant`, `dim_date` and the incremental `fact_transaction`.
 
 | | |
 |---|---|
@@ -22,20 +22,20 @@ dbt reads silver (cleaned by `build_silver.py` in `dp2_bronze_to_silver`, the fi
 tables, and writes gold. In [architecture.md](../architecture.md#layer-1-the-data-platform-top-band) this is the
 DP2 gold pipeline.
 Silver stays in PySpark because the dedup window and the MERGE that keeps the row with the newest `created_ts` need
-DataFrame code; `mergeSchema` is
-in DP1 and the skew benchmark is its own job. Everything after silver that is "join and reshape" is dbt. The gold
-tables feed the fraud labels job, DP3's features ([spark_jobs.md](spark_jobs.md)) and the analysts' queries in Trino;
-dbt's tests run inside `dp2_silver_to_gold`, so a failing test stops it before `publish_gold`, and DP3, which
-runs on that event, does not build the features ([airflow.md](airflow.md)).
+DataFrame code. Two other Spark pieces stay outside dbt as well: `mergeSchema` is in DP1, and the skew benchmark is its
+own job. Everything after silver that is "join and reshape" is dbt. The gold tables feed the fraud labels job, DP3's
+features ([spark_jobs.md](spark_jobs.md)) and the analysts' queries in Trino. dbt's tests run inside
+`dp2_silver_to_gold`, so a failing test stops it before `publish_gold`. DP3 runs on the event `publish_gold` emits, so
+it does not build the features either ([airflow.md](airflow.md)).
 
 ## How it works
 
 1. The models are SQL files in `pipelines/dbt/models/`; each `ref()` to another model is a dependency, so dbt builds
    the dimensions before the fact that joins them.
 2. `dim_customer` is built from the source's version history of each customer: a new version starts only when a
-   tracked attribute changes (the province compared after normalization, so the 2025 renaming is not a move), and
-   each version has a valid-from and valid-to date, so a 2024 transaction still joins to the customer as they were in
-   2024.
+   tracked attribute changes (the city compared after normalization, so the 2025 renaming of old province names is not
+   a move), and each version has a valid-from and valid-to date, so a 2024 transaction still joins to the customer as
+   they were in 2024.
 3. `fact_transaction` is incremental: each run only processes the export dates it does not have yet.
 4. `dbt build` runs the tests right after each model (unique, not null, relationships between fact and dimensions, a
    reconciliation with silver) and skips everything downstream of a failure.
@@ -71,7 +71,8 @@ In Airflow, `dp2_silver_to_gold` runs `dbt_build` and `dbt_docs`. It starts on t
 | [`pipelines/airflow/dags/dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp2_silver_to_gold.py) | `dbt_build` + `dbt_docs` tasks, run when validated silver is published |
 
 The fact reads only the export dates it does not hold yet and MERGEs them on `transaction_id`
-([`pipelines/dbt/models/gold/fact_transaction.sql` L4-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/fact_transaction.sql#L4-L17)):
+([`pipelines/dbt/models/gold/fact_transaction.sql`
+L4-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/fact_transaction.sql#L4-L17)):
 
 ```sql
 {{ config(
@@ -94,11 +95,11 @@ with txn as (
 
 To have something to compare with,
 [`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py)
-builds the same five tables by hand in PySpark (the way the course writes Spark jobs) into the database
-`gold_pyspark`, and runs the same 22 checks as assertions
-([`pipelines/spark/build_gold_pyspark.py` L82-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py#L82-L110)).
-Then it compares both results row by row, with `EXCEPT ALL` in both directions
-([`pipelines/spark/build_gold_pyspark.py` L113-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py#L113-L120)):
+builds the same five tables by hand in PySpark (the way the course writes Spark jobs) into the database `gold_pyspark`,
+and runs the same 22 checks as assertions ([`pipelines/spark/build_gold_pyspark.py`
+L82-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py#L82-L110)).
+Then it compares both results row by row, with `EXCEPT ALL` in both directions ([`pipelines/spark/build_gold_pyspark.py`
+L113-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py#L113-L120)):
 
 ```python
 def compare_with_dbt(spark: SparkSession) -> None:
@@ -119,8 +120,7 @@ def compare_with_dbt(spark: SparkSession) -> None:
 | `dim_date` | 1,019 | 1,019 | 8 | 0 | 0 |
 | `fact_transaction` | 7,879,773 | 7,879,773 | 16 | 0 | 0 |
 
-dbt-spark produces exactly the rows hand-written Spark produces. The two differ in how the work is written down and
-what it costs to run.
+dbt-spark produces exactly the rows hand-written Spark produces.
 
 ## What it costs to write and run
 
@@ -136,16 +136,17 @@ the USB HDD), full build of all five tables:
 | Docs + lineage graph | none | `dbt docs generate`: column docs, model DAG (below), artifacts DataHub ingests |
 | A failing test | stops at the first failed assert | runs every test, reports each one, skips only the models downstream of a failure |
 | Full build + tests | 171 s build + 87 s checks = 258 s (inside the job) | `dbt build --full-refresh`: 477 s (wall, incl. starting the session) |
-| Daily run | full rebuild every day (as above) | `dbt build`, nothing new: 405 s; in Airflow 158 s for one new export date (SSD, before the disk move) |
+| Daily run | full rebuild every day (as above) | `dbt build`, nothing new: 405 s; in Airflow 158 s for one new export date (on the SSD, before Docker's disk moved to the USB HDD) |
 
 dbt is slower to run here. It runs one model and one test query at a time (threads 1 in the session target,
-[`pipelines/dbt/profiles.yml` L17-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/profiles.yml#L17-L22)),
-rebuilds the four dimension tables on every run (materialized `table`), and pays for starting a session. The PySpark
-job computes everything in one session and counts its 22 checks in a few shared scans. With a long-lived Thrift
-Server and `threads: 2` (target `local`) the session cost goes away; making the dimensions incremental would cut the
-daily run further.
+[`pipelines/dbt/profiles.yml`
+L17-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/profiles.yml#L17-L22)),
+rebuilds the four dimension tables on every run (materialized `table`), and pays for starting a session. The PySpark job
+computes everything in one session and counts its 22 checks in a few shared scans. With a long-lived Thrift Server and
+`threads: 2` (target `local`) the session cost goes away; making the dimensions incremental would cut the daily run
+further.
 
-The line counts are close too. What dbt saves is plumbing: the PySpark version needs a `save()` helper, table
+The line counts are close. What dbt saves is plumbing: the PySpark version needs a `save()` helper, table
 registration, an explicit build order and an assertion per test; in dbt those are a materialization config, `ref()`,
 and one word per test.
 
@@ -163,37 +164,41 @@ Adding a `dim_terminal` (one row per POS/ATM terminal from the fact's `terminal_
 ## Tests that stop bad data
 
 `dbt build` runs each model's tests (the 19 generic tests of `schema.yml` and the 3 singular ones) right after the
-model and skips everything downstream of a failure. `dp2_silver_to_gold` runs it at its start, next to `build_labels`, after the
-silver validation of `dp2_bronze_to_silver` has passed and published silver
+model and skips everything downstream of a failure. `dp2_silver_to_gold` runs it at its start, next to `build_labels`,
+after the silver validation of `dp2_bronze_to_silver` has passed and published silver
 ([`pipelines/airflow/dags/dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp2_silver_to_gold.py)),
-so a dbt test failure fails the Airflow task, `publish_gold` does not run, and the features are not built. Every DP2
-run of the backfill passed 27/27 (5 models, 22 tests); that backfill ran before DP2 was split, when DP2 was the
-single DAG `dp2_bronze_to_gold`. The silver validation drill in [airflow.md](airflow.md) shows a failing
-test one step earlier, and dbt's own report lists each failing test with the query that failed.
+so a dbt test failure fails the Airflow task, `publish_gold` does not run, and the features are not built. Every DP2 run
+of the backfill passed 27/27 (5 models, 22 tests); that backfill ran before DP2 was split, when DP2 was the single DAG
+`dp2_bronze_to_gold`. The silver validation drill in [airflow.md](airflow.md) shows a failing test one step earlier, and
+dbt's own report lists each failing test with the query that failed.
 
 ## Lineage graph
 
-`dbt docs generate` (task `dbt_docs` in `dp2_silver_to_gold`) writes the docs site, and the graph is built from `ref()` / `source()`
-alone. The docs site's lineage of `fact_transaction`, with the sources in green:
+`dbt docs generate` (task `dbt_docs` in `dp2_silver_to_gold`) writes the docs site, and the graph is built from `ref()`
+/ `source()` alone. The docs site's lineage of `fact_transaction`, with the sources in green:
 
 ![dbt docs: lineage of fact_transaction built from silver.stg_transactions, dim_card and dim_customer (SCD2); sources in green](../images/dbt_docs_lineage.png)
 
 The same manifest feeds DataHub (`datahub_metadata` DAG, recipe
-[`pipelines/airflow/dags/datahub_recipes/dbt.yml` L3-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/datahub_recipes/dbt.yml#L3-L10)):
-every dbt model is merged with the hive table it builds, so its SQL, column docs and the 27 test results sit on the
-table's page next to the Great Expectations assertions.
+[`pipelines/airflow/dags/datahub_recipes/dbt.yml`
+L3-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/datahub_recipes/dbt.yml#L3-L10)):
+every dbt model is merged with the hive table it builds, so its SQL, column docs and test results (22 dbt tests, shown
+as 27 assertions: [datahub.md](datahub.md#what-datahub-holds)) sit on the table's page next to the Great Expectations
+assertions.
 
 ## Gotchas
 
 - The plan for SCD2 was a dbt `snapshot`, but the source already holds every version since 2024 and a snapshot only
   records changes from its first run, so `dim_customer` is a model (lag over a hash of the tracked attributes, city
   compared after normalization,
-  [`pipelines/dbt/models/gold/dim_customer.sql` L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/dim_customer.sql#L4-L22)).
+  [`pipelines/dbt/models/gold/dim_customer.sql`
+  L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/dim_customer.sql#L4-L22)).
   Decision recorded 2026-10-17.
 - With Delta on the Thrift Server, `min/max(date)` failed with `ClassCastException LocalDate -> java.sql.Date`
   (Delta's metadata-only query vs the Thrift Server's java8 time API). Fix:
   `spark.databricks.delta.optimizeMetadataQuery.enabled=false`
-  ([`infra/docker-compose.yaml` L259-L262](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L259-L262)).
+  ([`infra/docker-compose.yaml`
+  L259-L262](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L259-L262)).
 - The Thrift Server holds a 1 GB driver and a 1 GB executor all the time. Next to DataHub in the 8 GB
   Docker VM that pushed the VM into swap, and Docker's DNS started failing (`Unable to execute HTTP request:
   seaweedfs`). In Airflow, dbt therefore uses the `session` target: it starts its own Spark session for the length

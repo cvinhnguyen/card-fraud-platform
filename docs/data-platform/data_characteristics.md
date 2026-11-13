@@ -1,11 +1,10 @@
 # Data characteristics
 
 All data in this project is synthetic, so the problems a real bank's data has (duplicates, skew, renamed provinces,
-late events, fraud labels that arrive weeks later) had to be put in on purpose, at a known rate, and checked. This
-page is that check: what each dataset looks like, which problems it carries, how big each problem is, and which part
-of the platform fixes it. A reader who wants to know why a pipeline step exists will find its problem here. The
-numbers are for the default volume (~1 GB) and are the "before" numbers the pipelines and the model are measured
-against.
+late events, fraud labels that arrive weeks later) had to be put in on purpose, at a known rate, and checked. Below
+is what each dataset looks like, which problems it carries, how big each problem is, and which part of the platform
+fixes it, so each pipeline step can be traced to the problem it handles. The numbers are for the default volume
+(~1 GB) and are the "before" numbers the pipelines and the model are measured against.
 
 | | |
 |---|---|
@@ -32,8 +31,8 @@ handles it.
    `producer.py` replays the two streams into Kafka in arrival order (`received_ts`), so Kafka sees the delays and the
    disorder as a real network would.
 3. [`generator/check_data.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/check_data.py)
-   measures every planted problem against an expected range, each one a `check()` call
-   ([`generator/check_data.py` L30-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/check_data.py#L30-L35)):
+   measures every planted problem against an expected range, each one a `check()` call ([`generator/check_data.py`
+   L30-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/check_data.py#L30-L35)):
    69 checks, all pass. Every number below is printed by that script.
 4. The truth file `_truth/ato_sessions.parquet` lists the account takeover (ATO) sessions for evaluation only; it is
    never loaded into the platform.
@@ -56,7 +55,7 @@ From the repo root. Generating and checking need only the `.venv`; `load_source.
 
 | Dataset | Where it lands | Files | Rows | Size |
 |---|---|---:|---:|---:|
-| customers (100,000 customers with their history: the SCD2 source, slowly changing dimension type 2, every past version kept) | Postgres `core_banking` | 1 | 193,207 | |
+| customers (100,000 customers with every past version kept; the source of SCD2, slowly changing dimension type 2) | Postgres `core_banking` | 1 | 193,207 | |
 | accounts | Postgres | 1 | 100,000 | |
 | cards | Postgres | 1 | 130,120 | |
 | merchants (5,000 domestic + 200 foreign online) | Postgres | 1 | 5,200 | |
@@ -68,8 +67,7 @@ From the repo root. Generating and checking need only the `.venv`; `load_source.
 | app_events | Kafka topic, key `customer_id` | 1,019 | 4,822,745 | 224.0 MB |
 | *total* | | | | *~966 MB* |
 
-Sizes are Parquet on disk under `data/source/`. `_truth/ato_sessions.parquet` (21,789 ATO sessions) is the ground
-truth for evaluation only.
+Sizes are Parquet on disk under `data/source/`. `_truth/ato_sessions.parquet` holds 21,789 ATO sessions.
 
 Generating takes ~7 min and 0.31 GB RAM. The check takes 1 to 3.5 min (slower when the Spark containers are up) and
 peaks at 4.24 GB RAM (measured before the `currency` column was added to the check).
@@ -81,24 +79,25 @@ peaks at 4.24 GB RAM (measured before the `currency` column was added to the che
 | Duplicate rows | Nightly export re-run after a timeout: same `transaction_id`, later `created_ts` ([`generator/generate.py` L328-L330](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L328-L330)) | 159,990 extra rows = 2.00% of 7,999,526 unique; 100% of duplicates have a later `created_ts` | DP2 silver: dedup, keep the latest ([spark_optimization.md](../performance/spark_optimization.md#duplicates)) |
 | Merchant skew | 10 super merchants (e-wallet top-up, ride-hailing, marketplace, convenience chains) | top-10 share 0.7000; biggest / median merchant = 10,012× | DP2: broadcast joins, the winner of a benchmark against salting and AQE (adaptive query execution) ([spark_optimization.md](../performance/spark_optimization.md#merchant-join-skew)) |
 | Cross-border online payments | 200 foreign merchants (digital content, games, online stores, travel, software; US / SG / IE / CN / GB), online only, `currency = USD`, `amount_vnd` already converted; `city` NULL | 4.01% of transactions; 100% online with a merchant outside VN | Layer 2 `foreign_txn_ratio_90d` |
-| City skew | Shares on the 34 new units | Ho Chi Minh 0.5993, Ha Noi 0.1802, Da Nang 0.0500 | DP2 and the storage layout: partitioning ([storage_optimization.md](../performance/storage_optimization.md#lakehouse-layout)); Flink: hot key ([flink_jobs.md](flink_jobs.md#hot-key)) |
 | Province reorganization (63 -> 34, from 2025-07-01) | Old names before the cutoff; 5% of legacy terminals keep sending old names after it ([`generator/generate.py` L83-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L83-L93)) | old-only names 19.62% before, 0.99% after; raw "Ho Chi Minh" share 0.4797 before the cutoff (a fake jump to 0.60 if not normalized) | DP2 silver: normalize via `ref_province_mapping` |
-| Schema evolution | `auth_method`, `three_ds_version` exist only in payments from 2024-07-01, so in export files from 2024-07-02 ([`generator/generate.py` L322-L324](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L322-L324)) | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 30.00% of ecom, 3DS 2.2.0 85.03% | DP1 and DP2: `mergeSchema` ([spark_optimization.md](../performance/spark_optimization.md#schema-evolution)) |
+| City skew | Shares on the 34 new units | Ho Chi Minh 0.5993, Ha Noi 0.1802, Da Nang 0.0500 | DP2 and the storage layout: partitioning ([storage_optimization.md](../performance/storage_optimization.md#lakehouse-layout)); Flink: hot key ([flink_jobs.md](flink_jobs.md#hot-key)) |
+| Schema evolution | `auth_method`, `three_ds_version` exist only in payments from 2024-07-01; a day's payments are exported the next night, so export files have them from 2024-07-02 ([`generator/generate.py` L322-L324](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L322-L324)) | 100% of earlier files lack the columns, 100% of later files have them; `3ds_app` 30.00% of ecom, 3DS 2.2.0 85.03% | DP1 and DP2: `mergeSchema` ([spark_optimization.md](../performance/spark_optimization.md#schema-evolution)) |
 | High cardinality | `terminal_id` on POS / ATM, null for ecom | 26,863 distinct | storage layout: bucketing, approx distinct |
 | SCD2 | Customers move (5%/yr), get rescored (10%/yr); on 2025-07-01 the core system relabels old province names | 56.45% of customers have >1 version; 16,635 spurious relabel versions (95.09% of old-name customers) | DP2 gold: SCD2 `dim_customer` ([dbt_gold.md](dbt_gold.md)) |
 | As-of joins | A moved customer pays in the home unit valid at `txn_ts` | 97.08% of 1,107,271 post-move transactions | DP2 gold: point-in-time join ([spark_jobs.md](spark_jobs.md#point-in-time-join)) |
 | Label delay | Disputes arrive 1 to 60 days after the transaction (truncated log-normal, median 14) | median 13.65 days; last-30-day fraud rate is 0.53× the mature rate (expected 0.48) | DP2 labels / Layer 2: maturity window of 60 days ([ml_training.md](../ml-platform/ml_training.md#labels-and-the-split)) |
 | Trend: ATM decline | ATM share of card payments falls 17%/yr | 2025 / 2024 = 0.8327 | Layer 2 drift monitoring |
 
-Labels: the fraud rate on mature transactions is 0.0030; the ecom fraud rate is 4.18× non-ecom, and foreign payments
-3.03× domestic ecom (learnable signals).
+The fraud rate on mature transactions (older than 60 days, so their labels are complete) is 0.0030; the ecom fraud
+rate is 4.18× non-ecom, and foreign payments 3.03× domestic ecom (learnable signals).
 
 ### Label delay
 
-Disputes peak 7 to 10 days after the transaction (median 13.7) and 5% arrive after day 40 (p95 39.8 days; the
-configured 45 in
-[`generator/config.yaml` L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/config.yaml#L60)
-applies before the 60-day truncation). The histogram of the delay in days per dispute shows that shape:
+Disputes peak 7 to 10 days after the transaction (median 13.7) and 5% arrive after day 40 (p95 39.8 days). The
+configured p95 of 45 in
+[`generator/config.yaml`
+L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/config.yaml#L60)
+applies before the 60-day truncation. The histogram of the delay in days per dispute shows that shape:
 
 ![Histogram of the dispute delay: peak at 7 to 10 days, median 13.7 days, p95 39.8 days, cut at 60 days](../images/label_delay.svg)
 
@@ -106,7 +105,8 @@ Transactions from the last 60 days are still missing part of their fraud labels,
 60 days. Redraw the histogram with `python docs/diagrams/label_delay.py`.
 
 The delay is drawn per dispute, and disputes reported after the end of the period are left out
-([`generator/generate.py` L334-L349](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L334-L349)):
+([`generator/generate.py`
+L334-L349](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L334-L349)):
 
 ```python
 def gen_disputes(rng, cfg, disputed: pd.DataFrame) -> pd.DataFrame:
@@ -131,7 +131,8 @@ def gen_disputes(rng, cfg, disputed: pd.DataFrame) -> pd.DataFrame:
 
 Both streams carry two timestamps: event time (`auth_ts`, `event_ts`) and arrival time (`received_ts`).
 `producer.py` sends in `received_ts` order
-([`generator/producer.py` L27-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/producer.py#L27-L33)),
+([`generator/producer.py`
+L27-L33](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/producer.py#L27-L33)),
 so Kafka sees the disorder.
 
 ### card_authorizations
@@ -144,7 +145,8 @@ so Kafka sees the disorder.
 | Device signal | `device_id` on ecom only; fraud always uses a device new to the card | 170,459 distinct devices; new device: fraud 100%, legit 3.37% | Layer 2 realtime feature |
 
 The new device of a fraud, the late POS events and the retries are all made in `gen_auths()`
-([`generator/generate.py` L370-L390](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L370-L390)):
+([`generator/generate.py`
+L370-L390](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/generate.py#L370-L390)):
 
 ```python
     # Fraudsters pay online from their own phone, so the card sees a device it never used (a realtime signal).
@@ -185,6 +187,7 @@ The new device of a fraud, the late POS events and the retries are all made in `
 ## Scaling
 
 The volume is set in `volume` of
-[`generator/config.yaml` L11-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/config.yaml#L11-L15);
-`generate.py --scale 0.05` gives a quick smoke test. The pandas-based checks stop at about this size (4.24 GB RAM);
-the 100 GB run ([scale_100g.md](../performance/scale_100g.md)) checks with Spark.
+[`generator/config.yaml`
+L11-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/generator/config.yaml#L11-L15);
+`generate.py --scale 0.05` gives a quick smoke test. The pandas-based checks stop at about the default size (4.24 GB
+RAM); the 100 GB run ([scale_100g.md](../performance/scale_100g.md)) checks with Spark.

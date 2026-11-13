@@ -17,12 +17,13 @@ the result of every validation run, in one place.
 ## Where it fits
 
 DataHub is one of the shared services under the three layers of the
-[overview](../architecture.md#what-starts-the-pipelines-and-the-platform-services). Three things feed it. Every Spark
+[overview](../architecture.md#what-starts-the-pipelines-and-the-platform-services). Four things feed it. Every Spark
 job of Layer 1 (the data platform), dbt included, posts the tables it read and wrote through OpenLineage
-([openlineage.md](openlineage.md)). The validate stage of every Airflow pipeline ([airflow.md](airflow.md)) posts its
-Great Expectations results, and Layer 3's RAG data pipeline ([rag_pipeline.md](../llm-platform/rag_pipeline.md)) does
-the same for its checks and lineage. A daily Airflow DAG (a pipeline of tasks) loads what no listener covers: the core banking tables, the Kafka
-topics, the dbt models and tests. Its readers are people: the UI answers where a table came from, which pipeline
+([openlineage.md](openlineage.md)). Airflow's DataHub listener adds the DAGs (pipelines of tasks), their tasks and
+their runs. The validate stage of every Airflow pipeline ([airflow.md](airflow.md)) posts its Great Expectations
+results, and Layer 3's RAG data pipeline ([rag_pipeline.md](../llm-platform/rag_pipeline.md)) does the same for its
+checks and lineage. The daily `datahub_metadata` DAG loads what no listener covers: the core banking tables, the Kafka
+topics, the dbt models and tests. DataHub's readers are people: the UI answers where a table came from, which pipeline
 wrote it and whether its checks passed.
 
 ## How it works
@@ -63,7 +64,8 @@ Then open http://127.0.0.1:9002 and log in as `datahub`.
 | Core banking tables, Kafka topics, dbt models / docs / tests | `datahub_metadata` DAG | `datahub ingest` recipes in [`pipelines/airflow/dags/datahub_recipes/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/datahub_recipes) |
 
 The `datahub_metadata` DAG runs one `datahub ingest` per recipe
-([`pipelines/airflow/dags/datahub_metadata.py` L33-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/datahub_metadata.py#L33-L37)):
+([`pipelines/airflow/dags/datahub_metadata.py`
+L33-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/datahub_metadata.py#L33-L37)):
 
 ```python
 with DAG("datahub_metadata", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
@@ -75,10 +77,12 @@ with DAG("datahub_metadata", schedule="@daily", start_date=datetime(2026, 10, 1)
 
 ## What DataHub holds
 
-After the runs of DP1 (ingest to bronze), DP2 (bronze to silver and gold) and DP3 (feature pipeline) from 2026-10-12
-to 2026-10-15 and one run of `datahub_metadata`, DataHub holds these entities (GraphQL counts). These runs were made before DP2
-was split into `dp2_bronze_to_silver` and `dp2_silver_to_gold`, when DP2 was one DAG, `dp2_bronze_to_gold`; with
-the split the DAG count goes up by one:
+DataHub holds these entities (GraphQL counts) after the runs of DP1 (ingest to bronze), DP2 (bronze to silver and
+gold) and DP3 (feature pipeline) from 2026-10-12 to 2026-10-15 and one run of `datahub_metadata`. DP2 was then one
+DAG, `dp2_bronze_to_gold`. It has since been split into `dp2_bronze_to_silver` and `dp2_silver_to_gold`, so the DAG
+count is now one higher. The runs of 2026-10-12 to 2026-10-15 also predate the move of `bronze.raw_transactions` into
+lakeFS on 2026-10-24. DP1 now appends each export on the run's branch (`s3a://bronze/dp1_<ds>/raw_transactions`) and
+merges it into `main` after the checks ([novel_lakefs_wap.md](novel_lakefs_wap.md)). The counts:
 
 | Entity | Count |
 |---|---:|
@@ -87,9 +91,10 @@ the split the DAG count goes up by one:
 | Kafka topics | 4 |
 | dbt models / sources (shown as siblings of the hive tables they build) | 10 |
 | Pipelines: Airflow DAGs (listener) and the Spark jobs of each DAG (OpenLineage) | 4 + 4 |
-| Spark jobs (one per Spark action): 42 in the three DP pipelines + 11 of `gold_pyspark` / Airflow tasks | 53 / 22 |
+| Spark jobs (one per Spark action): 42 in the three DP pipelines + 11 of `gold_pyspark` | 53 |
+| Airflow tasks | 22 |
 | Job-dataset lineage edges | 74 |
-| Assertions: 88 from GE (4 suites) + 27 dbt tests | 115 |
+| Assertions: 88 from GE (4 suites) + 27 from the 22 dbt tests (a test on two tables, the 4 `relationships` tests and the silver reconciliation, is one assertion on each table) | 115 |
 
 ### Tables of every zone
 
@@ -111,13 +116,13 @@ The lineage graph of the feature table shows its direct inputs, `gold.fact_trans
 
 ![Feature table lineage: built from gold.fact_transaction and bronze.raw_disputes](../images/datahub_lineage_feat.png)
 
-`silver.stg_transactions` sits in the middle. Its lineage graph after the DP2 run of 2026-11-07 (DAG
-`dp2_bronze_to_gold`, before the split): upstream, the three
-bronze tables `build_silver` reads (`raw_customers`, `raw_ref_province_mapping`, `raw_transactions`) through the
-task, which declares them since OpenLineage reports DP2's MERGE without its source
-([`pipelines/airflow/dags/dp2_bronze_to_silver.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp2_bronze_to_silver.py), where
-`build_silver` now lives; [openlineage.md](openlineage.md#how-it-is-wired)); downstream, dbt (the fact and `dim_date`), the labels and the PySpark
-comparison job:
+`silver.stg_transactions` sits in the middle. The graph below is from the DP2 run of 2026-11-07, when DP2 was still the
+single DAG `dp2_bronze_to_gold`. Upstream are the three bronze tables that `build_silver` reads: `raw_customers`,
+`raw_ref_province_mapping` and `raw_transactions`. They link through the task, because OpenLineage reports DP2's MERGE
+without its source and the task declares them
+([`pipelines/airflow/dags/dp2_bronze_to_silver.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp2_bronze_to_silver.py),
+where `build_silver` now lives; [openlineage.md](openlineage.md#how-it-is-wired)). Downstream are dbt (the fact and
+`dim_date`), the labels and the PySpark comparison job:
 
 ![silver.stg_transactions lineage: upstream bronze.raw_customers, bronze.raw_ref_province_mapping and bronze.raw_transactions through build_silver and the MERGE job; downstream dbt, gold.dim_date, gold.fact_transaction and gold_pyspark.fact_transaction](../images/datahub_lineage_silver.png)
 
@@ -125,35 +130,37 @@ comparison job:
 
 Each table's upstream job carries the DAG's name. The OpenLineage job name is `spark.openlineage.appName`, which is
 the DAG id, set for every Spark task in
-[`pipelines/airflow/dags/common.py` L68-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76).
+[`pipelines/airflow/dags/common.py`
+L68-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L68-L76).
 
 `bronze.raw_transactions` takes one more step. DP1 writes the export into the lakeFS repository on a branch and
 publishes it with a merge, an API call OpenLineage cannot see, so the DAG declares that hop
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L39-L43), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L54), [`pipelines/airflow/dags/dp1_source_to_bronze.py` L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L59); [novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)). After the DP1 run of 2026-11-07, the repository's
+([`pipelines/airflow/dags/dp1_source_to_bronze.py`
+L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L39-L43),
+[`pipelines/airflow/dags/dp1_source_to_bronze.py`
+L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L54),
+[`pipelines/airflow/dags/dp1_source_to_bronze.py`
+L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L59);
+[novel_lakefs_wap.md](novel_lakefs_wap.md#how-it-is-wired)). After the DP1 run of 2026-11-07, the repository's
 `bronze/raw_transactions` (S3) sits between the export and the table: `ingest_exports` and its Spark job write it from
-`core-banking-export/transactions`, and `merge_to_main` reads it and produces `bronze.raw_transactions`. The table
-also keeps its first producer, `create_table.bronze_raw_transactions`, the load that created it before lakeFS:
+`core-banking-export/transactions`, and `merge_to_main` reads it and produces `bronze.raw_transactions`. The table also
+keeps its first producer, `create_table.bronze_raw_transactions`, the load that created it before lakeFS:
 
 ![DataHub lineage of bronze/raw_transactions in the lakeFS repository (16 columns): core-banking-export/transactions, then ingest_exports and its Spark job, then the repository dataset, then the hovered task merge_to_main of dp1_source_to_bronze, then bronze.raw_transactions](../images/datahub_lineage_bronze.png)
 
-The Airflow DAG itself is an entity next to it, with its documentation, tasks and runs from the Airflow listener. The
-pipeline `dp2_bronze_to_gold`, with its DAG doc, as it was before DP2 was split; DataHub now shows
-`dp2_bronze_to_silver` and `dp2_silver_to_gold` in its place once they have run:
+Each Airflow DAG is an entity of its own, with its documentation, tasks and runs from the Airflow listener. Below is the
+pipeline `dp2_bronze_to_gold` with its DAG doc, as it was before DP2 was split. Once `dp2_bronze_to_silver` and
+`dp2_silver_to_gold` have run, DataHub shows them in its place:
 
 ![The Airflow pipeline dp2_bronze_to_gold in DataHub with its DAG doc, before DP2 was split into two DAGs](../images/datahub_airflow_dp2.png)
 
-These runs predate the move of `bronze.raw_transactions` into lakeFS on 2026-10-24. DP1 now appends each export on
-the run's branch (`s3a://bronze/dp1_<ds>/raw_transactions`) and merges it into `main` after the checks
-([novel_lakefs_wap.md](novel_lakefs_wap.md)).
-
 ### Validation results
 
-Every GE expectation of the validate stages is an assertion on its table with one run event per DAG run; dbt tests
-(from `run_results.json`) sit next to them.
-
-Each GE result becomes an `AssertionInfo` (what is checked) and an `AssertionRunEvent` (this run's result). The
-assertion id is a hash of table, expectation and column, so every run lands on the same assertion
-([`pipelines/airflow/dags/common.py` L104-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L104-L121)):
+Each GE result becomes an `AssertionInfo` (what is checked) and an `AssertionRunEvent` (this run's result); dbt tests
+(from `run_results.json`) sit next to them. The assertion id is a hash of table, expectation and column, so every
+run lands on the same assertion
+([`pipelines/airflow/dags/common.py`
+L104-L121](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L104-L121)):
 
 ```python
     for r in report["results"]:
@@ -176,9 +183,9 @@ assertion id is a hash of table, expectation and column, so every run lands on t
             status=AssertionRunStatusClass.COMPLETE, result=result)))
 ```
 
-On `silver.stg_transactions` there are the 10 GE checks of that table, all passing after the drill in
-[airflow.md](airflow.md) (its failing run is in each assertion's history), and the dbt reconciliation test. The
-Quality tab sums up the 10 passing GE checks:
+On `silver.stg_transactions` there are the 10 GE checks of that table and the dbt reconciliation test. The 10 GE
+checks pass after the silver validation drill in [airflow.md](airflow.md); the drill's failing run is in each
+assertion's history. The Quality tab sums up the 10 passing GE checks:
 
 ![silver.stg_transactions, Quality summary: 10 passing](../images/datahub_quality_silver.png)
 
@@ -190,8 +197,8 @@ The Assertions tab lists them, Passing (10) and External (11), with the dbt test
 ### A job nobody declared
 
 [`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_gold_pyspark.py)
-(the hand-written comparison for the dbt gold layer, never run by Airflow) appears with its inputs and outputs after
-its first run:
+(the hand-written comparison for the dbt gold layer, never run by Airflow) appears with its inputs and outputs after its
+first run:
 
 ![Lineage of gold_pyspark.fact_transaction, created by the listener alone](../images/datahub_new_job_lineage.png)
 
@@ -207,12 +214,15 @@ DataHub, which the tables written by path do not get from the listener.
   `lookUpSchemaUnderSubject method not implemented` / `Error retrieving Avro value schema version for id 16`, and stop.
   OpenLineage events were accepted (HTTP 200) but entities had no properties and search returned 0. DataHub's own
   quickstart sets those variables (and `SCHEMA_REGISTRY_SYSTEM_UPDATE`) on system-update only; doing the same fixed it
-  ([`infra/docker-compose.yaml` L504-L509](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L504-L509)).
+  ([`infra/docker-compose.yaml`
+  L504-L509](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L504-L509)).
 - Our broker has auto-create off, and GMS still consumes the legacy topic `MetadataChangeEvent_v4` (and its failed /
   audit topics), which system-update does not create. `infra/init_infra.py` creates them
-  ([`infra/init_infra.py` L16-L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/init_infra.py#L16-L18)).
+  ([`infra/init_infra.py`
+  L16-L18](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/init_infra.py#L16-L18)).
 - DataHub (GMS 1 GB heap, OpenSearch 512 MB) fits next to batch + orch only without the Spark Thrift Server (see
   [airflow.md](airflow.md)); in the 8 GB Docker VM, swapping made Docker's DNS fail.
 - `acryl-datahub-airflow-plugin` 1.6.x needs Airflow 3; 1.5.0.6 pins a `sqlglotc` build no longer on PyPI; 1.5.0.17
   works with Airflow 2.10 and the v1.5.0.6 server
-  ([`infra/airflow/Dockerfile` L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/airflow/Dockerfile#L54-L57)).
+  ([`infra/airflow/Dockerfile`
+  L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/airflow/Dockerfile#L54-L57)).

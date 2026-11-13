@@ -32,8 +32,8 @@ zone and writes the next, and the next job reads what it wrote:
 | DP2, silver to gold | `build_labels.py` | `silver.stg_transactions`, and the disputes, cards and accounts from bronze | `gold.label_transaction`, the labels as known on each date |
 | DP3, gold to features (DAG `dp3_gold_to_features`) | `build_features.py` | `gold.fact_transaction`, and the disputes from bronze | `gold.feat_card_txn_stats_daily`, the Feast offline store |
 
-Trino and analysts read every zone; Layer 2 reads the labels and the features ([ml_training.md](../ml-platform/ml_training.md),
-[feature_store.md](../ml-platform/feature_store.md)).
+Trino and analysts read every zone; Layer 2 reads the labels and the features
+([ml_training.md](../ml-platform/ml_training.md), [feature_store.md](../ml-platform/feature_store.md)).
 
 ## How it works
 
@@ -47,7 +47,7 @@ Trino and analysts read every zone; Layer 2 reads the labels and the features ([
 4. The feature job computes per-card statistics over 30, 90 and 180 days in a form Feast can join point-in-time
    (each labelled payment gets the feature values as they were at that moment, so training never sees the future).
 5. Every load is incremental where the data is append-only (new export dates, new transactions) and a full rewrite
-   where it is small (the core banking snapshots), so a rerun of a day never writes anything twice.
+   where it is small (the core banking snapshots), so a re-run of a day never writes anything twice.
 
 ## Run it
 
@@ -93,12 +93,13 @@ loads three sources:
 Bronze is a faithful copy: duplicates, old province names and missing columns stay as they are. Each row gets
 `_ingested_at` and `_source` (the JDBC table or the source file path). Timestamps are read without a time zone
 (`preferTimestampNTZ`), as they are in the source
-([`pipelines/spark/ingest_bronze.py` L57-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L57-L69)).
+([`pipelines/spark/ingest_bronze.py`
+L57-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L57-L69)).
 `save` registers each table once in the Hive Metastore (`CREATE TABLE ... USING DELTA LOCATION`); the schema lives in
-the Delta log, so Trino reads the tables as `delta.bronze.*`. A write to a lakeFS run branch is not registered: the
-metastore entry of `bronze.raw_transactions` points at `s3a://bronze/main/raw_transactions`, so silver and Trino read
-`main` only
-([`pipelines/spark/ingest_bronze.py` L43-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L43-L54)):
+the Delta log, so Trino reads the tables as `delta.bronze.*`. A write to a lakeFS run branch (the branch `dp1_<ds>` of
+one DP1 run) is not registered: the metastore entry of `bronze.raw_transactions` points at
+`s3a://bronze/main/raw_transactions`, so silver and Trino read `main` only ([`pipelines/spark/ingest_bronze.py`
+L43-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L43-L54)):
 
 ```python
 def save(df, table: str, mode: str, partition_by: str | None = None, root: str = BRONZE, **options) -> None:
@@ -127,18 +128,18 @@ Result (2026-10-17, 1 GB data):
 | raw_merchants | 5,200 |
 | raw_ref_province_mapping | 63 |
 
-`SELECT count(*) FROM delta.bronze.raw_transactions` on Trino returned 8,159,516, the number of rows the generator wrote.
-Since the table moved into lakeFS ([novel_lakefs_wap.md](novel_lakefs_wap.md)) Trino reads it as
+`SELECT count(*) FROM delta.bronze.raw_transactions` on Trino returned 8,159,516, the number of rows the generator
+wrote. Since the table moved into lakeFS ([novel_lakefs_wap.md](novel_lakefs_wap.md)) Trino reads it as
 `lakefs.bronze.raw_transactions`.
 
 ### Incremental load
 
 The exports part reads the newest `export_date` already in `<root>/raw_transactions` and lists the export bucket, then
-reads only the newer folders. A run branch is created from `main`, so on a branch this is the newest export already
-published. With no table there yet (the first load) it reads them all. A second run with no new files prints
-`nothing new after 2026-10-16` and appends nothing. `--until YYYY-MM-DD` stops at a given export date. The append,
-with `mergeSchema` on the read and on the write
-([`pipelines/spark/ingest_bronze.py` L79-L99](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L79-L99)):
+reads only the newer folders. A run branch is created from `main`, so on a branch the newest `export_date` is the
+newest export already published. With no table there yet (the first load) it reads them all. A second run with no
+new files prints `nothing new after 2026-10-16` and appends nothing. `--until YYYY-MM-DD` stops at a given export date.
+The append, with `mergeSchema` on the read and on the write ([`pipelines/spark/ingest_bronze.py`
+L79-L99](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L79-L99)):
 
 ```python
 def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool, root: str = TXN_MAIN) -> None:
@@ -166,10 +167,12 @@ def ingest_exports(spark: SparkSession, until: str | None, merge_schema: bool, r
 
 `--txn-root` says where the append goes. lakeFS `main` takes merges only, so the job stops with an error when the
 exports part runs without `--txn-root` or with `s3a://bronze/main`
-([`pipelines/spark/ingest_bronze.py` L127-L129](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L127-L129)).
+([`pipelines/spark/ingest_bronze.py`
+L127-L129](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L127-L129)).
 `s3a://lakehouse/bronze` is only for the first load, before `infra/init_lakefs.py` imports the table into lakeFS. The
 Airflow DAG appends on the branch `dp1_<ds>`, commits it, validates it and merges it into `main`
-([`pipelines/airflow/dags/dp1_source_to_bronze.py` L37-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L60));
+([`pipelines/airflow/dags/dp1_source_to_bronze.py`
+L37-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py#L37-L60));
 the runs are in [novel_lakefs_wap.md](novel_lakefs_wap.md).
 
 ### Schema evolution
@@ -190,17 +193,19 @@ builds two silver tables:
 | `silver.stg_customers` | `bronze.raw_customers` | `customer_unit` (34 units) + `city_raw`; input of the SCD2 `dim_customer` |
 
 The job stops if a city name is missing from `ref_province_mapping` (no silent NULL unit)
-([`pipelines/spark/build_silver.py` L28-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L28-L35)).
+([`pipelines/spark/build_silver.py`
+L28-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L28-L35)).
 
 ### Incremental load
 
 Only bronze export dates newer than the newest `export_date` in silver are read
-([`pipelines/spark/build_silver.py` L53-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L53-L56)).
-The batch is deduplicated, then `MERGE`d on `transaction_id`
-([`pipelines/spark/build_silver.py` L83-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L83-L91)):
-an id already in silver is replaced only by a row with a later `created_ts`, so a re-run, or a duplicate that lands in
-a later export, cannot double count. Test: deleting the last 6 export dates from silver (47,226 rows) and re-running
-the job merged exactly 47,226 rows back (7,999,526 total, 64 s).
+([`pipelines/spark/build_silver.py`
+L53-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L53-L56)).
+The batch is deduplicated, then `MERGE`d on `transaction_id` ([`pipelines/spark/build_silver.py`
+L83-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_silver.py#L83-L91)):
+an id already in silver is replaced only by a row with a later `created_ts`, so a re-run, or a duplicate that lands in a
+later export, cannot double count. Test: deleting the last 6 export dates from silver (47,226 rows) and re-running the
+job merged exactly 47,226 rows back (7,999,526 total, 64 s).
 
 ### Before / after (full build, 146 s)
 
@@ -224,19 +229,21 @@ Ho Chi Minh City (HCMC) around the reorganization (settled spend, billion VND; s
 | 2025-08 | 64.1 | 64.7 | 0.4 | 59.3% | 59.9% |
 
 By raw name, HCMC "grows" 28% in July 2025 and Binh Duong almost disappears. By `txn_unit` the series is flat,
-because only the place names changed. The chart draws both series for every month; the February dips are the short month:
+because only the place names changed. The chart draws both series for every month; the February dips are the short
+month:
 
 ![Ho Chi Minh City settled spend per month in billion VND: the raw-name line jumps 28% in July 2025 when old province names are relabelled on 2025-07-01, the unit line stays flat](../images/hcmc_spend.svg)
 
 Redraw it with `python docs/diagrams/hcmc_spend.py` (reads silver through Trino).
 
-## Gold with dbt-spark
+## DP2: gold with dbt-spark
 
 The dbt project in
 [`pipelines/dbt/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt)
-([dbt_gold.md](dbt_gold.md)) runs SQL models through the Spark Thrift Server (compose profile `dbt`, port 10000), so
-the gold tables are Delta tables in `s3a://lakehouse/gold/`, registered in the same Hive Metastore and readable from
-Trino.
+([dbt_gold.md](dbt_gold.md)) runs SQL models through the Spark Thrift Server (compose profile `dbt`, port 10000), so the
+gold tables are Delta tables in `s3a://lakehouse/gold/`, registered in the same Hive Metastore and readable from Trino.
+The Thrift Server (target `local`) is for runs by hand; Airflow's DP2 runs dbt with the `session` target, in its own
+Spark session ([airflow.md](airflow.md)).
 
 ### SCD2 `gold.dim_customer`
 
@@ -245,7 +252,8 @@ snapshot only records the state it sees at each run, so it would lose that histo
 model over `silver.stg_customers`: `lag()` compares a hash of the tracked attributes (unit, income band, risk tier, KYC
 level, name, date of birth) with the previous row, keeps only rows where something changed, and `lead()` gives
 `valid_to_ts` (exclusive; open-ended = 9999-12-31) and `is_current`
-([`pipelines/dbt/models/gold/dim_customer.sql` L4-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/dim_customer.sql#L4-L38)).
+([`pipelines/dbt/models/gold/dim_customer.sql`
+L4-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/dim_customer.sql#L4-L38)).
 
 The city is compared after normalization (`customer_unit`), so the relabel of old province names on 2025-07-01 is not a
 new version:
@@ -263,7 +271,8 @@ customer follow each other without gaps or overlaps.
 
 ### Point-in-time join
 
-An online payment's `txn_city` is the card holder's home unit at payment time. For the 15,393 customers who moved,
+An online payment's location (`txn_city` in the source, `txn_unit` in silver) is the card holder's home unit at
+payment time. For the 15,393 customers who moved,
 joining their 977,652 settled ecom payments to `dim_customer`:
 
 | Join | Home unit matches `txn_unit` |
@@ -286,7 +295,8 @@ Joining on the current version puts every payment made before a move in the wron
 Reversed transactions (119,753) are left out: no money moved. Fraud labels are not in the fact because they change
 after it is written; they live in `gold.label_transaction` (below). `fact_transaction.customer_sk` is resolved with the
 point-in-time join when the row is built, so a query joins `dim_customer` on `customer_sk` without a date range
-([`pipelines/dbt/models/gold/fact_transaction.sql` L36-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/fact_transaction.sql#L36-L39)):
+([`pipelines/dbt/models/gold/fact_transaction.sql`
+L36-L39](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/dbt/models/gold/fact_transaction.sql#L36-L39)):
 
 ```sql
 from txn t
@@ -303,7 +313,7 @@ Tests (`dbt build`, 27/27 pass): unique / not-null keys, every fact key found in
 The fact loads incrementally. A full refresh takes 60 s. Deleting the last 5 export dates (38,752 rows) and running
 `dbt run --select fact_transaction` again `MERGE`d exactly 38,752 rows back in 25 s, with no file rewritten.
 
-## Labels with label delay
+## DP2: labels with label delay
 
 [`pipelines/spark/build_labels.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py)
 writes `gold.label_transaction`, one row per transaction, partitioned by `event_month`: `transaction_id`, `card_id`,
@@ -316,7 +326,8 @@ last run are flipped to `is_fraud = true`. Because disputes are at most 60 days 
 3 months of partitions. Each run is one Delta version and its commit carries `label_as_of=D` (the `userMetadata`
 column of `DESCRIBE HISTORY`), so `VERSION AS OF` returns the labels exactly as they were known on D.
 The tag and the `MERGE`
-([`pipelines/spark/build_labels.py` L67-L83](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L83)):
+([`pipelines/spark/build_labels.py`
+L67-L83](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_labels.py#L67-L83)):
 
 ```python
     spark.conf.set("spark.databricks.delta.commitInfo.userMetadata", f"label_as_of={as_of}")
@@ -368,9 +379,10 @@ built. Layer 2 reads `VERSION AS OF` the version its model was trained on and fi
 ## DP3: features
 
 [`pipelines/spark/build_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py)
-writes `gold.feat_card_txn_stats_daily`, the offline source of the Feast feature view `card_txn_stats_daily`
-(Layer 2). One row per card and day L on which the card was active (a settled transaction or a reported dispute):
-7,792,146 rows, 129,749 cards, for the days up to 2026-11-03.
+writes `gold.feat_card_txn_stats_daily`, the offline source of the Feast feature view `card_txn_stats_daily` (Layer 2).
+One row per card and day L on which the card was active (a settled transaction or a reported dispute). Up to day
+2026-11-03 it holds 7,792,146 rows for 129,749 cards, with the means below; a Trino query on 2026-11-13 gave the same
+numbers for those days. The table now runs to day 2026-11-08 (7,830,568 rows, 129,830 cards).
 
 | Feature | Window (days up to L) | Mean |
 |---|---|---:|
@@ -389,16 +401,18 @@ the day they were reported, not the day of the disputed payment: a dispute repor
 `stats_ts` repeats `event_timestamp` as a feature column, because Feast does not serve the event timestamp itself and
 Layer 2 derives `days_since_last_active` from it. `created` is the processing time (Feast uses it to break ties).
 
-Layer 2 changed this layout. The first one had a row on each payment day D with windows ending at D-1: the values
-were the same, but the row a training example joined to existed only because of the payment being scored, and the
-online store never holds such a row. Training and serving would have read different rows.
+This layout replaced an earlier one during the Layer 2 work. The earlier layout had a row on each payment day D,
+with windows ending at D-1. The values were the same, but the row a training example joined to existed only because
+of the payment being scored, and the online store never holds such a row, so training and serving would have read
+different rows.
 
 Windows are `rangeBetween(-(N-1), 0)` over the day number, on one row per card and day, so one sort per card serves
 all windows
-([`pipelines/spark/build_features.py` L48-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py#L48-L54)).
-The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and
-`raw_disputes` with plain date filters, and all 500 match
-([`pipelines/spark/build_features.py` L78-L94](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py#L78-L94)).
+([`pipelines/spark/build_features.py`
+L48-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py#L48-L54)).
+The job ends with a leakage check: 500 random rows are recomputed from `fact_transaction` and `raw_disputes` with plain
+date filters, and all 500 match ([`pipelines/spark/build_features.py`
+L78-L94](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py#L78-L94)).
 
 ## Gotchas
 
@@ -410,4 +424,5 @@ The job ends with a leakage check: 500 random rows are recomputed from `fact_tra
   `ClassCastException: java.time.LocalDate cannot be cast to java.sql.Date`. Delta answers `min/max` of a date column
   from file statistics as `java.sql.Date`, while the Thrift Server uses the Java 8 time API. The Thrift Server now runs
   with `spark.databricks.delta.optimizeMetadataQuery.enabled=false`
-  ([`infra/docker-compose.yaml` L259-L262](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L259-L262)).
+  ([`infra/docker-compose.yaml`
+  L259-L262](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L259-L262)).

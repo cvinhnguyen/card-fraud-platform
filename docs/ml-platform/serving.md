@@ -3,10 +3,10 @@
 When a card is used, the card network waits for the bank's answer before the shop can finish the sale, so the
 fraud decision has to come back in milliseconds and must never fail outright. The Layer 2 serving path decides each
 card authorization in real time. KServe, a Kubernetes model server, serves the fraud model with the booster inside
-the image, and the Fraud Scoring API (FastAPI) reads the card's features from the Feast online store, asks
-KServe for a score, turns it into approve, step_up (ask the cardholder for a one-time password, OTP, or a biometric
-check) or decline, and logs every decision to Kafka as the record of decisions.
-KServe's payload logger copies every request and response of the model to the drift detector.
+the image. The Fraud Scoring API (FastAPI) reads the card's features from the Feast online store and asks KServe for
+a score. It turns the score into approve, step_up or decline, and logs every decision to Kafka as the record of
+decisions. A step_up asks the cardholder for a one-time password (OTP) or a biometric check.
+KServe's payload logger copies every request and response of the model to the Drift API.
 An outage of any dependency gives a safe fallback decision instead of an error.
 
 | | |
@@ -20,12 +20,12 @@ An outage of any dependency gives a safe fallback decision instead of an error.
 ## Where it fits
 
 Serving is the left side of Layer 2 in the
-[overview](../architecture.md#layer-2-the-ml-platform-right-panel). The features come from the Feast online store that Layer 1's pipelines and the push jobs keep fresh
-([feature_store.md](feature_store.md)); the model is the one a reviewer promoted to `production` in MLflow
-([ml_training.md](ml_training.md)); every decision goes to the Kafka topic `fraud_predictions`, the record of
-decisions. The drift monitoring does not read that topic: KServe's payload logger sends every request and response
-of the model through Knative Eventing to the Drift API ([drift.md](drift.md)). Layer 3's fraud-score MCP server calls the same API for the agents
-([agents.md](../llm-platform/agents.md)).
+[overview](../architecture.md#layer-2-the-ml-platform-right-panel). The features come from the Feast online store that
+Layer 1's pipelines and the push jobs keep fresh ([feature_store.md](feature_store.md)); the model is the one a reviewer
+promoted to `production` in MLflow ([ml_training.md](ml_training.md)); every decision goes to the Kafka topic
+`fraud_predictions`, the record of decisions. KServe's payload logger sends every request and response of the model
+through Knative Eventing to the Drift API ([drift.md](drift.md)). Layer 3's fraud-score MCP server calls the same API
+for the agents ([agents.md](../llm-platform/agents.md)).
 
 ## How it works
 
@@ -67,9 +67,9 @@ Replace `<version>` with the model version in the MLflow registry. The manifest 
 
 [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kserve-card-fraud.yaml)
 defines one InferenceService in namespace `serving`, KServe 0.21 in Standard mode (formerly called RawDeployment): a
-plain Deployment + Service, no Knative Serving, so it fits the 8 GB machine. The same file holds the Knative
-Eventing Broker `default` and Trigger `drift-detector` of the drift feed ([drift.md](drift.md)); Knative Eventing
-itself is installed by `infra/k8s/platform.sh`. The predictor is a custom KServe `Model`
+plain Deployment + Service, no Knative Serving, so it fits the 8 GB machine. The same file holds the Knative Eventing
+Broker `default` and Trigger `drift-detector` of the drift feed ([drift.md](drift.md)); Knative Eventing itself is
+installed by `infra/k8s/platform.sh`. The predictor is a custom KServe `Model`
 ([`services/predictor/predictor.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor/predictor.py))
 with the booster inside the image.
 
@@ -77,7 +77,8 @@ One image = one model version: the running version is the image tag, a rollback 
 never starts without its model (no download at start-up that can fail). Instances are sent as dicts and reordered by
 the booster's own feature names, so a caller never depends on column order; a missing feature is NaN, as in
 training. The response carries `model_version`
-([`services/predictor/predictor.py` L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor/predictor.py#L38-L43)):
+([`services/predictor/predictor.py`
+L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor/predictor.py#L38-L43)):
 
 ```python
 def predict(self, payload: dict, headers: dict | None = None) -> dict:
@@ -88,9 +89,9 @@ def predict(self, payload: dict, headers: dict | None = None) -> dict:
     return {"predictions": self.booster.inplace_predict(x, missing=np.nan).tolist(), "model_version": self.version}
 ```
 
-The InferenceService. `logger` (`mode: all`) makes KServe add its agent sidecar on port 9081 in front of the model
-on 8080; the agent sends every request and response to the Broker. NodePort 31080 points at 9081, so the Scoring
-API's calls pass the agent
+In the InferenceService below, `logger` (`mode: all`) makes KServe add its agent sidecar on port 9081 in front of
+the model on 8080; the agent sends every request and response to the Broker. NodePort 31080 points at 9081, so the
+Scoring API's calls pass the agent
 ([`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kserve-card-fraud.yaml),
 [`infra/k8s/nodeports.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/nodeports.yaml)):
 
@@ -123,8 +124,8 @@ spec:
 
 The API in
 [`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api)
-has four endpoints
-([`services/scoring_api/app/main.py` L50-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L50-L79)):
+has four endpoints ([`services/scoring_api/app/main.py`
+L50-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L50-L79)):
 
 | Endpoint | Purpose |
 |---|---|
@@ -133,16 +134,18 @@ has four endpoints
 | `GET /readyz` | readiness: Feast online read and the model endpoint both answer |
 | `GET /metrics` | Prometheus format: request rate / latency / status, decisions, fallbacks by cause, score histogram, latency per stage |
 
-Async end to end: Feast `get_online_features_async`, `httpx.AsyncClient` (one pooled client) to KServe,
-`aiokafka` for the prediction log: one worker serves many requests while each waits on Redis or the model.
+The API is async end to end (Feast `get_online_features_async`, `httpx.AsyncClient` with one pooled client to
+KServe, `aiokafka` for the prediction log), so one worker serves many requests while each waits on Redis or the
+model.
 
 ### Decision and fallback
 
-The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step-up (OTP), else approve. The thresholds
-come from configuration (`T_LOW`, `T_HIGH`), not from the model, so risk can tune them without a release; the model
-version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR, FPR = false
-positive rate, the share of legitimate payments flagged)
-([`services/scoring_api/app/policy.py` L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/policy.py#L20-L37)):
+The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step_up (OTP), else approve. The thresholds
+come from configuration (`T_LOW`, `T_HIGH`), not from the model, so the risk team can tune them without a release;
+the model version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR,
+FPR = false positive rate, the share of legitimate payments flagged)
+([`services/scoring_api/app/policy.py`
+L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/policy.py#L20-L37)):
 
 ```python
     def decide(self, score: float) -> Decision:
@@ -165,12 +168,13 @@ class FallbackPolicy:
         return Decision.step_up if amount_vnd >= self.step_up_from_vnd else Decision.approve
 ```
 
-Fallback, never an error: each stage has a time budget (`asyncio.wait_for`, 50 ms by default, 200 ms in compose
-where KServe is reached through the kind NodePort). A timeout or failure of the feature store or the model gives
-`FallbackPolicy`: approve below 2,000,000 VND (Vietnamese dong), step-up from it, never decline without evidence. The response says
-`fallback: true` and the counter `fraud_fallbacks_total{cause}` records why (`features_timeout`, `model_error`, ...).
-A payment is never blocked by an outage of the fraud system
-([`services/scoring_api/app/scorer.py` L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/scorer.py#L35-L60)):
+Each stage has a time budget (`asyncio.wait_for`, 50 ms by default, 200 ms in compose where KServe is reached
+through the kind NodePort). A timeout or failure of the feature store or the model gives `FallbackPolicy` instead of
+an error: approve below 2,000,000 VND (Vietnamese dong), step_up from it, never decline without evidence. The
+response says `fallback: true` and the counter `fraud_fallbacks_total{cause}` records why (`features_timeout`,
+`model_error`, ...)
+([`services/scoring_api/app/scorer.py`
+L35-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/scorer.py#L35-L60)):
 
 ```python
     async def score(self, req: ScoreRequest) -> ScoreResponse:
@@ -205,7 +209,8 @@ A payment is never blocked by an outage of the fraud system
 
 Every request + response + the feature vector goes to Kafka `fraud_predictions`, keyed by card, without waiting for
 the broker ack. If Kafka is down the API keeps scoring and only stops logging
-([`services/scoring_api/app/clients.py` L83-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/clients.py#L83-L109)).
+([`services/scoring_api/app/clients.py`
+L83-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/clients.py#L83-L109)).
 The topic is the record of decisions. Nothing in the monitoring path reads it: the Drift API gets its input from
 KServe's payload logger ([drift.md](drift.md)).
 
@@ -215,9 +220,10 @@ The scorer depends on three small interfaces (`FeatureSource`, `ModelSource`, `P
 `build_scorer`; tests pass fakes, the app passes the real clients. The two policies are interchangeable strategies
 behind one `decide` call. `create_app` is an app factory so tests build an app with fake collaborators and their own
 metrics registry
-([`services/scoring_api/app/main.py` L25-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L25-L35)).
+([`services/scoring_api/app/main.py`
+L25-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L25-L35)).
 
-## Run on 2026-10-19 (model v1)
+## Runs on 2026-10-19 and 2026-10-21 (model v1)
 
 The commands of that run, for model version 1:
 
@@ -247,10 +253,10 @@ Fallback demo: `docker pause redis`, same three requests: all `approve`, `score:
 resumes. `/readyz` reports both dependencies; `/metrics` counts `fraud_decisions_total{decision, fallback}`.
 
 Checked again on 2026-10-21 from Git Bash: the InferenceService is Ready with one predictor pod, and a direct V1
-`predict` call through the NodePort answers with `model_version` 1. Then two payments on the same card go through the
+`predict` call through the NodePort answers with `model_version` 1. Then two payments on the same card went through the
 Scoring API. The first one fell back: the machine was loaded, the feature lookup ran past its time budget, and
 `FallbackPolicy` approved the 450,000 VND payment by rule (`model_version: fallback`). The second one was scored by
-KServe: 45,000,000 VND online is declined (0.2221, `fallback: false`):
+KServe: 45,000,000 VND online was declined (0.2221, `fallback: false`):
 
 ![KServe: the InferenceService and its predictor pod, a direct V1 predict call, and two Scoring API calls](../images/kserve_serving.png)
 
@@ -277,11 +283,13 @@ The first replay at 100 requests/s fell back on 96% of the payments. Two separat
    the abandoned call ends under httpx's own timeouts and returns its connection. Measured: 1,000 requests at
    concurrency 32, then serial requests are back at 25 ms with no fallback (before the fix: 100% fallback).
    `test_model_budget_does_not_cancel_the_http_call`
-   ([`services/scoring_api/tests/test_clients.py` L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_clients.py#L36))
+   ([`services/scoring_api/tests/test_clients.py`
+   L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/tests/test_clients.py#L36))
    fails on the old code.
 
 The fix
-([`services/scoring_api/app/clients.py` L65-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/clients.py#L65-L75)):
+([`services/scoring_api/app/clients.py`
+L65-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/clients.py#L65-L75)):
 
 ```python
     async def predict(self, features: dict[str, float | None]) -> tuple[float, str]:
@@ -304,8 +312,9 @@ The fix
 
 ## Limits
 
-- One Scoring API container with one worker, about 45 requests a second ([Capacity](#capacity-and-a-bug-the-first-load-found)).
-  Nothing scales it: more traffic needs more replicas behind a load balancer.
+- One Scoring API container with one worker, about 45 requests a second
+  ([Capacity](#capacity-and-a-bug-the-first-load-found)). Nothing scales it: more traffic needs more replicas behind a
+  load balancer.
 - The decision thresholds are configuration (`T_LOW`, `T_HIGH` in compose), set to model v1's values. Promoting a new
   model does not change them; its own recommended values are MLflow tags of its version and have to be copied into
   the configuration by hand.
