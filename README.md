@@ -173,7 +173,7 @@ call between them passes one gateway that decides what each agent may do.
 
 The overview shows what the platform does; this diagram shows the deployable units and the data between them. Every
 box is a compose container or a workload on the kind cluster (Feast is a library inside them, so it has no box).
-Arrows follow the data and carry it as their label; a call without data (B1, M7) points from caller to callee. Each
+Arrows follow the data and carry it as their label; a call without data (B2, M7) points from caller to callee. Each
 flow has its own colour, letter and numbering:
 
 ![System diagram, Layers 1 and 2: deployable units and the numbered data flows between them](docs/images/platform-system-layers-1-2.png)

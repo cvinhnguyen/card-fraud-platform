@@ -4,7 +4,7 @@
 <rect width="2206" height="1320" fill="#f5f5f5"/>
 <text x="28.0" y="46.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="12" fill="#4f5d75" text-anchor="start" font-weight="600" letter-spacing="0.14em">CARD FRAUD PLATFORM · SYSTEM DIAGRAM · LAYERS 1 AND 2</text>
 <text x="28.0" y="76.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="22" fill="#2d3142" text-anchor="start" font-weight="400">System diagram, Layers 1 and 2: deployable units and the data they exchange. Layer 3, the agents, has its own diagram.</text>
-<rect x="14" y="96" width="200" height="288" rx="12" fill="none" stroke="#c8ccd4" stroke-dasharray="6 4"/>
+<rect x="14" y="96" width="200" height="756" rx="12" fill="none" stroke="#c8ccd4" stroke-dasharray="6 4"/>
 <text x="30.0" y="118.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="600" letter-spacing="0.08em">OUTSIDE</text>
 <rect x="270" y="96" width="1422" height="1026" rx="12" fill="#eceef1" stroke="#c8ccd4"/>
 <text x="286.0" y="118.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="600" letter-spacing="0.08em">DOCKER COMPOSE · project fraud</text>
@@ -26,6 +26,13 @@
 <text x="86.3" y="328.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="start" font-weight="600">Banking app</text>
 <text x="114.0" y="347.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" fill="#4f5d75" text-anchor="middle" font-weight="400">app events, replayed</text>
 <text x="114.0" y="362.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" fill="#4f5d75" text-anchor="middle" font-weight="400">by a script</text>
+<rect x="28" y="752" width="172" height="84" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
+<rect x="36" y="760" width="34" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
+<text x="41.0" y="771.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">host</text>
+<svg x="40.16" y="778.0" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2d3142" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5l2 14c.3 1.7 2.8 3 6 3s5.7-1.3 6-3l2-14"/></svg>
+<text x="74.2" y="796.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="14.5" fill="#2d3142" text-anchor="start" font-weight="600">Nightly export</text>
+<text x="114.0" y="815.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" fill="#4f5d75" text-anchor="middle" font-weight="400">core banking's settled</text>
+<text x="114.0" y="830.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" fill="#4f5d75" text-anchor="middle" font-weight="400">payments, by a script</text>
 <rect x="764" y="128" width="170" height="84" rx="8" fill="#ffffff" stroke="#9aa1b1"/>
 <rect x="772" y="136" width="22" height="15" rx="3" fill="none" stroke="#c8ccd4"/>
 <text x="777.0" y="147.0" font-family="'Cascadia Mono', Consolas, 'Courier New', monospace" font-size="9" fill="#4f5d75" text-anchor="start" font-weight="400" letter-spacing="0.06em">ml</text>
@@ -297,44 +304,53 @@
 <circle cx="615.0" cy="872.0" r="11" fill="#ffffff" stroke="#1971c2" stroke-width="2"/>
 <text x="615.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">R9</text>
 <text x="630.0" y="876.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">live features, appended to Delta</text>
+<path d="M114.0,836.0 L114.0,951.0 Q114.0,958.0 121.0,958.0 L296.0,958.0" fill="none" stroke="#eceef1" stroke-width="7"/>
+<path d="M114.0,836.0 L114.0,951.0 Q114.0,958.0 121.0,958.0 L296.0,958.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
+<circle cx="220.0" cy="958.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
+<text x="220.0" y="961.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B1</text>
+<text x="220.0" y="930.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">nightly export</text>
+<text x="220.0" y="943.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">(Parquet files)</text>
 <path d="M1262.0,802.4 L1168.0,802.4" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1262.0,802.4 L1168.0,802.4" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1215.0" cy="802.4" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1215.0" y="806.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B1</text>
+<text x="1215.0" y="806.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B2</text>
 <text x="1215.0" y="825.4" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">starts each job</text>
 <path d="M1083.0,680.0 L1083.0,752.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1083.0,680.0 L1083.0,752.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1083.0" cy="716.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1083.0" y="719.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B2</text>
-<text x="1068.0" y="720.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">6 core banking tables (JDBC)</text>
+<text x="1083.0" y="719.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B3</text>
+<text x="1068.0" y="700.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">over JDBC:</text>
+<text x="1068.0" y="713.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">customers, accounts,</text>
+<text x="1068.0" y="726.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">cards, merchants,</text>
+<text x="1068.0" y="739.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">disputes, provinces</text>
 <path d="M1030.0,908.0 L1030.0,836.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1030.0,908.0 L1030.0,836.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1030.0" cy="872.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1030.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B3</text>
+<text x="1030.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B4</text>
 <text x="1015.0" y="869.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">nightly</text>
 <text x="1015.0" y="882.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="end" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">export files</text>
 <path d="M1136.0,836.0 L1136.0,908.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1136.0,836.0 L1136.0,908.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1136.0" cy="872.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1136.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B4</text>
+<text x="1136.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B5</text>
 <text x="1151.0" y="869.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">bronze, silver,</text>
 <text x="1151.0" y="882.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">gold, feat_*</text>
 <path d="M849.0,908.0 L849.0,836.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M849.0,908.0 L849.0,836.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="849.0" cy="872.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="849.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B5</text>
+<text x="849.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B6</text>
 <text x="864.0" y="869.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">Delta tables</text>
 <text x="864.0" y="882.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">of any zone</text>
 <path d="M1302.0,908.0 L1302.0,836.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1302.0,908.0 L1302.0,836.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1302.0" cy="872.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1302.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B6</text>
+<text x="1302.0" y="875.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B7</text>
 <text x="1317.0" y="869.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">daily</text>
 <text x="1317.0" y="882.5" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="start" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">features</text>
 <path d="M1262.0,770.5 L1189.0,770.5 Q1182.0,770.5 1182.0,763.5 L1182.0,273.0 Q1182.0,266.0 1175.0,266.0 L916.0,266.0 Q909.0,266.0 909.0,273.0 L909.0,284.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1262.0,770.5 L1189.0,770.5 Q1182.0,770.5 1182.0,763.5 L1182.0,273.0 Q1182.0,266.0 1175.0,266.0 L916.0,266.0 Q909.0,266.0 909.0,273.0 L909.0,284.0" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#ah-B)"/>
 <circle cx="1136.1" cy="266.0" r="11" fill="#ffffff" stroke="#2f9e44" stroke-width="2"/>
-<text x="1136.1" y="269.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B7</text>
+<text x="1136.1" y="269.6" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="9.5" fill="#2d3142" text-anchor="middle" font-weight="700">B8</text>
 <text x="1136.1" y="251.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#2d3142" text-anchor="middle" font-weight="400" stroke="#eceef1" stroke-width="4" stroke-linejoin="round" paint-order="stroke">newest row per card</text>
 <path d="M1581.0,908.0 L1581.0,836.0" fill="none" stroke="#eceef1" stroke-width="7"/>
 <path d="M1581.0,908.0 L1581.0,836.0" fill="none" stroke="#9c36b5" stroke-width="2" marker-end="url(#ah-T)"/>
@@ -438,7 +454,7 @@
 <text x="784.0" y="1224.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="13" fill="#2d3142" text-anchor="start" font-weight="600">Monitoring and retraining</text>
 <text x="976.0" y="1224.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">live Drift API + daily data drift pipeline</text>
 <text x="1428.0" y="1220.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Numbers give the order inside each flow: S1 to S6 follow one payment from the card network and back.</text>
-<text x="1428.0" y="1236.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Arrow = data moving from A to B, labelled with the data; a call without data (B1, M7) points from caller to callee.</text>
+<text x="1428.0" y="1236.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Arrow = data moving from A to B, labelled with the data; a call without data (B2, M7) points from caller to callee.</text>
 <text x="1428.0" y="1252.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">White box = one container or pod. Tag top left = where it runs: compose profile, namespace (ns) or host.</text>
 <text x="1428.0" y="1268.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Dashed boxes: support services used by many units (arrows left out).</text>
 <text x="1428.0" y="1284.0" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="11" fill="#4f5d75" text-anchor="start" font-weight="400">Feast is a library, not a unit: it runs inside the Scoring API, the push jobs, Airflow, Jupyter and the training pipeline's pods.</text>
