@@ -116,8 +116,14 @@ pipeline {
       // the servers already upgraded go back to their previous revision, so a failed build leaves the old set running
       withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
         sh '''
+          # every server is tried even when one rollback fails (e.g. Kyverno refuses an old revision whose image is not
+          # signed), so one stuck server does not leave the others on the release that failed
           if [ -f deployed.txt ]; then
-            for s in $(cat deployed.txt); do helm rollback $s-mcp -n card-support --wait --timeout 4m; done
+            bad=""
+            for s in $(cat deployed.txt); do
+              helm rollback $s-mcp -n card-support --wait --timeout 4m || bad="$bad $s"
+            done
+            [ -z "$bad" ] || { echo "ROLLBACK FAILED for:$bad (helm history <server>-mcp -n card-support)" >&2; exit 1; }
           fi
         '''
       }
