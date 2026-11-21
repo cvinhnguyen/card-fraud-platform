@@ -113,7 +113,7 @@ pipeline {
     success {
       script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
     }
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // a release that is live but failed its readiness wait, smoke test or eval gate goes back to the previous revision
       script {
         if (env.DEPLOYED == 'true') {

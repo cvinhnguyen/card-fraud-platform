@@ -108,7 +108,7 @@ pipeline {
     }
   }
   post {
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // a release whose run or checks failed: the DAG goes back to the image released before
       script {
         if (env.RELEASED == 'true') {

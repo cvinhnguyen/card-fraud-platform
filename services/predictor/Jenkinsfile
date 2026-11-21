@@ -14,6 +14,37 @@
 // No disableConcurrentBuilds: a build waiting for approval must not hold up the next production release. The stage
 // Release holds the single executor (casc.yaml numExecutors: 1) from start to end, so two releases never interleave;
 // the wait for approval holds no executor (agent none).
+
+// The rollback, run when a stage below fails or the build is aborted in it (not when it is only unstable: a failed
+// Drift reference step leaves the new model serving). Every InferenceService this build applied goes back to the image
+// and version it ran before (deployed.txt), and the Scoring API to the split it had (ab-prev.txt).
+def rollBack() {
+  withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                   string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                   string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+    sh '''
+      if [ -f deployed.txt ]; then
+        while read isvc img v; do
+          if [ -n "$img" ]; then
+            sed -e "s|MODEL_IMAGE|$img|" -e "s|MODEL_VERSION|${v:-unknown}|" infra/k8s/kserve-$isvc.yaml | kubectl apply -f -
+            kubectl -n serving rollout status deploy/$isvc-predictor --timeout=300s || true
+            echo "$isvc rolled back to $img"
+          else
+            kubectl -n serving delete isvc $isvc --ignore-not-found
+            echo "$isvc removed: it did not run before this build"
+          fi
+        done < deployed.txt
+      fi
+      if [ -f ab-prev.txt ]; then
+        prev=$(cat ab-prev.txt)
+        SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=${prev:-0} \
+          $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
+        echo "A/B split back to ${prev:-0} %"
+      fi
+    '''
+  }
+}
+
 pipeline {
   agent none
   options {
@@ -258,37 +289,13 @@ pipeline {
         }
       }
       post {
-        failure {
-          // every InferenceService this build applied goes back to the image and version it ran before; the split too
-          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
-                           string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
-                           string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
-            sh '''
-              if [ -f deployed.txt ]; then
-                while read isvc img v; do
-                  if [ -n "$img" ]; then
-                    sed -e "s|MODEL_IMAGE|$img|" -e "s|MODEL_VERSION|${v:-unknown}|" infra/k8s/kserve-$isvc.yaml | kubectl apply -f -
-                    kubectl -n serving rollout status deploy/$isvc-predictor --timeout=300s || true
-                    echo "$isvc rolled back to $img"
-                  else
-                    kubectl -n serving delete isvc $isvc --ignore-not-found
-                    echo "$isvc removed: it did not run before this build"
-                  fi
-                done < deployed.txt
-              fi
-              if [ -f ab-prev.txt ]; then
-                SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=$(cat ab-prev.txt) \
-                  $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
-                echo "A/B split back to $(cat ab-prev.txt) %"
-              fi
-            '''
-          }
-        }
+        failure { script { rollBack() } }
+        aborted { script { rollBack() } }
         always {
           sh '''docker image rm fraud/predictor:test-production fraud/predictor:test-challenger >/dev/null 2>&1 || true
                 docker logout ghcr.io >/dev/null 2>&1 || true'''
         }
-        cleanup { sh 'rm -rf deployed.txt ab-prev.txt alias.json ghcr-pull.json services/predictor/model-*' }   // after failure, which reads them
+        cleanup { sh 'rm -rf deployed.txt ab-prev.txt alias.json ghcr-pull.json services/predictor/model-*' }   // after the rollback, which reads them
       }
     }
     stage('Approve the A/B test') {
@@ -329,19 +336,10 @@ pipeline {
         }
       }
       post {
-        failure {
-          // the Scoring API goes back to the split it had; the approval stays on the challenger for the next build
-          withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
-                           string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
-            sh '''
-              if [ -f ab-prev.txt ]; then
-                prev=$(cat ab-prev.txt)
-                SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=${prev:-0} \
-                  $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
-              fi
-            '''
-          }
-        }
+        // the Scoring API goes back to the split it had (deployed.txt is gone by now); the approval stays on the
+        // challenger for the next build
+        failure { script { rollBack() } }
+        aborted { script { rollBack() } }
         cleanup { sh 'rm -f ab-prev.txt' }
       }
     }

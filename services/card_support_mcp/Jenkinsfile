@@ -69,7 +69,7 @@ pipeline {
         stage('Deploy (helm --atomic)') {
           // one release per server, one after the other; rolling update with maxUnavailable 0; a release whose pods
           // never get Ready is rolled back by --atomic and stops the pipeline before the next server. deployed.txt lists
-          // the releases already upgraded, which post rolls back when a later step fails.
+          // the releases already upgraded, which post rolls back when a later step fails or the build is aborted.
           steps {
             withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
               sh '''
@@ -112,7 +112,7 @@ pipeline {
     }
   }
   post {
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // the servers already upgraded go back to their previous revision, so a failed build leaves the old set running
       withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
         sh '''
@@ -129,6 +129,6 @@ pipeline {
       }
     }
     always { sh 'docker image rm card-support-mcp:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
-    cleanup { sh 'rm -f deployed.txt' }   // cleanup runs after failure, which reads the file
+    cleanup { sh 'rm -f deployed.txt' }   // cleanup runs after the rollback, which reads the file
   }
 }

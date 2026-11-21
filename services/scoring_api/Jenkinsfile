@@ -96,7 +96,7 @@ pipeline {
     // the compose file's default image becomes the release too, so a `docker compose up` by hand keeps it
     // (docker ps then shows :latest; the commit is the image label org.opencontainers.image.revision)
     success { sh '[ -n "${TAG:-}" ] && docker image inspect $IMAGE:$TAG >/dev/null 2>&1 && docker tag $IMAGE:$TAG fraud/scoring-api:latest || true' }
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // the container goes back to the image it ran before this build, with the same A/B split
       withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
                        string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
@@ -111,6 +111,6 @@ pipeline {
       }
     }
     always { sh 'docker image rm fraud/scoring-api:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
-    cleanup { sh 'rm -f prev-image.txt mutmut.txt' }   // cleanup runs after failure, which reads the file
+    cleanup { sh 'rm -f prev-image.txt mutmut.txt' }   // cleanup runs after the rollback, which reads the file
   }
 }

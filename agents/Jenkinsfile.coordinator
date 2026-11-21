@@ -80,7 +80,7 @@ pipeline {
     }
   }
   post {
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // a release that is live but failed its readiness wait or smoke test goes back to the previous revision
       script {
         if (env.DEPLOYED == 'true') {

@@ -8,7 +8,34 @@
 // (the --live mode) is upgraded; a stopped job stays stopped. Its name carries the version: `rt_features <sha>`,
 // in the Flink UI and in `flink list`. If the new job does not restore the savepoint and complete a checkpoint
 // within 3 minutes, it is cancelled and the code that ran before is resubmitted from the same savepoint, so no state
-// is lost. Needs Flink up (profile stream).
+// is lost. Needs Flink up (profile stream). A job stopped by a build that then fails or is aborted before the job runs
+// again is listed in stopped.txt, and post resubmits its old code from the savepoint.
+
+// Shell helpers of the upgrade and of its rollback in post.
+def flinkHelpers() {
+  return '''
+    job_id() { curl -fsS "$FLINK/jobs/overview" | jq -r --arg n "$1" --arg s "$2" '.jobs[] | select(.name == $n and (.state | test($s))) | .jid' | head -1; }
+    running() {   # <job>: a RUNNING job of that name, any release
+      curl -fsS "$FLINK/jobs/overview" | jq -r --arg j "$1" \
+        '.jobs[] | select(.state == "RUNNING" and (.name == $j or (.name | startswith($j + " ")))) | .jid' | head -1
+    }
+    submit() {   # <file> <release or empty> <savepoint>
+      docker exec flink-jobmanager flink run -d -s "$3" -py "$1" $ARGS ${2:+--release $2} || true
+    }
+    healthy() {   # <job name> <savepoint>: RUNNING, restored from that savepoint, one checkpoint completed
+      for i in $(seq 36); do
+        id=$(job_id "$1" '^RUNNING$')
+        if [ -n "$id" ] && curl -fsS "$FLINK/jobs/$id/checkpoints" 2>/dev/null | jq -e --arg sp "${2##*/}" \
+            '((.latest.restored.external_path // "") | contains($sp)) and .counts.completed >= 1' >/dev/null; then
+          echo "$id"; return 0
+        fi
+        sleep 5
+      done
+      return 1
+    }
+  '''
+}
+
 pipeline {
   agent any
   options {
@@ -58,31 +85,16 @@ pipeline {
             }
           }
           steps {
-            sh '''
+            script { sh(flinkHelpers() + '''
               curl -fsS "$FLINK/overview" >/dev/null || { echo "Flink is not up (compose profile stream)" >&2; exit 1; }
               for c in flink-jobmanager flink-taskmanager; do
                 git archive HEAD pipelines/flink | docker exec -i $c sh -c \
                   "rm -rf /tmp/release/$TAG && mkdir -p /tmp/release/$TAG && tar -x -C /tmp/release/$TAG --strip-components=2"
               done
-              job_id() { curl -fsS "$FLINK/jobs/overview" | jq -r --arg n "$1" --arg s "$2" '.jobs[] | select(.name == $n and (.state | test($s))) | .jid' | head -1; }
-              submit() {   # <file> <release or empty> <savepoint>
-                docker exec flink-jobmanager flink run -d -s "$3" -py "$1" $ARGS ${2:+--release $2} || true
-              }
-              healthy() {   # <job name> <savepoint>: RUNNING, restored from that savepoint, one checkpoint completed
-                for i in $(seq 36); do
-                  id=$(job_id "$1" '^RUNNING$')
-                  if [ -n "$id" ] && curl -fsS "$FLINK/jobs/$id/checkpoints" 2>/dev/null | jq -e --arg sp "${2##*/}" \
-                      '((.latest.restored.external_path // "") | contains($sp)) and .counts.completed >= 1' >/dev/null; then
-                    echo "$id"; return 0
-                  fi
-                  sleep 5
-                done
-                return 1
-              }
+              : > stopped.txt   # "<job> <job id> <old file> <old release>" of each job being stopped, until it runs again
               for job in $LIVE; do
                 # by name: a raw_landing backfill also checkpoints, but it keeps Flink's default name and is never matched
-                jid=$(curl -fsS "$FLINK/jobs/overview" | jq -r --arg j "$job" \
-                  '.jobs[] | select(.state == "RUNNING" and (.name == $j or (.name | startswith($j + " ")))) | .jid' | head -1)
+                jid=$(running "$job")
                 if [ -z "$jid" ]; then echo "$job: not running, left as it is"; continue; fi
                 if ! curl -fsS "$FLINK/jobs/$jid/checkpoints/config" >/dev/null 2>&1; then
                   echo "$job ($jid): no checkpoints, a bounded run started by hand: left as it is"; continue
@@ -92,6 +104,7 @@ pipeline {
                 if [ -n "$old" ] && docker exec flink-jobmanager test -f /tmp/release/$old/$job.py; then oldfile=/tmp/release/$old/$job.py; fi
                 if [ "$old" = "$TAG" ]; then echo "$job: already on $TAG"; continue; fi
 
+                echo "$job $jid $oldfile $old" >> stopped.txt   # before the stop: an abort from here on is rolled back
                 rid=$(curl -fsS -X POST -H 'Content-Type: application/json' "$FLINK/jobs/$jid/stop" \
                   -d "$(jq -n --arg d "$SAVEPOINTS" '{targetDirectory: $d, drain: false}')" | jq -r '.["request-id"]')
                 for i in $(seq 60); do
@@ -106,20 +119,37 @@ pipeline {
                 submit /tmp/release/$TAG/$job.py "$TAG" "$sp"
                 if nid=$(healthy "$job $TAG" "$sp"); then
                   echo "$job: release $TAG running as $nid, state restored from $sp"
+                  sed -i "/^$job /d" stopped.txt
                   continue
                 fi
                 echo "$job: release $TAG did not restore and checkpoint in 3 min, back to ${old:-the working tree}" >&2
-                bad=$(job_id "$job $TAG" '^(CREATED|INITIALIZING|RUNNING|RESTARTING|FAILING)$')
-                [ -z "$bad" ] || curl -fsS -X PATCH "$FLINK/jobs/$bad?mode=cancel" >/dev/null
-                submit "$oldfile" "$old" "$sp"
-                if healthy "$(echo "$job $old" | sed 's/ *$//')" "$sp" >/dev/null; then echo "$job: rolled back to ${old:-the working tree}" >&2
-                else echo "$job: ROLLBACK FAILED, resubmit by hand from $sp (docs/data-platform/flink_jobs.md)" >&2; fi
-                exit 1
+                exit 1   # post cancels the new job and resubmits the old code from $sp
               done
-            '''
+            ''') }
           }
         }
       }
     }
+  }
+  post {
+    unsuccessful {   // failed or aborted: every job still in stopped.txt goes back to its old code, from its savepoint
+      script { sh(flinkHelpers() + '''
+        [ -s stopped.txt ] || exit 0
+        rc=0
+        while read job jid oldfile old <&3; do
+          bad=$(job_id "$job $TAG" '^(CREATED|INITIALIZING|RUNNING|RESTARTING|FAILING)$')
+          [ -z "$bad" ] || curl -fsS -X PATCH "$FLINK/jobs/$bad?mode=cancel" >/dev/null
+          if [ -n "$(running "$job")" ]; then echo "$job: running, left as it is"; continue; fi
+          # the savepoint the stop wrote (it may have completed after the abort)
+          sp=$(curl -fsS "$FLINK/jobs/$jid/checkpoints" | jq -r '.latest.savepoint.external_path // empty')
+          if [ -z "$sp" ]; then echo "$job: ROLLBACK FAILED, no savepoint of $jid: resubmit by hand (docs/data-platform/flink_jobs.md)" >&2; rc=1; continue; fi
+          submit "$oldfile" "$old" "$sp"
+          if healthy "$(echo "$job $old" | sed 's/ *$//')" "$sp" >/dev/null; then echo "$job: rolled back to ${old:-the working tree} from $sp"
+          else echo "$job: ROLLBACK FAILED, resubmit by hand from $sp (docs/data-platform/flink_jobs.md)" >&2; rc=1; fi
+        done 3< stopped.txt
+        exit $rc
+      ''') }
+    }
+    cleanup { sh 'rm -f stopped.txt' }   // after the rollback, which reads it
   }
 }

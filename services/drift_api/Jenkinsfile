@@ -91,7 +91,7 @@ pipeline {
     // the compose file's default image becomes the release too, so a `docker compose up` by hand keeps it
     // (docker ps then shows :latest; the commit is the image label org.opencontainers.image.revision)
     success { sh '[ -n "${TAG:-}" ] && docker image inspect $IMAGE:$TAG >/dev/null 2>&1 && docker tag $IMAGE:$TAG fraud/drift-api:latest || true' }
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       withCredentials([string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
         sh '''
           if [ -s prev-image.txt ]; then
@@ -104,6 +104,6 @@ pipeline {
       }
     }
     always { sh 'docker image rm fraud/drift-api:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
-    cleanup { sh 'rm -f prev-image.txt reference-path.txt mutmut.txt' }   // cleanup runs after failure, which reads them
+    cleanup { sh 'rm -f prev-image.txt reference-path.txt mutmut.txt' }   // cleanup runs after the rollback, which reads them
   }
 }

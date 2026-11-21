@@ -168,7 +168,7 @@ pipeline {
     }
   }
   post {
-    failure {
+    unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
       // a failed check after the switch: back to the release that ran before, and the Variable with it; the silver
       // tables the check run wrote go back to their versions before it (Delta RESTORE). The failed
       // check run is deleted too: the DAGs use depends_on_past, so a failed run would hold back every later run of
