@@ -135,8 +135,16 @@ pipeline {
     unsuccessful {   // failed or aborted: every job still in stopped.txt goes back to its old code, from its savepoint
       script { sh(flinkHelpers() + '''
         [ -s stopped.txt ] || exit 0
+        # an abort stops the docker exec client, not the `flink run` inside the container: let a submit of this
+        # release end first, or its job would start after the check below and run next to the old code
+        for i in $(seq 24); do docker top flink-jobmanager -eo pid,args | grep -q "/tmp/release/$TAG/" || break; sleep 5; done
         rc=0
         while read job jid oldfile old <&3; do
+          for i in $(seq 60); do   # a stop with savepoint still under way: wait until the old job has finished
+            [ "$(curl -fsS "$FLINK/jobs/$jid" | jq -r .state)" = RUNNING ] \
+              && [ "$(curl -fsS "$FLINK/jobs/$jid/checkpoints" | jq -r .counts.in_progress)" != 0 ] || break
+            sleep 5
+          done
           bad=$(job_id "$job $TAG" '^(CREATED|INITIALIZING|RUNNING|RESTARTING|FAILING)$')
           [ -z "$bad" ] || curl -fsS -X PATCH "$FLINK/jobs/$bad?mode=cancel" >/dev/null
           if [ -n "$(running "$job")" ]; then echo "$job: running, left as it is"; continue; fi

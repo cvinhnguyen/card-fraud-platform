@@ -16,5 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /v
 USER jenkins
 COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
-# no setup wizard: casc.yaml creates the admin user and the jobs
-ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Xmx512m" CASC_JENKINS_CONFIG=/var/jenkins_home/casc.yaml
+# no setup wizard: casc.yaml creates the admin user and the jobs. An aborted build gets 15 minutes before Jenkins
+# terminates its steps (default: seconds), so the rollback in post finishes: the longest, card-support-mcp, is three
+# helm rollbacks of up to 4 minutes. "Forcibly terminate" in the UI still stops a build at once.
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Xmx512m \
+-Dorg.jenkinsci.plugins.workflow.job.WorkflowRun.termGracePeriod=900s \
+-Dorg.jenkinsci.plugins.workflow.job.WorkflowRun.killGracePeriod=960s" CASC_JENKINS_CONFIG=/var/jenkins_home/casc.yaml
