@@ -46,7 +46,9 @@ pipeline {
                 def v = sh(returnStdout: true, script: '''
                   alias_version() {   # version behind an MLflow alias; empty when the alias does not exist
                     code=$(curl -sS -o alias.json -w '%{http_code}' "$MLFLOW/api/2.0/mlflow/registered-models/alias?name=$MODEL&alias=$1") || return 1
+                    # a missing alias: 404 on older MLflow, 400 "alias ... not found" on MLflow 3.16
                     [ "$code" = 404 ] && return 0
+                    [ "$code" = 400 ] && jq -e '.message | test("alias .* not found")' alias.json >/dev/null && return 0
                     [ "$code" = 200 ] || { echo "MLflow answered HTTP $code for alias $1" >&2; return 1; }
                     jq -r .model_version.version alias.json
                   }
