@@ -10,9 +10,10 @@ card support agents). Run when the documents change (manually or from CI); every
 | `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, fails the run on any failure |
 
 The steps (`ml/jobs/rag_ingest.py`) run in the ml image the CI pipeline built and released: Airflow Variable
-`rag_image` (pipelines/rag/Jenkinsfile sets it per release; fraud/ml-train:latest until then), as sibling
+`rag_image` (pipelines/rag/Jenkinsfile sets it per release to ghcr.io/cvinhnguyen/fraud-ml-train:<commit>; the local
+fraud/ml-train:latest until then), as sibling
 containers on the compose network, created through docker-proxy (Airflow has no Docker socket). Only
-fraud/ml-train images are accepted. Lineage to DataHub is declared with inlets / outlets.
+images of that code image are accepted. Lineage to DataHub is declared with inlets / outlets.
 """
 import re
 from datetime import datetime
@@ -38,10 +39,10 @@ IMAGE = "{{ rag_image() }}"
 
 
 def rag_image() -> str:
-    """The released image (Variable rag_image), only if it is one of the CI's fraud/ml-train builds."""
+    """The released image (Variable rag_image), only if it is the ml code image: a CI release in GHCR, or the local build."""
     image = Variable.get("rag_image", default_var="fraud/ml-train:latest")
-    if not re.fullmatch(r"fraud/ml-train:[A-Za-z0-9_.-]{1,64}", image):
-        raise AirflowException(f"rag_image {image!r} is not a fraud/ml-train image")
+    if not re.fullmatch(r"(ghcr\.io/cvinhnguyen/fraud-ml-train|fraud/ml-train):[A-Za-z0-9_.-]{1,64}", image):
+        raise AirflowException(f"rag_image {image!r} is not an ml-train image")
     return image
 
 

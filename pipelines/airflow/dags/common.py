@@ -5,6 +5,7 @@ lakehouse_s3, core_banking_db, spark_thrift), paths are Airflow variables; both 
 a DAG never touches the metadata database. Data never goes through XCom, only the path of a results file.
 """
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from airflow.datasets import Dataset as Published
@@ -15,6 +16,22 @@ from airflow.models import Variable
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.utils.task_group import TaskGroup
+
+# Which code runs (pipelines/airflow/Jenkinsfile). A release is a copy of the batch code (DAGs, Spark jobs, dbt, the
+# ml/ code the Layer 2 DAGs run) at one commit in /opt/release/<sha>/. Airflow reads it through the symlink
+# /opt/release/current, which Jenkins moves to the new copy. Before any release, current points at `local`, the
+# working tree mounted into the containers.
+CODE = "/opt/release/current"
+
+
+def release_of(path: str) -> str:
+    """The release a file belongs to: <sha> when it resolves into /opt/release/<sha>/, else `local`."""
+    parts = os.path.realpath(path).replace(os.sep, "/").split("/")
+    return parts[3] if len(parts) > 4 and parts[1:3] == ["opt", "release"] else "local"
+
+
+RELEASE = release_of(__file__)
+RELEASE_TAG = f"release:{RELEASE}"   # on every batch DAG: what the scheduler parsed (Jenkins waits for it)
 
 # depends_on_past: every load is incremental (labels as of ds, MERGE by export date), so day D must not run before
 # day D-1 succeeded. Without it a failed D-1 let D run first and D-1's labels were then skipped as already written.
@@ -43,8 +60,9 @@ def publish(zone: Published):
     """Last task of a pipeline: tell Airflow the zone has a new checked version; the business day travels on the event."""
     @task(task_id=f"publish_{zone.uri.rstrip('/').rsplit('/', 1)[-1]}", outlets=[zone])   # Airflow may add a final /
     def announce(day: str, *, outlet_events=None) -> str:
-        """Attach the business day to the dataset event the scheduler creates when this task succeeds."""
-        outlet_events[zone].extra = {"ds": day}
+        """Attach the business day and the code release to the dataset event the scheduler creates when this task
+        succeeds: each published version of a zone says which release wrote it."""
+        outlet_events[zone].extra = {"ds": day, "release": RELEASE}
         return day
     return announce(DAY)
 
@@ -65,7 +83,7 @@ FEAST_ENV = {
     **S3_ENV,
     "ML_DB_PASSWORD": "{{ conn.feast_registry.password }}",
     "REDIS_PASSWORD": "{{ conn.feast_online.password }}",
-    "PYTHONPATH": "/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip:/opt/airflow/ml",
+    "PYTHONPATH": f"/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip:{CODE}/ml",
 }
 SPARK_CONF = {
     # ponytail: 1.5 GB executors (2 GB in spark-defaults) so a pipeline run fits next to DataHub in the 8 GB Docker VM
@@ -75,6 +93,7 @@ SPARK_CONF = {
     # The scheduler is on two networks (default + airflow-docker for DockerOperator): its hostname resolves to the
     # airflow-docker address first, so a driver bound there refuses the executors, which reach it on the default one
     "spark.driver.bindAddress": "0.0.0.0",
+    "spark.fraud.release": RELEASE,   # Environment tab of the Spark UI / history server: the code release of the job
 }
 
 
@@ -189,7 +208,7 @@ def create_branch(branch: str) -> str:
 def commit_branch(branch: str, ds: str | None = None, run_id: str | None = None) -> str:
     """Commit what the run wrote on its branch: the exact state the checks read and the merge publishes."""
     c = lakefs("POST", f"/branches/{branch}/commits",
-               {"message": f"DP1 load for {ds}", "metadata": {"airflow_run_id": run_id, "ds": ds}})
+               {"message": f"DP1 load for {ds}", "metadata": {"airflow_run_id": run_id, "ds": ds, "release": RELEASE}})
     print(f"{branch}: commit {c['id']}" if c else f"{branch}: no new export, nothing to commit")
     return c.get("id", "")
 

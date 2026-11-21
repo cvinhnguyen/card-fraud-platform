@@ -82,7 +82,9 @@ Push the model image to ACR and deploy it on AKS:
 
 ```bash
 az acr login -n crcardfrauddev
-docker tag localhost:5001/fraud/predictor:1 crcardfrauddev.azurecr.io/fraud/predictor:1
+docker login ghcr.io -u <user>    # fraud-predictor is a private package; the token is read from the prompt
+docker pull ghcr.io/cvinhnguyen/fraud-predictor:v1-<commit>   # the image the predictor pipeline pushed
+docker tag ghcr.io/cvinhnguyen/fraud-predictor:v1-<commit> crcardfrauddev.azurecr.io/fraud/predictor:1
 docker push crcardfrauddev.azurecr.io/fraud/predictor:1
 sed -e "s#ACR#crcardfrauddev.azurecr.io#; s#MODEL_VERSION#1#" infra/k8s/aks/predictor.yaml |
   kubectl --kubeconfig infra/.secrets/aks-kubeconfig apply -f -
@@ -101,7 +103,7 @@ terraform destroy -var admin_cidr=0.0.0.0/32     # the VM and the node are bille
 |---|---|---|
 | The Windows PC (Ryzen 5 3600, 16 GB RAM, GTX 1070) | all of Layers 1-3: the compose profiles in the Docker Desktop VM (8 GB + 4 GB swap), the kind cluster, the two llama.cpp model servers on the GPU | always |
 | Azure, `rg-cardfraud-dev` in `polandcentral` | VNet, NSG, a VM running the fraud model server and node_exporter (Ansible), AKS running the same model server from ACR (kubectl) | one IaC run: created, checked, destroyed |
-| SaaS | GitHub (Jenkins polls it), Langfuse Cloud EU (agent prompts, eval experiments), Groq (side B of the LLM A/B test), Let's Encrypt + DuckDNS (the HTTPS certificate) | always |
+| SaaS | GitHub (Jenkins polls it; GHCR holds our images and their signatures), Langfuse Cloud EU (agent prompts, eval experiments), Groq (side B of the LLM A/B test), Let's Encrypt + DuckDNS (the HTTPS certificate) | always |
 
 ## Why not all of it on Azure
 
@@ -110,7 +112,6 @@ Every part is a container image, a compose service or a Helm chart, so most of i
 | On the PC | On Azure it would be |
 |---|---|
 | kind cluster: KFP, KServe, kagent, agentgateway, monitoring, Vault | AKS with the same charts and manifests; the NodePorts become a load balancer or the NGINX ingress |
-| local registry `localhost:5001` | ACR, as in the run below |
 | compose services: Kafka, Spark, Airflow, DataHub, Postgres, Redis, SeaweedFS | VMs configured by Ansible, as the model server here, or managed services: Event Hubs (Kafka API), Blob Storage, Azure Database for PostgreSQL, Azure Cache for Redis |
 | llama.cpp on the GTX 1070 | a GPU VM, or an LLM API such as Groq, already wired as side B of the A/B test |
 

@@ -4,18 +4,26 @@ Every component runs the code image fraud/ml-train (library + Feast repo), so a 
 re-run alone. Steps pass S3 paths and the MLflow run id; data stays in the lakehouse. `train` is distributed:
 its pod is the Spark driver and starts `executors` executor pods, the XGBoost workers.
 
-Usage (repo root, host venv with kfp + kfp-kubernetes):
+Releases (ml/pipelines/Jenkinsfile): the image ghcr.io/cvinhnguyen/fraud-ml-train:<git sha>, and a KFP pipeline
+version named <git sha> whose every step runs that image. The MLflow run of each training records the image (tag
+`ml_image`), so a model version leads back to the commit that trained it.
+
+Usage (repo root, host venv with kfp + kfp-kubernetes; ML_IMAGE = the image the steps run):
   python ml/pipelines/train_fraud_model.py --compile                                   # -> ml/pipelines/train_fraud_model.yaml
   python ml/pipelines/train_fraud_model.py --run --label-as-of 2026-10-15              # submit to the KFP API (default 127.0.0.1:31888)
+  ML_IMAGE=ghcr.io/cvinhnguyen/fraud-ml-train:<sha> python ml/pipelines/train_fraud_model.py --upload <sha>
+                                                       # new version <sha> of pipeline train_fraud_model; prints its ids
 """
 import argparse
+import json
 import os
 from typing import NamedTuple
 
 from kfp import compiler, dsl, kubernetes
 
-IMAGE = os.environ.get("ML_IMAGE", "localhost:5001/fraud/ml-train:latest")
+IMAGE = os.environ.get("ML_IMAGE", "ghcr.io/cvinhnguyen/fraud-ml-train:latest")
 KFP_HOST = os.environ.get("KFP_HOST", "http://127.0.0.1:31888")
+PIPELINE = "train_fraud_model"   # the KFP pipeline the releases are versions of
 
 
 def component(f):
@@ -25,9 +33,13 @@ def component(f):
 
 @component
 def load_labels(label_as_of: str, negative_rate: float, feature_service: str, kfp_run_id: str) -> str:
-    """Step 1: labels as of label_as_of + entity rows; starts the MLflow run and returns its id."""
+    """Step 1: labels as of label_as_of + entity rows; starts the MLflow run (tagged with the KFP run and the image the
+    steps run) and returns its id."""
+    import os
+
     from fraud_ml import steps
-    return steps.load_labels(label_as_of, negative_rate, feature_service, {"kfp_run_id": kfp_run_id})
+    return steps.load_labels(label_as_of, negative_rate, feature_service,
+                             {"kfp_run_id": kfp_run_id, "ml_image": os.environ["ML_IMAGE"]})
 
 
 @component
@@ -124,15 +136,38 @@ def train_fraud_model(label_as_of: str = "2026-10-15", negative_rate: float = 0.
                  label_as_of=label_as_of, feature_service=feature_service), "2Gi")
 
 
+def images(package: str) -> set[str]:
+    """Every container image a compiled package runs."""
+    with open(package, encoding="utf-8") as f:
+        return {line.split("image:", 1)[1].strip() for line in f if line.strip().startswith("image:")}
+
+
+def upload(package: str, version: str) -> dict:
+    """The package as version `version` of the KFP pipeline (created on the first release); an existing version of
+    that name is reused, so a rebuild of the same commit changes nothing. Returns what the drift DAG needs."""
+    import kfp
+    client = kfp.Client(host=KFP_HOST)
+    pipeline_id = client.get_pipeline_id(PIPELINE) or client.upload_pipeline(package, PIPELINE).pipeline_id
+    versions = client.list_pipeline_versions(pipeline_id, page_size=200).pipeline_versions
+    found = [v for v in versions or [] if v.display_name == version]
+    v = found[0] if found else client.upload_pipeline_version(package, version, pipeline_id=pipeline_id)
+    return {"pipeline_id": pipeline_id, "version_id": v.pipeline_version_id, "version": version, "image": IMAGE}
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--compile", action="store_true")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--upload", metavar="VERSION", help="upload as this pipeline version (the git sha of ML_IMAGE)")
     ap.add_argument("--label-as-of", default="2026-10-15")
     a = ap.parse_args()
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_fraud_model.yaml")
     compiler.Compiler().compile(train_fraud_model, out)
-    print(f"compiled {out}")
+    assert images(out) == {IMAGE}, f"steps run {images(out)}, expected only {IMAGE}"
+    print(f"compiled {out}, every step on {IMAGE}")
+    if a.upload:
+        assert IMAGE.endswith(f":{a.upload}"), f"ML_IMAGE {IMAGE} is not the image of version {a.upload}"
+        print(json.dumps(upload(out, a.upload)))   # last line: the release (Jenkins stores it in Airflow)
     if a.run:
         import kfp
         run = kfp.Client(host=KFP_HOST).create_run_from_pipeline_package(

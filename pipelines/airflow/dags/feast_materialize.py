@@ -13,10 +13,10 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
-from common import DAY, DAY_EXPR, DEFAULT_ARGS, FEAST, FEAST_ENV, FEATURES
+from common import CODE, DAY, DAY_EXPR, DEFAULT_ARGS, FEAST, FEAST_ENV, FEATURES, RELEASE_TAG
 
 with DAG("feast_materialize", schedule=[FEATURES], start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
-         default_args={**DEFAULT_ARGS, "owner": "ml-platform"}, doc_md=__doc__, tags=["layer2", "feast"]) as dag:
+         default_args={**DEFAULT_ARGS, "owner": "ml-platform"}, doc_md=__doc__, tags=["layer2", "feast", RELEASE_TAG]) as dag:
     materialize = BashOperator(
         task_id="materialize_incremental", pool="spark", append_env=True, env=FEAST_ENV,
         bash_command=f"cd {{{{ var.value.feast_repo }}}} && {FEAST}/feast materialize-incremental "
@@ -24,6 +24,6 @@ with DAG("feast_materialize", schedule=[FEATURES], start_date=datetime(2026, 10,
 
     check = BashOperator(
         task_id="check_online", append_env=True, env=FEAST_ENV,
-        bash_command=f"{FEAST}/python /opt/airflow/ml/tools/check_online.py --repo {{{{ var.value.feast_repo }}}} --ds {DAY}")
+        bash_command=f"{FEAST}/python {CODE}/ml/tools/check_online.py --repo {{{{ var.value.feast_repo }}}} --ds {DAY}")
 
     materialize >> check

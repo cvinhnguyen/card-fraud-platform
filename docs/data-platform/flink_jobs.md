@@ -18,13 +18,13 @@ output with a pandas recomputation from the Parquet files.
 
 ## Where it fits
 
-Two of the jobs feed the platform all the time. `rt_features.py` and `device_seen.py` write the realtime features to
+Three of the jobs feed the platform all the time. `rt_features.py` and `device_seen.py` write the realtime features to
 Kafka, where the push jobs `push-online` and `push-offline` pick them up for the Feast online and offline stores
-([feature_store.md](../ml-platform/feature_store.md)). `raw_landing.py`, started by hand for a load, writes every raw
-payment as a JSON file under `landing/`, which DP1 (data pipeline: ingest to bronze) loads into
-`bronze.raw_card_authorizations` ([spark_jobs.md](spark_jobs.md)). The other jobs show how each streaming problem is
-solved, from baseline to fix, and run as replays against a fixed slice of the stream. The account takeover job with
-Flink SQL is one of Layer 1's two novel ideas ([novel_flink_cep.md](novel_flink_cep.md)). In the platform overview the
+([feature_store.md](../ml-platform/feature_store.md)). `raw_landing.py` writes every raw payment as a JSON file under
+`landing/`, which DP1 (data pipeline: ingest to bronze) loads into `bronze.raw_card_authorizations` every night
+([spark_jobs.md](spark_jobs.md)). Jenkins upgrades these three jobs ([Releases](#releases-cicd)). The other jobs show
+how each streaming problem is solved, from baseline to fix, and run as replays against a fixed slice of the stream.
+The account takeover job with Flink SQL is one of Layer 1's two novel ideas ([novel_flink_cep.md](novel_flink_cep.md)). In the platform overview the
 jobs are the streaming row of Layer 1 ([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)), and in
 the system diagram the arrows R3 to R5 ([numbered arrows](../architecture.md#numbered-arrows)).
 
@@ -59,16 +59,47 @@ python pipelines/flink/check_features.py --replay-from "2025-03-01 00:00" --limi
 python pipelines/flink/check_ato.py --replay-from "2024-03-01 00:00" --limit 150000        # out-of-order sessions
 python pipelines/flink/check_ato_cep.py --replay-from "2026-03-01 00:00" --limit 300000    # takeover patterns, Flink CEP
 python pipelines/flink/check_hot_key.py --replay-from "2025-01-01 00:00" --limit 1000000   # hot key, parallelism 4
-docker exec flink-jobmanager flink run -py /opt/flink/jobs/raw_landing.py         # raw events -> S3 landing
 
-# the two jobs that feed Feast, unbounded (-d returns once the job is submitted)
+# the three always-on jobs, unbounded (-d returns once the job is submitted)
 docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/rt_features.py --topic card_authorizations --live
 docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/device_seen.py --topic card_authorizations --live
+docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/raw_landing.py --topic card_authorizations --live
 ```
+
+The three live jobs use 3 of the 6 slots (parallelism 1 each). `check_hot_key.py` needs 4, one more than are free,
+so cancel `raw_landing` before it and start it again after (see [Gotchas](#gotchas)).
 
 Each `check_*.py` loads a fixed slice of the generated stream into a replay topic, runs the job over it as a bounded
 job (from the earliest to the latest offset, then it stops), reads the output topic and recomputes the expected
 result from the Parquet files with pandas. The numbers below are those comparisons.
+
+### Releases (CI/CD)
+
+The Jenkins job `flink-jobs` ([`pipelines/flink/Jenkinsfile`](../../pipelines/flink/Jenkinsfile)) runs on every
+change under `pipelines/flink/`. It lints the jobs (`ruff check --select E9,F`) and imports each one in the Flink
+image. The `check_*.py` scripts stay manual: they reset topics and need the generated Parquet files.
+
+When `rt_features.py`, `device_seen.py` or `raw_landing.py` change, it also upgrades that job if it is running live
+(RUNNING, with checkpoints on). A stopped job stays stopped, and a bounded run started by hand is left alone. A
+`raw_landing.py` backfill also checkpoints, but it keeps Flink's default job name, so Jenkins never picks it up. The
+upgrade:
+
+1. copies the commit's job files into both Flink containers at `/tmp/release/<sha>/`
+2. stops the job with a savepoint in `s3://lakehouse/flink/savepoints`
+3. submits the new code from that savepoint, with `--release <sha>`: the job is named `rt_features <sha>`
+4. waits up to 3 minutes for the new job to run, restore the savepoint and complete a checkpoint
+
+If step 4 fails, it cancels the new job and resubmits the code that ran before from the same savepoint, so the
+job's state is not lost: the dedup and the 1-hour windows of `rt_features`, the Kafka offsets and open files of
+`raw_landing`. The version is in the job name, in the Flink UI and in `flink list`. A job started by hand without
+`--release` keeps the plain name.
+
+The operators have no explicit uid, so Flink maps savepoint state by the shape of the job graph. A change inside a
+function keeps that shape and restores. A change that adds or removes an operator does not, and the job then goes
+back to the old code: such a change needs a manual restart without the savepoint. For `raw_landing.py` the operators
+come from the SQL query plan, and the same rule holds. A restart of `raw_landing.py --live` without the savepoint loses
+nothing: it resumes from the Kafka offsets committed with its last checkpoint, which is also when its files were
+committed.
 
 ## Jobs
 
@@ -85,6 +116,7 @@ latest when it started, so its output is complete and can be compared with panda
 platform are unbounded and stay RUNNING until they are cancelled: `rt_features.py --live` and `device_seen.py --live`
 read `card_authorizations` from their committed offsets and feed the Feast push jobs
 ([feature_store.md](../ml-platform/feature_store.md); [`rt_features` running](#live-the-job-stays-running)).
+`raw_landing.py --live` reads the same topic the same way and writes the landing files for DP1.
 `hot_key.py --live` runs the hot-key test the same way, fed at a fixed rate
 ([screenshots](#at-a-fixed-input-rate-live-mode)).
 
@@ -96,7 +128,7 @@ read `card_authorizations` from their committed offsets and feed the Feast push 
 | `ato_sequence.py --order arrival\|event` | account takeover sequences in the app events, with a hand-written state machine; out-of-order events are sorted by event time | `app_events_replay` | `ato_alerts_<order>` | replay check |
 | `ato_cep.py` (Flink SQL, MATCH_RECOGNIZE; [novel idea](novel_flink_cep.md)) | the same takeover patterns written as SQL row patterns | `app_events_replay` | `ato_alerts_cep` | replay check |
 | `hot_key.py --mode hot\|two_phase [--live]` (parallelism 4) | authorizations per unit when one unit (Ho Chi Minh) is most of the traffic | `card_auth_replay` | `unit_counts_<mode>` | replay check; `--live` at a fixed rate |
-| `raw_landing.py` (Flink SQL) | every raw payment as a file, for bronze | `card_authorizations` | `s3://lakehouse/landing/card_authorizations/auth_date=*/` | by hand: the whole topic, or from a Kafka time (`--from-ms`), then it stops |
+| `raw_landing.py` (Flink SQL) | every raw payment as a file, for bronze | `card_authorizations` | `s3://lakehouse/landing/card_authorizations/auth_date=*/` | `--live` always on; backfill by hand: the whole topic, or from a Kafka time (`--from-ms`), then it stops |
 
 ## What each optimization changed
 
@@ -469,17 +501,25 @@ Flink SQL in
 [`pipelines/flink/raw_landing.py`
 L25-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/raw_landing.py#L25-L53)
 copies `card_authorizations` unchanged (duplicates and late events included, plus Kafka partition and offset for
-tracing) to `s3://lakehouse/landing/card_authorizations/auth_date=YYYY-MM-DD/` as JSON lines; the file sink commits
-files on checkpoints (every 10 s). `ingest_bronze.py --part landing` then appends them to the Delta table
+tracing) to `s3://lakehouse/landing/card_authorizations/auth_date=YYYY-MM-DD/` as JSON lines. In the platform it runs
+with `--live`: unbounded, from the committed offsets of group `raw_landing` (the whole topic on the first start).
+Without `--live` it is a backfill that stops at the end of the topic. Run a backfill only while the live job is
+stopped, or both land the same messages.
+
+The file sink closes a part file at 64 MB, or 30 minutes after it opened, and commits it with the next checkpoint
+(every 10 s). Until then the file is an unfinished S3 multipart upload, and the small temporary objects Flink keeps
+next to it start with `_`, which Spark skips. So no reader sees a half-written file.
+`ingest_bronze.py --part landing` then appends the committed files to the Delta table
 `bronze.raw_card_authorizations` with a Spark file stream (`trigger(availableNow=True)`,
 [`pipelines/spark/ingest_bronze.py`
 L110-L114](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/ingest_bronze.py#L110-L114)):
 its checkpoint remembers which files were loaded, so a late event that adds a file to an older `auth_date` is still
-picked up, and a re-run loads nothing twice.
+picked up, and a re-run loads nothing twice. DP1 does not pick a partition: each night it loads every file committed
+since the last run. A day the live job is still writing is loaded in part, and the rest of it comes with the next run.
 
 | Step | Result |
 |---|---|
-| `raw_landing.py` on the 50,000-event topic | 8 `auth_date` partitions, 14.8 MB, 5 s |
+| `raw_landing.py` (backfill) on the 50,000-event topic | 8 `auth_date` partitions, 14.8 MB, 5 s |
 | `ingest_bronze.py --part landing` | `bronze.raw_card_authorizations`: 50,000 rows (52 s) |
 | same command again | still 50,000 rows |
 
@@ -501,3 +541,10 @@ none, and Spark writes Delta in the next step.
   a side-output tag typed as a tuple fails to pickle, so the late-event tag is untyped
   ([`pipelines/flink/auth_windows.py`
   L121-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/auth_windows.py#L121-L122)).
+- The TaskManager has 6 slots and the three live jobs hold 3. A job that needs more slots than are free does not
+  start: it waits for slots, then fails with `NoResourceAvailableException`. `check_hot_key.py` and `hot_key.py --live` run with
+  parallelism 4, so cancel `raw_landing` first (`flink list`, then `flink cancel <job id>`). Start it again after
+  with the release it ran, which `flink list` shows in the job name:
+  `flink run -d -py /tmp/release/<sha>/raw_landing.py --topic card_authorizations --live --release <sha>`. A name
+  without a version means the working tree: use the command under [Run it](#run-it). It resumes from its committed
+  offsets and loses nothing.

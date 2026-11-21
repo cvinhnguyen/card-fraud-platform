@@ -380,8 +380,9 @@ L14-L60](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597
 
 | Variable | Value |
 |---|---|
-| `spark_jobs_dir` | `/opt/jobs` (the `pipelines/spark/` folder, mounted in the Spark and Airflow containers) |
-| `dbt_project_dir`, `dbt_artifacts_dir` | `/opt/airflow/dbt` (read-only), `/opt/airflow/dbt-artifacts` (target + logs volume) |
+| `spark_jobs_dir` | `/opt/release/current/spark` (the `pipelines/spark/` folder of the live release, see [Releases](#releases-cicd)) |
+| `dbt_project_dir`, `dbt_artifacts_dir` | `/opt/release/current/dbt` (read-only), `/opt/airflow/dbt-artifacts` (target + logs volume) |
+| `batch_release` | the commit of the live release, set by Jenkins; absent before the first release |
 | `export_bucket`, `lakehouse_bucket`, `validation_prefix` | `core-banking-export`, `lakehouse`, `_validation` |
 
 The Connections page (Admin menu) shows hosts and descriptions only; the passwords are stored encrypted:
@@ -437,6 +438,63 @@ def publish(zone: Published):
         return day
     return announce(DAY)
 ```
+
+The event also carries the code release that wrote the zone:
+`{"ds": "2026-11-08", "release": "<sha>"}` (see the next section).
+
+## Releases (CI/CD)
+
+The DAGs, the Spark jobs, the dbt project and the `ml/` code the Layer 2 DAGs run are released together by the
+Jenkins job `batch-pipelines`
+([`pipelines/airflow/Jenkinsfile`](../../pipelines/airflow/Jenkinsfile)). A release is a copy of one commit. Its
+version is the git short sha.
+
+Airflow reads all of this code through one path, `/opt/release/current`, in the Docker volume
+`fraud_batch_release`. `current` is a symlink. Airflow's DAG folder is `/opt/release/current/dags`, and the
+Variables `spark_jobs_dir`, `dbt_project_dir` and `feast_repo` point under it too. A release copies the commit into
+`/opt/release/<sha>/` and then moves the symlink. DAGs, jobs and dbt switch together, between two tasks, and Airflow
+keeps running. The Spark drivers run in the scheduler, so the Spark jobs that Airflow starts read the released files
+as well. This is the pattern git-sync uses in Airflow's Helm chart. It was chosen because Jenkins holds only the
+Airflow admin credential: recreating the Airflow containers would need Airflow's own secrets.
+
+Before the first release, `current` points at `local`. `local` holds symlinks to the working tree, which is
+mounted into the containers. So a fresh `docker compose up` works without Jenkins, and editing a DAG in
+the working tree still shows up within a minute. The one-shot service `batch-release-init` sets this up on the first
+start ([`pipelines/airflow/release.sh`](../../pipelines/airflow/release.sh) `seed`).
+
+What the Jenkins job does:
+
+| Stage | What it checks or does |
+|---|---|
+| Lint | `ruff check --select E9,F` (syntax errors, undefined names, unused imports) on `pipelines/airflow` and `pipelines/spark` |
+| Unit tests | the ml library's tests (ml image's test stage) and `pipelines/airflow/test_release.sh` |
+| DAG check | every DAG file imports in the Airflow image, and each batch DAG has exactly its tasks ([`check_dags.py`](../../pipelines/airflow/check_dags.py)) |
+| dbt parse | models, sources, refs and tests resolve with target `session`. `dbt build` and its tests need the lakehouse, so they run in DP2 itself |
+| Release | copies the commit into the volume, moves `current`, sets the Variable `batch_release` |
+| Scheduler parsed it | waits until every batch DAG has the tag `release:<sha>` and Airflow reports no import error |
+| Run + checks | runs `dp2_bronze_to_silver` and prints its Great Expectations results. Its publish starts the gold, features and materialize pipelines on the new release, as any run does |
+
+If a stage after the switch fails, the job moves `current` back to the release before it and resets
+`batch_release`.
+
+Where to see which version runs:
+
+- the Variable `batch_release` (Admin, Variables), written by Jenkins
+- the tag `release:<sha>` on each batch DAG, which is what the scheduler parsed (`release:local` = the working tree)
+- the dataset event of each published zone, `"release": "<sha>"`
+- the lakeFS commit of each DP1 load, metadata `release`
+- the Spark conf `spark.fraud.release` in the Environment tab of the Spark UI and the history server
+
+To roll back or go back to the working tree by hand (Airflow picks it up within a minute):
+
+```bash
+docker run -i --rm --user 0 --entrypoint sh -v fraud_batch_release:/opt/release fraud/airflow:2.10.5 \
+  -s switch previous < pipelines/airflow/release.sh        # or: switch local, switch <sha>, show
+```
+
+A DAG run that is in progress when `current` moves runs its next tasks on the new release. The Spark containers keep
+the working tree at `/opt/jobs` for jobs submitted by hand. `rag_ingest.py` sits in the same DAG folder, so its DAG
+file goes out with these releases too; the image its steps run is released by the RAG pipeline.
 
 ## Backfill run
 

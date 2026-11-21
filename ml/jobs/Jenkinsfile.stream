@@ -1,6 +1,8 @@
 // CI/CD of the stream feature jobs (push-online -> Redis, push-offline -> Delta): unit tests in the ml image's test
-// stage -> build the runtime image -> recreate both compose services on it -> smoke test one message end to end.
-// Runs when the jobs, the ML library, the Feast repo or the image changed (Jenkins polls main), or by hand.
+// stage -> build + push ghcr.io/cvinhnguyen/fraud-ml-train:<commit> -> recreate both compose services on that tag ->
+// smoke test one message end to end. Runs when the jobs, the ML library, the Feast repo or the image changed (Jenkins
+// polls main), or by hand. The running containers show the release: their image is the commit's tag. If the smoke
+// test fails after the deploy, post recreates both services on the image they ran before.
 pipeline {
   agent any
   options {
@@ -11,6 +13,7 @@ pipeline {
   }
   environment {
     COMPOSE = 'docker compose -p fraud -f infra/docker-compose.yaml'
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-ml-train'   // the same package the training pipeline releases
   }
   stages {
     stage('Stream feature jobs') {
@@ -25,7 +28,7 @@ pipeline {
         stage('Version') {
           steps {
             script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
-            echo "image fraud/ml-train:${TAG}"
+            echo "image ${IMAGE}:${TAG}"
           }
         }
         stage('Unit tests') {
@@ -34,20 +37,26 @@ pipeline {
             sh 'docker run --rm fraud/ml-train:test-$TAG'
           }
         }
-        stage('Build image') {
+        stage('Build + push image') {
           steps {
-            sh 'docker build -f ml/Dockerfile -t fraud/ml-train:$TAG -t fraud/ml-train:latest .'
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''docker build -f ml/Dockerfile --label org.opencontainers.image.revision=$(git rev-parse HEAD) -t $IMAGE:$TAG . && docker push $IMAGE:$TAG'''
+            }
           }
         }
         stage('Deploy') {
-          // the services run fraud/ml-train:latest; Kafka is started if it is down (the jobs consume it)
+          // both services move to this commit's image (PUSH_JOBS_IMAGE); prev-image.txt keeps the image they ran
+          // before, which post puts back on failure. Kafka is started if it is down (the jobs consume it)
           steps {
             withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
                              string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD'),
                              string(credentialsId: 's3-access-key', variable: 'S3_ACCESS_KEY'),
                              string(credentialsId: 's3-secret-key', variable: 'S3_SECRET_KEY')]) {
               sh '$COMPOSE --profile core up -d --no-deps --wait kafka'
-              sh '$COMPOSE --profile ml up -d --no-deps --force-recreate push-online push-offline'
+              script { env.DEPLOYED = 'true' }   // from here on a failure puts the previous image back (post)
+              sh "docker inspect push-online --format '{{.Config.Image}}' > prev-image.txt 2>/dev/null || : > prev-image.txt"
+              sh 'PUSH_JOBS_IMAGE=$IMAGE:$TAG $COMPOSE --profile ml up -d --no-deps --force-recreate push-online push-offline'
               sh 'sleep 5; docker ps --filter name=push- --format "{{.Names}} {{.Image}} {{.Status}}"'
             }
           }
@@ -59,7 +68,7 @@ pipeline {
                              string(credentialsId: 's3-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                              string(credentialsId: 's3-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
               sh '''docker run --rm --network fraud_default -e ML_DB_PASSWORD -e REDIS_PASSWORD -e AWS_ACCESS_KEY_ID \
-                      -e AWS_SECRET_ACCESS_KEY fraud/ml-train:$TAG python3 /opt/ml/tools/stream_smoke.py --timeout 180'''
+                      -e AWS_SECRET_ACCESS_KEY $IMAGE:$TAG python3 /opt/ml/tools/stream_smoke.py --timeout 180'''
             }
           }
         }
@@ -67,7 +76,23 @@ pipeline {
     }
   }
   post {
-    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
-    failure { sh 'docker logs --tail 30 push-online 2>&1 || true; docker logs --tail 30 push-offline 2>&1 || true' }
+    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
+    failure {
+      sh 'docker logs --tail 30 push-online 2>&1 || true; docker logs --tail 30 push-offline 2>&1 || true'
+      script {
+        if (env.DEPLOYED == 'true') {
+          withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                           string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD'),
+                           string(credentialsId: 's3-access-key', variable: 'S3_ACCESS_KEY'),
+                           string(credentialsId: 's3-secret-key', variable: 'S3_SECRET_KEY')]) {
+            sh '''
+              [ -s prev-image.txt ] || { echo "no previous image to roll back to"; exit 0; }
+              PUSH_JOBS_IMAGE=$(cat prev-image.txt) $COMPOSE --profile ml up -d --no-deps --force-recreate push-online push-offline
+              echo "push-online, push-offline back on $(cat prev-image.txt)"
+            '''
+          }
+        }
+      }
+    }
   }
 }

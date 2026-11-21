@@ -1,0 +1,345 @@
+// CD of the fraud model server (KServe, kind namespace serving). The MLflow aliases of card_fraud_xgb say what runs:
+// production -> InferenceService card-fraud, challenger -> card-fraud-challenger (the A/B test, only while it differs
+// from production). For each model that is not live yet: fetch it -> release check (pytest in the image) -> build +
+// push ghcr.io/cvinhnguyen/fraud-predictor:v<model version>-<commit> -> sign -> apply with the annotation
+// fraud.platform/model-version -> wait Ready -> smoke test (predict answers that version). A failure re-applies the
+// image each InferenceService ran before. Then a new production model becomes the Drift API's reference.
+// Human steps: a production release needs no approval here, because a person moving the alias production in MLflow
+// is the approval. A new challenger is deployed with no traffic; the Scoring API's A/B split goes on only after a
+// person approves at the input "Start the A/B test". After 7 days without an answer, or on Abort, the build ends as
+// aborted, the split stays off and the challenger keeps running with no traffic (a manual run asks again). The
+// approver is recorded in the build log and on the InferenceService (fraud.platform/ab-approved-version, -by).
+// Checked every 15 min (an alias moved in MLflow), run when services/predictor or the manifests changed (Jenkins
+// polls main), or by hand.
+// No disableConcurrentBuilds: a build waiting for approval must not hold up the next production release. The stage
+// Release holds the single executor (casc.yaml numExecutors: 1) from start to end, so two releases never interleave;
+// the wait for approval holds no executor (agent none).
+pipeline {
+  agent none
+  options {
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
+  triggers { cron('H/15 * * * *') }
+  environment {
+    SVC = 'services/predictor'
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-predictor'
+    MLFLOW = 'http://mlflow:5000'   // compose service: Jenkins is on the compose network
+    MODEL = 'card_fraud_xgb'
+    COMPOSE = 'docker compose -p fraud -f infra/docker-compose.yaml'
+    AB_SHARE = '10'   // % of the cards (sticky by card_id) the challenger scores once the A/B test is approved
+  }
+  stages {
+    stage('Release') {
+      agent any
+      options { timeout(time: 60, unit: 'MINUTES') }
+      stages {
+        stage('Changed?') {
+          // a change of the predictor or its manifests, or a manual run, rebuilds what runs even when no alias moved
+          when { anyOf { changeset 'services/predictor/**'; changeset 'infra/k8s/kserve-card-fraud*.yaml'; triggeredBy 'UserIdCause' } }
+          steps { script { env.FORCE = 'true' } }
+        }
+        stage('Aliases vs what runs') {
+          steps {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+              script {
+                def v = sh(returnStdout: true, script: '''
+                  alias_version() {   # version behind an MLflow alias; empty when the alias does not exist
+                    code=$(curl -sS -o alias.json -w '%{http_code}' "$MLFLOW/api/2.0/mlflow/registered-models/alias?name=$MODEL&alias=$1") || return 1
+                    [ "$code" = 404 ] && return 0
+                    [ "$code" = 200 ] || { echo "MLflow answered HTTP $code for alias $1" >&2; return 1; }
+                    jq -r .model_version.version alias.json
+                  }
+                  ann() {   # annotation $2 (after fraud.platform/) of InferenceService $1; empty when either is missing
+                    kubectl -n serving get isvc "$1" -o jsonpath="{.metadata.annotations.fraud\\.platform/$2}" 2>/dev/null || true
+                  }
+                  kubectl -n serving get isvc >/dev/null   # the cluster answers and Jenkins may read serving
+                  p=$(alias_version production) || exit 1
+                  c=$(alias_version challenger) || exit 1
+                  lp=$(ann card-fraud model-version); lc=$(ann card-fraud-challenger model-version)
+                  ok=$(ann card-fraud-challenger ab-approved-version)
+                  echo "${p:--} ${c:--} ${lp:--} ${lc:--} ${ok:--}"
+                ''').trim().tokenize(' ')   // '-' = none (versions are plain numbers)
+                String prod = v[0].replace('-', ''), chal = v[1].replace('-', ''), liveProd = v[2].replace('-', ''),
+                       liveChal = v[3].replace('-', ''), approved = v[4].replace('-', '')
+                if (!prod) { error "no model behind the alias production of ${env.MODEL}" }
+                env.PROD = prod; env.CHAL = chal; env.LIVE_PROD = liveProd; env.LIVE_CHAL = liveChal
+                env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                boolean force = env.FORCE == 'true'
+                boolean newProd = force || prod != liveProd
+                boolean wantChal = chal != '' && chal != prod
+                boolean newChal = wantChal && (force || chal != liveChal)
+                def releases = []   // <InferenceService>:<alias>:<model version>
+                if (newProd) { releases << "card-fraud:production:${prod}" }
+                if (newChal) { releases << "card-fraud-challenger:challenger:${chal}" }
+                env.RELEASES = releases.join(' ')
+                env.NEW_PROD = newProd ? 'true' : 'false'
+                env.REMOVE_CHALLENGER = (!wantChal && liveChal != '') ? 'true' : 'false'
+                // traffic only for a challenger version a person approved; a new version starts with none and asks
+                env.AB_WANTED = (wantChal && approved == chal) ? env.AB_SHARE : '0'
+                env.ASK_AB = (newChal && approved != chal) ? 'true' : 'false'
+                echo "production v${prod} (live: v${liveProd ?: '-'}) | challenger v${chal ?: '-'} (live: v${liveChal ?: '-'}, approved: v${approved ?: '-'})"
+                echo "release: ${env.RELEASES ?: 'nothing'} | remove challenger: ${env.REMOVE_CHALLENGER} | split: ${env.AB_WANTED} % | ask approval: ${env.ASK_AB}"
+              }
+            }
+          }
+        }
+        stage('Fetch models') {
+          // fetch_model.py in the image's fetch stage (mlflow + xgboost), on the compose network; the model comes back
+          // as a tar on stdout, because Jenkins' workspace is not a host path a container could mount
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            sh '''
+              docker build -q --target fetch -t fraud/predictor-fetch:ci $SVC >/dev/null
+              for r in $RELEASES; do
+                set -- $(echo "$r" | tr : ' ')
+                rm -rf $SVC/model-$2 && mkdir -p $SVC/model-$2
+                docker run --rm --network fraud_default -e MLFLOW_TRACKING_URI=$MLFLOW -e MLFLOW_DISABLE_AGENT_HINT=1 \
+                  fraud/predictor-fetch:ci sh -c "python fetch_model.py --alias $2 --out /tmp/model >&2 && tar -C /tmp/model -c ." \
+                  | tar -x -C $SVC/model-$2
+                [ -s $SVC/model-$2/model.json ] || { echo "fetch of alias $2 gave no model" >&2; exit 1; }
+                jq -c '{version, alias, run_id}' $SVC/model-$2/metadata.json
+              done
+            '''
+          }
+        }
+        stage('Release check (pytest)') {
+          // services/predictor/test_predictor.py in the image: the model loads, scores, is the planned version and
+          // matches its drift reference profile
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            sh '''
+              for r in $RELEASES; do
+                set -- $(echo "$r" | tr : ' ')
+                docker build --target test --build-arg MODEL=model-$2 -t fraud/predictor:test-$2 $SVC
+                docker run --rm -e EXPECTED_VERSION=$3 fraud/predictor:test-$2
+              done
+            '''
+          }
+        }
+        stage('Build + push image') {
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''
+                for r in $RELEASES; do
+                  set -- $(echo "$r" | tr : ' ')
+                  docker build --build-arg MODEL=model-$2 --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
+                    --label fraud.platform/model-version=$3 -t $IMAGE:v$3-$TAG $SVC
+                  docker push $IMAGE:v$3-$TAG
+                done
+              '''
+            }
+          }
+        }
+        stage('Sign image (cosign)') {
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            withCredentials([string(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
+                             string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
+              sh 'for r in $RELEASES; do set -- $(echo "$r" | tr : " "); sh infra/k8s/supply-chain.sh sign fraud-predictor v$3-$TAG; done'
+            }
+          }
+        }
+        stage('Deploy') {
+          // deployed.txt keeps "<InferenceService> <image> <model version>" as they were before this build: the
+          // rollback in post re-applies them (or deletes an InferenceService that did not exist). A new challenger
+          // gets no traffic here: the split follows AB_WANTED below.
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                             usernamePassword(credentialsId: 'ghcr-pull', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              // fraud-predictor is a private package (it holds the model): the pods pull it with the Secret ghcr-pull,
+              // created or updated here from the read-only token (read:packages); the push token stays in Jenkins. The token goes through printf (a shell builtin) and stdin into a workspace
+              // file that is deleted at once (and in post); the trace is off, because it would print the encoded token.
+              // Server-side apply keeps the token out of a last-applied annotation.
+              sh '''
+                set +x
+                umask 077
+                printf '{"auths": {"ghcr.io": {"auth": "%s"}}}' "$(printf '%s:%s' "$GHCR_USER" "$GHCR_PW" | base64 | tr -d '\\n')" > ghcr-pull.json
+                kubectl -n serving create secret generic ghcr-pull --type=kubernetes.io/dockerconfigjson \
+                  --from-file=.dockerconfigjson=ghcr-pull.json --dry-run=client -o yaml \
+                  | kubectl apply --server-side --field-manager=jenkins -f -
+                rm -f ghcr-pull.json
+              '''
+              sh '''
+                rm -f deployed.txt
+                for r in $RELEASES; do
+                  set -- $(echo "$r" | tr : ' ')
+                  prev=$(kubectl -n serving get isvc $1 -o jsonpath='{.spec.predictor.containers[0].image} {.metadata.annotations.fraud\\.platform/model-version}' 2>/dev/null || true)
+                  echo "$1 $prev" >> deployed.txt
+                  img=$IMAGE:v$3-$TAG
+                  sed -e "s|MODEL_IMAGE|$img|" -e "s|MODEL_VERSION|$3|" infra/k8s/kserve-$1.yaml | kubectl apply -f -
+                  for i in $(seq 1 90); do   # the KServe controller writes the new image into the Deployment first
+                    [ "$(kubectl -n serving get deploy $1-predictor -o jsonpath='{.spec.template.spec.containers[?(@.name=="kserve-container")].image}' 2>/dev/null)" = "$img" ] && break
+                    sleep 2
+                  done
+                  kubectl -n serving rollout status deploy/$1-predictor --timeout=300s
+                  kubectl -n serving wait --for=condition=Ready isvc/$1 --timeout=300s
+                done
+              '''
+            }
+          }
+        }
+        stage('Smoke test') {
+          // a V1 predict through the NodePort the Scoring API uses must answer with the released model version
+          when { expression { (env.RELEASES ?: '') != '' } }
+          steps {
+            sh '''
+              for r in $RELEASES; do
+                set -- $(echo "$r" | tr : ' ')
+                port=31080; [ "$1" = card-fraud ] || port=31081
+                out="" ok=""
+                for i in 1 2 3 4 5 6; do
+                  out=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' -d '{"instances": [{}]}' \
+                    "http://fraud-control-plane:$port/v1/models/$1:predict") \
+                    && printf '%s' "$out" | jq -e --arg v "$3" '.model_version == $v and .predictions[0] >= 0 and .predictions[0] <= 1' >/dev/null \
+                    && ok=1 && break
+                  sleep 5
+                done
+                echo "$1: $out"
+                [ "$ok" = 1 ] || { echo "$1 does not answer with model v$3" >&2; exit 1; }
+              done
+            '''
+          }
+        }
+        stage('A/B split') {
+          // the Scoring API's AB_PERCENT follows the approved challenger: AB_SHARE while it runs, 0 otherwise. Runs
+          // every build, so a scoring-api recreated by hand gets its split back. The image it runs is kept.
+          steps {
+            withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                             string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+              sh '''
+                if ! docker inspect scoring-api >/dev/null 2>&1; then
+                  echo "scoring-api is not running: start it with AB_PERCENT=$AB_WANTED in the environment"; exit 0
+                fi
+                now=$(docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^AB_PERCENT=//p')
+                if [ "${now:-0}" = "$AB_WANTED" ]; then echo "A/B split already at $AB_WANTED %"; exit 0; fi
+                echo "${now:-0}" > ab-prev.txt
+                SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=$AB_WANTED \
+                  $COMPOSE --profile ml up -d --no-deps --no-build --wait scoring-api
+                echo "A/B split: $AB_WANTED % of the cards to the challenger (was ${now:-0} %)"
+              '''
+            }
+          }
+        }
+        stage('Remove challenger') {
+          // after the split is off: the alias challenger is gone or points at the production model (promoted)
+          when { environment name: 'REMOVE_CHALLENGER', value: 'true' }
+          steps {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+              sh 'kubectl -n serving delete isvc card-fraud-challenger --ignore-not-found'
+            }
+          }
+        }
+        stage('Drift reference') {
+          // the Drift API compares live traffic with the production model's own profile: write the new one into the
+          // file its container mounts (the host path, read from the container), restart it, check the version it
+          // reports. A failure here leaves the new model serving and marks the build unstable.
+          when { environment name: 'NEW_PROD', value: 'true' }
+          steps {
+            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+              sh '''
+                src=$(docker inspect drift-api --format '{{range .Mounts}}{{if eq .Destination "/config/reference_profile.json"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)
+                [ -n "$src" ] || { echo "drift-api is not running: start it after fetch_model.py --alias production on the host" >&2; exit 1; }
+                docker run --rm -i --user 0 --entrypoint sh -v "$src:/ref.json" $IMAGE:v$PROD-$TAG -c 'cat > /ref.json' \
+                  < $SVC/model-production/reference_profile.json
+                docker restart drift-api >/dev/null
+                for i in $(seq 1 12); do curl -fsS http://drift-api:8000/readyz >/dev/null 2>&1 && break; sleep 5; done
+                curl -fsS http://drift-api:8000/v1/drift | jq -e --arg v "$PROD" '.model_version == $v' >/dev/null
+                echo "drift-api: reference profile of model v$PROD"
+              '''
+            }
+          }
+        }
+      }
+      post {
+        failure {
+          // every InferenceService this build applied goes back to the image and version it ran before; the split too
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                           string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                           string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+            sh '''
+              if [ -f deployed.txt ]; then
+                while read isvc img v; do
+                  if [ -n "$img" ]; then
+                    sed -e "s|MODEL_IMAGE|$img|" -e "s|MODEL_VERSION|${v:-unknown}|" infra/k8s/kserve-$isvc.yaml | kubectl apply -f -
+                    kubectl -n serving rollout status deploy/$isvc-predictor --timeout=300s || true
+                    echo "$isvc rolled back to $img"
+                  else
+                    kubectl -n serving delete isvc $isvc --ignore-not-found
+                    echo "$isvc removed: it did not run before this build"
+                  fi
+                done < deployed.txt
+              fi
+              if [ -f ab-prev.txt ]; then
+                SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=$(cat ab-prev.txt) \
+                  $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
+                echo "A/B split back to $(cat ab-prev.txt) %"
+              fi
+            '''
+          }
+        }
+        always {
+          sh '''docker image rm fraud/predictor:test-production fraud/predictor:test-challenger >/dev/null 2>&1 || true
+                docker logout ghcr.io >/dev/null 2>&1 || true'''
+        }
+        cleanup { sh 'rm -rf deployed.txt ab-prev.txt alias.json ghcr-pull.json services/predictor/model-*' }   // after failure, which reads them
+      }
+    }
+    stage('Approve the A/B test') {
+      // a person decides whether real payments meet the new challenger; no executor is held while the question waits
+      agent none
+      when { environment name: 'ASK_AB', value: 'true' }
+      steps {
+        timeout(time: 7, unit: 'DAYS') {
+          script {
+            env.AB_APPROVER = input(message: "Start the A/B test: send ${env.AB_SHARE}% of the cards to model v${env.CHAL}?",
+                                    ok: 'Start the A/B test', submitter: 'admin', submitterParameter: 'APPROVER')
+          }
+        }
+        echo "A/B test of model v${env.CHAL} approved by ${env.AB_APPROVER}"
+      }
+    }
+    stage('Start the A/B test') {
+      // records the approval on the challenger, then sets AB_PERCENT on the Scoring API (recreated, same image). A
+      // challenger replaced while the question waited is not started: its own release asks again.
+      agent any
+      when { beforeAgent true; environment name: 'ASK_AB', value: 'true' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                         string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                         string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+          sh '''
+            live=$(kubectl -n serving get isvc card-fraud-challenger -o jsonpath='{.metadata.annotations.fraud\\.platform/model-version}' 2>/dev/null || true)
+            [ "$live" = "$CHAL" ] || { echo "the challenger now runs v${live:-none}, not v$CHAL: not started"; exit 0; }
+            kubectl -n serving annotate isvc card-fraud-challenger --overwrite \
+              fraud.platform/ab-approved-version="$CHAL" fraud.platform/ab-approved-by="$AB_APPROVER"
+            docker inspect scoring-api >/dev/null 2>&1 || { echo "scoring-api is not running: the next build sets the split"; exit 0; }
+            docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^AB_PERCENT=//p' > ab-prev.txt
+            SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=$AB_SHARE \
+              $COMPOSE --profile ml up -d --no-deps --no-build --wait scoring-api
+            echo "A/B split: $AB_SHARE % of the cards to model v$CHAL (approved by $AB_APPROVER)"
+          '''
+        }
+      }
+      post {
+        failure {
+          // the Scoring API goes back to the split it had; the approval stays on the challenger for the next build
+          withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                           string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+            sh '''
+              if [ -f ab-prev.txt ]; then
+                prev=$(cat ab-prev.txt)
+                SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=${prev:-0} \
+                  $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
+              fi
+            '''
+          }
+        }
+        cleanup { sh 'rm -f ab-prev.txt' }
+      }
+    }
+  }
+}

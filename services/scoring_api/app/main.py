@@ -23,10 +23,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 def build_scorer(s: Settings) -> FraudScorer:
-    """Wire the real clients from the settings."""
+    """Wire the real clients from the settings; the challenger client exists only while the A/B split is on."""
+    challenger = ModelClient(s.challenger_url, s.model_timeout_s) if s.ab_percent else None
     return FraudScorer(FeatureClient(s.feature_repo, s.feature_service), ModelClient(s.model_url, s.model_timeout_s),
                        ThresholdPolicy(s.t_low, s.t_high), FallbackPolicy(s.fallback_step_up_vnd),
-                       PredictionLog(s.kafka_bootstrap, s.prediction_topic), s.feature_timeout_s, s.model_timeout_s)
+                       PredictionLog(s.kafka_bootstrap, s.prediction_topic), s.feature_timeout_s, s.model_timeout_s,
+                       challenger, s.ab_percent)
 
 
 def create_app(scorer_factory=build_scorer, settings: Settings | None = None, registry=REGISTRY) -> FastAPI:

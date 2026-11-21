@@ -3,7 +3,8 @@
 #   KFP 2.17.2 standalone (platform-agnostic: its own MySQL + object store), API on NodePort 31888, UI on 31880
 #   cert-manager (KServe's webhook certificates), KServe 0.21 in Standard mode (formerly RawDeployment, no Knative Serving)
 #   Knative Eventing (Broker + Trigger only): the InferenceService's payload logger -> Broker -> Drift API
-#   The model server itself (kserve-card-fraud.yaml) is applied per model release, see docs/ml-platform/serving.md
+#   The model server itself (kserve-card-fraud.yaml, A/B challenger kserve-card-fraud-challenger.yaml) is applied per
+#   model release by services/predictor/Jenkinsfile, see docs/ml-platform/serving.md
 set -e
 cd "$(dirname "$0")"
 KFP=2.17.2 CERT_MANAGER=v1.21.1 KSERVE=v0.21.0 KNATIVE_EVENTING=knative-v1.23.1

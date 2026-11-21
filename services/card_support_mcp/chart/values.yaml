@@ -1,13 +1,13 @@
 # Defaults of the three MCP servers. One release per server, each with its own values file on top of this one
-# (namespace card-support; secrets from infra/k8s/secrets.sh, image pushed to the compose registry):
+# (namespace card-support; secrets from infra/k8s/secrets.sh, image pushed to GHCR by the Jenkinsfile):
 #   helm upgrade --install card-data-mcp   services/card_support_mcp/chart -f services/card_support_mcp/chart/values-card-data.yaml   -n card-support --atomic --timeout 4m
 #   helm upgrade --install fraud-score-mcp services/card_support_mcp/chart -f services/card_support_mcp/chart/values-fraud-score.yaml -n card-support --atomic --timeout 4m
 #   helm upgrade --install policy-rag-mcp  services/card_support_mcp/chart -f services/card_support_mcp/chart/values-policy-rag.yaml  -n card-support --atomic --timeout 4m
 # --atomic: if the new pods are not Ready in time, Helm rolls the release back to the last good revision.
-# The compose registry under the name the kind node and the pods both reach (pushed to as localhost:5001 from the
-# host); card-support admits only cosign-signed images from it (infra/k8s/supply-chain.sh).
+# GHCR, public package (the kind node pulls without a login); card-support admits only cosign-signed images from
+# ghcr.io/cvinhnguyen (infra/k8s/supply-chain.sh). CI sets image.tag to the commit it built.
 image:
-  repository: registry:5000/card-support-mcp   # one image, three servers (MCP_SERVER picks one)
+  repository: ghcr.io/cvinhnguyen/card-support-mcp   # one image, three servers (MCP_SERVER picks one)
   tag: "0.2.0"
 replicas: 2       # when autoscaling is off
 # KEDA (templates/scaledobject.yaml): replicas follow the server's request rate per replica, counted on its pods

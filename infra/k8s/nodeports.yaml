@@ -1,5 +1,6 @@
 # Fixed NodePorts, reached from the compose network at fraud-control-plane:<port>:
 #   31888 KFP API (Airflow retraining)   31880 KFP UI   31080 KServe predictor (scoring API in compose)
+#   31081 KServe A/B challenger (scoring API in compose; no endpoints while no challenger runs)
 apiVersion: v1
 kind: Service
 metadata: {name: ml-pipeline-nodeport, namespace: kubeflow}
@@ -24,3 +25,12 @@ spec:
   selector: {serving.kserve.io/inferenceservice: card-fraud}
   # 9081: the KServe agent (payload logger), which forwards to the model on 8080; 8080 directly would skip the logger
   ports: [{name: http, port: 80, targetPort: 9081, nodePort: 31080}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: card-fraud-challenger-nodeport, namespace: serving}
+spec:
+  type: NodePort
+  selector: {serving.kserve.io/inferenceservice: card-fraud-challenger}
+  # no payload logger on the challenger: straight to the model on 8080
+  ports: [{name: http, port: 80, targetPort: 8080, nodePort: 31081}]

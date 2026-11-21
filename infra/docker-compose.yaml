@@ -7,9 +7,8 @@
 #   stream: flink jobmanager + taskmanager (PyFlink jobs in pipelines/flink/); needs core
 #   orch  : airflow (webserver, scheduler, its postgres); runs DP1-DP3 on batch + dbt
 #   gov   : datahub (gms, frontend, opensearch, its postgres) on the core Kafka; lineage + validation
-#   ml    : Layer 2 (MLflow, notebook, Redis + Postgres for Feast, pgvector, push jobs, Scoring API, Drift API) and
-#           the image registry the kind cluster pulls from
-#   cicd  : Jenkins (needs ml for the registry)
+#   ml    : Layer 2 (MLflow, notebook, Redis + Postgres for Feast, pgvector, push jobs, Scoring API, Drift API)
+#   cicd  : Jenkins; pushes our images to GHCR (ghcr.io/cvinhnguyen), which the kind cluster pulls from
 #
 # Usage (from repo root):
 #   python infra/make_env.py                       # once: secrets into infra/.env + s3.json
@@ -72,6 +71,9 @@ x-airflow-env: &airflow-env
     AIRFLOW__DATAHUB__ENABLED: ${DATAHUB_ENABLED:-true}   # listener + GE results to DataHub; DATAHUB_ENABLED=false without gov
     # REST API with the admin user too (Jenkins releases and runs the RAG DAG: infra/jenkins, pipelines/rag/Jenkinsfile)
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    # The batch code runs from a release (pipelines/airflow/Jenkinsfile): the symlink current in the volume
+    # batch_release points at one commit's copy, or at the working tree mounts below until the first release
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/release/current/dags
 
 services:
   # Core banking database owned by another department (source for DP1).
@@ -314,8 +316,8 @@ services:
       - ./conf/trino/catalog:/etc/trino/catalog:ro
 
   # Flink 2.2 session cluster; PyFlink jobs are submitted with `flink run -py /opt/flink/jobs/<job>.py`.
-  # UI on host 8088 (8081 is the Spark worker). ponytail: one TaskManager, 6 slots (the hot-key demo runs with
-  # parallelism 4).
+  # UI on host 8088 (8081 is the Spark worker). ponytail: one TaskManager, 6 slots: the three live jobs take 3, so the
+  # hot-key demo (parallelism 4) runs with raw_landing cancelled; 7 slots if that gets in the way.
   flink-jobmanager:
     build: ./flink
     image: fraud/flink:2.2.1
@@ -374,6 +376,18 @@ services:
       interval: 10s
       retries: 5
 
+  # One-shot: the release volume of the batch code (pipelines/airflow/release.sh seed). Only the first start writes:
+  # `local` = the working tree mounts, current -> local. Jenkins later installs releases and moves current.
+  batch-release-init:
+    image: fraud/airflow:2.10.5
+    profiles: [orch]
+    container_name: batch-release-init
+    user: "0:0"   # the new volume is root's; Airflow mounts it read-only
+    entrypoint: ["sh", "/release.sh", "seed"]
+    volumes:
+      - batch_release:/opt/release
+      - ../pipelines/airflow/release.sh:/release.sh:ro
+
   airflow-init:
     build: ./airflow
     image: fraud/airflow:2.10.5
@@ -382,6 +396,7 @@ services:
     user: "185:0"
     depends_on:
       airflow-db: {condition: service_healthy}
+      batch-release-init: {condition: service_completed_successfully}
     environment:
       <<: *airflow-env
       # Only the init container sees the source credentials (the ones setup_airflow.py reads): it stores them as
@@ -417,15 +432,15 @@ services:
     ports:
       - "127.0.0.1:8082:8080"   # UI, user admin, password AIRFLOW_ADMIN_PASSWORD in infra/.env
     volumes: &airflow-volumes
-      - ../pipelines/airflow/dags:/opt/airflow/dags:ro
+      - batch_release:/opt/release:ro          # releases + current (DAG folder, Spark jobs, dbt, ml code)
+      - ../pipelines/airflow/dags:/opt/airflow/dags:ro   # working tree: the `local` release
       - ../pipelines/spark:/opt/jobs:ro
       - ../pipelines/dbt:/opt/airflow/dbt:ro
       - ./conf/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
       - spark_ivy:/opt/spark/work-dir
       - airflow_logs:/opt/airflow/logs
       - airflow_dbt:/opt/airflow/dbt-artifacts   # dbt target/ + logs (manifest, run_results, catalog)
-      - ../ml/feature_repo:/opt/airflow/feature_repo:ro   # Layer 2: Feast repo (materialize, drift job)
-      - ../ml:/opt/airflow/ml:ro                       # Layer 2: fraud_ml library + drift job
+      - ../ml:/opt/airflow/ml:ro                       # Layer 2: fraud_ml library, Feast repo, drift job
 
   airflow-scheduler:
     image: fraud/airflow:2.10.5
@@ -440,6 +455,7 @@ services:
     # DockerOperator tasks (RAG DAG) run as sibling containers on the compose network, through docker-proxy only
     networks: [default, airflow-docker]
     volumes:
+      - batch_release:/opt/release:ro
       - ../pipelines/airflow/dags:/opt/airflow/dags:ro
       - ../pipelines/spark:/opt/jobs:ro
       - ../pipelines/dbt:/opt/airflow/dbt:ro
@@ -447,7 +463,6 @@ services:
       - spark_ivy:/opt/spark/work-dir
       - airflow_logs:/opt/airflow/logs
       - airflow_dbt:/opt/airflow/dbt-artifacts
-      - ../ml/feature_repo:/opt/airflow/feature_repo:ro
       - ../ml:/opt/airflow/ml:ro
 
   # The scheduler's only way to the Docker daemon (no socket in Airflow): the API sections DockerOperator needs
@@ -695,8 +710,9 @@ services:
 
   # Feast push jobs: Flink's card_features_rt + card_device_seen -> online store (A) / offline Delta tables (B).
   # Two processes, two consumer groups: a slow Delta append never delays online freshness. B stays a single writer.
+  # Jenkins (ml/jobs/Jenkinsfile.stream) sets PUSH_JOBS_IMAGE to the released image in GHCR, tagged with the commit.
   push-online:
-    image: fraud/ml-train:latest
+    image: ${PUSH_JOBS_IMAGE:-fraud/ml-train:latest}
     profiles: [ml]
     container_name: push-online
     command: [python3, /opt/ml/jobs/push_job.py, --to, online, --repo, /opt/ml/feature_repo, --batch, "2000"]
@@ -708,7 +724,7 @@ services:
     restart: unless-stopped
 
   push-offline:
-    image: fraud/ml-train:latest
+    image: ${PUSH_JOBS_IMAGE:-fraud/ml-train:latest}
     profiles: [ml]
     container_name: push-offline
     command: [python3, /opt/ml/jobs/push_job.py, --to, offline, --repo, /opt/ml/feature_repo, --batch, "50000",
@@ -717,16 +733,22 @@ services:
     restart: unless-stopped
 
   # Fraud Scoring API: Feast online features -> KServe predictor in kind (NodePort 31080) -> decision.
+  # Default: a local build. CI (services/scoring_api/Jenkinsfile) recreates it on ghcr.io/cvinhnguyen/fraud-scoring-api:<commit>.
   scoring-api:
     build: {context: ../services/scoring_api, target: runtime}
-    image: fraud/scoring-api:latest
+    image: ${SCORING_API_IMAGE:-fraud/scoring-api:latest}
     profiles: [ml]
     container_name: scoring-api
     environment:
       ML_DB_PASSWORD: ${ML_DB_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       MODEL_URL: http://fraud-control-plane:31080/v1/models/card-fraud:predict
-      # risk team's thresholds, set to model v1's validated ones (MLflow tags t_low at 1% FPR, t_high at 0.1% FPR):
+      # A/B test of the model: AB_PERCENT of the cards (sticky by card_id) go to the challenger; 0 = off. The predictor
+      # pipeline (services/predictor/Jenkinsfile) sets it while a challenger runs.
+      CHALLENGER_URL: http://fraud-control-plane:31081/v1/models/card-fraud-challenger:predict
+      AB_PERCENT: ${AB_PERCENT:-0}
+      # used only for a model that sends no thresholds of its own (each version brings its MLflow tags t_low, t_high);
+      # set to model v1's validated ones (t_low at 1% FPR, t_high at 0.1% FPR):
       # scores are calibrated to the real 0.3% fraud rate, so a 0.5 cut-off would decline almost nothing
       T_LOW: "0.0018"
       T_HIGH: "0.058"
@@ -741,29 +763,22 @@ services:
 
   # Drift Detection API. Fed by the KServe payload logger: InferenceService card-fraud -> Knative Broker in kind ->
   # Trigger drift-detector -> http://drift-api:8000/v1/inference-events (infra/k8s/kserve-card-fraud.yaml).
+  # Default: a local build. CI (services/drift_api/Jenkinsfile) recreates it on ghcr.io/cvinhnguyen/fraud-drift-api:<commit>.
   drift-api:
     build: {context: ../services/drift_api, target: runtime}
-    image: fraud/drift-api:latest
+    image: ${DRIFT_API_IMAGE:-fraud/drift-api:latest}
     profiles: [ml]
     container_name: drift-api
     environment:
       REDIS_URL: redis://redis:6379/1
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       WINDOW_MINUTES: "15"
-    volumes:   # written by services/predictor/fetch_model.py with the model it describes
-      - ../services/predictor/model/reference_profile.json:/config/reference_profile.json:ro
+    # written by services/predictor/fetch_model.py with the model it describes. Jenkins runs compose from its own
+    # workspace, so it passes the host path the running container already mounts (DRIFT_REFERENCE).
+    volumes:
+      - ${DRIFT_REFERENCE:-../services/predictor/model/reference_profile.json}:/config/reference_profile.json:ro
     ports:
       - "127.0.0.1:8002:8000"   # 8001 is lakeFS (profile batch)
-
-  # Image registry for the kind cluster: host pushes to 127.0.0.1:5001, the node pulls registry:5000.
-  registry:
-    image: registry:3
-    profiles: [ml]
-    container_name: registry
-    ports:
-      - "127.0.0.1:5001:5000"
-    volumes:
-      - registry_data:/var/lib/registry
 
   # Layer 3 CI/CD: Jenkins drives the host's Docker (socket) and the kind cluster (deploy-only ServiceAccount, setup:
   # infra/jenkins/setup.sh). Secrets reach it as Docker secrets from this .env and become Jenkins credentials
@@ -785,7 +800,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     secrets: [jenkins_admin_password, kubeconfig, langfuse_public_key, langfuse_secret_key, a2a_key_coordinator,
               a2a_key_support_app, edge_admin_password, ml_db_password, redis_password, s3_access_key, s3_secret_key,
-              airflow_admin_password, cosign_key, cosign_password]
+              airflow_admin_password, cosign_key, cosign_password, ghcr_user, ghcr_token, ghcr_pull_token]
     mem_limit: 1g
 
 # ponytail: named volumes live in Docker's WSL disk. Before the 100 GB phase, move Docker Desktop's
@@ -800,12 +815,12 @@ volumes:
   airflow_db_data:
   airflow_logs:
   airflow_dbt:
+  batch_release:   # released batch code (pipelines/airflow/release.sh)
   datahub_db_data:
   opensearch_data:
   vector_db_data:
   ml_db_data:
   redis_data:
-  registry_data:
   jenkins_home:
 
 networks:
@@ -827,3 +842,6 @@ secrets:
   airflow_admin_password: {environment: AIRFLOW_ADMIN_PASSWORD}
   cosign_key: {file: ./.secrets/cosign.key}         # image signing key (infra/k8s/supply-chain.sh), encrypted
   cosign_password: {environment: COSIGN_PASSWORD}
+  ghcr_user: {environment: GHCR_USER}               # GitHub user + classic PAT (write:packages): push to ghcr.io
+  ghcr_token: {environment: GHCR_TOKEN}
+  ghcr_pull_token: {environment: GHCR_PULL_TOKEN}   # read:packages only: becomes the pull Secret in the cluster

@@ -96,6 +96,7 @@ if __name__ == "__main__":
     ap.add_argument("--topic", default="card_auth_replay")
     ap.add_argument("--live", action="store_true", help="unbounded, resume from the group's committed offsets")
     ap.add_argument("--parallelism", type=int, default=1, help="> 1 for the history backfill (state is keyed by card)")
+    ap.add_argument("--release", default="", help="code version, added to the job name (pipelines/flink/Jenkinsfile)")
     args = ap.parse_args()
     # Python keeps up to this many keys' state; the default (1,000) makes most of 130k cards a JVM round trip
     conf = Configuration()
@@ -118,4 +119,4 @@ if __name__ == "__main__":
      .key_by(lambda e: e[0], key_type=Types.STRING()).process(FirstSeen(), output_type=AUTH)
      .key_by(lambda e: e[1], key_type=Types.STRING()).process(CardFeatures(), output_type=Types.STRING())
      .sink_to(sink).name("card_features_rt"))
-    env.execute("rt_features")
+    env.execute(f"rt_features {args.release}".strip())   # the running job shows its version

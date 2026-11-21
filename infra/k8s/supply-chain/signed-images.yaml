@@ -15,16 +15,16 @@ spec:
       match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
       validate:
         failureAction: Enforce
-        message: "card-support runs images from the platform registry (registry:5000) only"
+        message: "card-support runs images from the platform registry (ghcr.io/cvinhnguyen) only"
         pattern:
           spec:
-            =(containers): [{image: "registry:5000/*"}]
-            =(initContainers): [{image: "registry:5000/*"}]
-            =(ephemeralContainers): [{image: "registry:5000/*"}]
+            =(containers): [{image: "ghcr.io/cvinhnguyen/*"}]
+            =(initContainers): [{image: "ghcr.io/cvinhnguyen/*"}]
+            =(ephemeralContainers): [{image: "ghcr.io/cvinhnguyen/*"}]
     - name: signed-by-ci   # verifyImages checks containers, initContainers and ephemeralContainers
       match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
       verifyImages:
-        - imageReferences: ["registry:5000/*"]
+        - imageReferences: ["ghcr.io/cvinhnguyen/*"]
           failureAction: Enforce
           mutateDigest: true
           verifyDigest: true
@@ -38,6 +38,6 @@ spec:
                       MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0ac2qu9MwOo7CBG775RlsJspQeyl
                       +pqZbS6fX832bAQzoX4WMkDMEHopOIdyIYcwJ3eqnq7guJOOAb6s+bseBQ==
                       -----END PUBLIC KEY-----
-                    # private registry: signatures are not uploaded to the public transparency log
+                    # signatures are not uploaded to the public transparency log (Rekor)
                     rekor: {ignoreTlog: true}
                     ctlog: {ignoreSCT: true}

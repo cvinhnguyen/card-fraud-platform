@@ -1,7 +1,9 @@
 """KServe custom predictor: the production XGBoost booster baked into the image (model-inside-image).
 
 V1 protocol: POST /v1/models/card-fraud:predict {"instances": [{feature: value, ...}]}
-          -> {"predictions": [fraud probability], "model_version": "<registry version>"}
+          -> {"predictions": [fraud probability], "model_version": "<registry version>", "t_low": ..., "t_high": ...}
+t_low / t_high are this version's own decision thresholds (MLflow version tags, set on validation, copied into
+metadata.json by fetch_model.py), so a caller decides each model's scores with that model's cut-offs.
 Instances are dicts so the caller never depends on column order: they are reordered by the booster's own
 feature names, and a missing or null feature is NaN (XGBoost's missing value), as in training.
 
@@ -24,14 +26,16 @@ class FraudModel(Model):
     def __init__(self, name: str):
         """Register under `name` (the InferenceService name)."""
         super().__init__(name)
-        self.booster, self.version, self.ready = None, "unknown", False
+        self.booster, self.version, self.thresholds, self.ready = None, "unknown", {}, False
 
     def load(self) -> bool:
-        """Read the booster and its registry metadata from MODEL_DIR."""
+        """Read the booster and its registry metadata (version, thresholds) from MODEL_DIR."""
         self.booster = xgb.Booster()
         self.booster.load_model(f"{MODEL_DIR}/model.json")
         with open(f"{MODEL_DIR}/metadata.json") as f:
-            self.version = str(json.load(f)["version"])
+            meta = json.load(f)
+        self.version = str(meta["version"])
+        self.thresholds = {k: float(meta[k]) for k in ("t_low", "t_high") if k in meta}
         self.ready = True
         return self.ready
 
@@ -40,7 +44,8 @@ class FraudModel(Model):
         names = self.booster.feature_names
         x = np.array([[np.nan if r.get(n) is None else float(r[n]) for n in names] for r in payload["instances"]],
                      dtype="float64")
-        return {"predictions": self.booster.inplace_predict(x, missing=np.nan).tolist(), "model_version": self.version}
+        return {"predictions": self.booster.inplace_predict(x, missing=np.nan).tolist(), "model_version": self.version,
+                **self.thresholds}
 
 
 if __name__ == "__main__":

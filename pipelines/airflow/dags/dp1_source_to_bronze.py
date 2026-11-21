@@ -31,8 +31,8 @@ from airflow import DAG
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from datahub_airflow_plugin.entities import Dataset
 
-from common import (BRONZE, CORE_DB_ENV, DEFAULT_ARGS, commit_branch, create_branch, merge_to_main, publish, spark_job,
-                    validate)
+from common import (BRONZE, CORE_DB_ENV, DEFAULT_ARGS, RELEASE_TAG, commit_branch, create_branch, merge_to_main, publish,
+                    spark_job, validate)
 
 BRANCH = "dp1_{{ ds_nodash }}"
 TXN_ROOT = "s3a://bronze/" + BRANCH   # the run's lakeFS branch; readers use s3a://bronze/main
@@ -43,7 +43,7 @@ LAKEFS_TXN = Dataset("s3", "bronze/raw_transactions")   # spark-defaults drops d
 TABLE = Dataset("hive", "bronze.raw_transactions")
 
 with DAG("dp1_source_to_bronze", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False,
-         max_active_runs=1, default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp1", "bronze"]) as dag:
+         max_active_runs=1, default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp1", "bronze", RELEASE_TAG]) as dag:
     wait = S3KeySensor(task_id="wait_for_export", aws_conn_id="lakehouse_s3", bucket_name="{{ var.value.export_bucket }}",
                        bucket_key="transactions/export_date={{ macros.ds_add(ds, 1) }}/*.parquet", wildcard_match=True,
                        mode="reschedule", poke_interval=300, timeout=6 * 3600)

@@ -28,6 +28,8 @@ credentials:
           - string: {scope: GLOBAL, id: cosign-key, secret: "${readFile:/run/secrets/cosign_key}", description: "cosign private key (encrypted), signs the MCP image"}
           - string: {scope: GLOBAL, id: cosign-password, secret: "${cosign_password}"}
           - usernamePassword: {scope: GLOBAL, id: airflow-admin, username: admin, password: "${airflow_admin_password}"}
+          - usernamePassword: {scope: GLOBAL, id: ghcr, username: "${ghcr_user}", password: "${ghcr_token}", description: "GHCR push (classic PAT, write:packages)"}
+          - usernamePassword: {scope: GLOBAL, id: ghcr-pull, username: "${ghcr_user}", password: "${ghcr_pull_token}", description: "GHCR pull only (classic PAT, read:packages): the model server's pull Secret"}
 unclassified:
   location:
     url: http://localhost:8095/
@@ -42,6 +44,12 @@ jobs:
         ['card-support-coordinator', 'agents/Jenkinsfile.coordinator',        'Coordinator: prompt from Langfuse, deploy, A2A smoke'],
         ['rag-pipeline',             'pipelines/rag/Jenkinsfile',             'RAG data pipeline: test, build image, release to Airflow, run, validate'],
         ['stream-feature-jobs',      'ml/jobs/Jenkinsfile.stream',            'Push jobs to the online + offline store: test, build, redeploy'],
+        ['fraud-predictor',          'services/predictor/Jenkinsfile',        'Model server: MLflow aliases, test, build, sign, KServe deploy, smoke, A/B after approval'],
+        ['fraud-scoring-api',        'services/scoring_api/Jenkinsfile',      'Scoring API: test, mutation test, build, push, recreate, smoke'],
+        ['fraud-drift-api',          'services/drift_api/Jenkinsfile',        'Drift API: test, mutation test, build, push, recreate, smoke'],
+        ['batch-pipelines',          'pipelines/airflow/Jenkinsfile',         'Batch DAGs + Spark + dbt: lint, test, DAG check, dbt parse, release, run DP2 silver'],
+        ['training-pipeline',        'ml/pipelines/Jenkinsfile',              'KFP training: test, build + push image, pipeline version, release to Airflow'],
+        ['flink-jobs',               'pipelines/flink/Jenkinsfile',           'Flink jobs: lint, import check, savepoint upgrade of the live jobs'],
       ].each { job ->
         pipelineJob(job[0]) {
           description(job[2])

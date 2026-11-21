@@ -12,7 +12,7 @@ pipeline {
   }
   environment {
     SVC = 'services/card_support_mcp'
-    IMAGE = 'localhost:5001/card-support-mcp'   // pushed to the compose registry; the cluster pulls it as registry:5000/...
+    IMAGE = 'ghcr.io/cvinhnguyen/card-support-mcp'   // GHCR, public package: the kind node pulls it without a login
     SERVERS = 'card-data fraud-score policy-rag'   // one Helm release <server>-mcp each (chart/values-<server>.yaml)
   }
   stages {
@@ -48,16 +48,21 @@ pipeline {
         }
         stage('Build + push image') {
           steps {
-            sh 'docker build --target runtime -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''docker build --target runtime --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
+                      -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'''
+            }
           }
         }
         stage('Sign image (cosign)') {
           // card-support admits only images signed with this key (Kyverno, infra/k8s/supply-chain): the signature is
-          // pushed next to the image, by digest; the key only lives in the cosign container's environment
+          // pushed next to the image in GHCR, by digest, with the docker login above; the key only lives in cosign's
+          // environment
           steps {
             withCredentials([string(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
                              string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
-              sh 'REGISTRY=registry:5000 sh infra/k8s/supply-chain.sh sign card-support-mcp $TAG'
+              sh 'sh infra/k8s/supply-chain.sh sign card-support-mcp $TAG'
             }
           }
         }
@@ -117,7 +122,7 @@ pipeline {
         '''
       }
     }
-    always { sh 'docker image rm card-support-mcp:test-$TAG >/dev/null 2>&1 || true' }
+    always { sh 'docker image rm card-support-mcp:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
     cleanup { sh 'rm -f deployed.txt' }   // cleanup runs after failure, which reads the file
   }
 }

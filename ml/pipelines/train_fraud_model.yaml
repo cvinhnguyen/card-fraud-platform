@@ -181,8 +181,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 1.0
           memoryLimit: 3.221225472
@@ -218,8 +218,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 2.0
           memoryLimit: 6.442450944
@@ -248,15 +248,17 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef load_labels(label_as_of: str, negative_rate: float, feature_service:\
           \ str, kfp_run_id: str) -> str:\n    \"\"\"Step 1: labels as of label_as_of\
-          \ + entity rows; starts the MLflow run and returns its id.\"\"\"\n    from\
-          \ fraud_ml import steps\n    return steps.load_labels(label_as_of, negative_rate,\
-          \ feature_service, {\"kfp_run_id\": kfp_run_id})\n\n"
+          \ + entity rows; starts the MLflow run (tagged with the KFP run and the\
+          \ image the\n    steps run) and returns its id.\"\"\"\n    import os\n\n\
+          \    from fraud_ml import steps\n    return steps.load_labels(label_as_of,\
+          \ negative_rate, feature_service,\n                             {\"kfp_run_id\"\
+          : kfp_run_id, \"ml_image\": os.environ[\"ML_IMAGE\"]})\n\n"
         env:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 2.0
           memoryLimit: 3.221225472
@@ -293,8 +295,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 1.0
           memoryLimit: 2.147483648
@@ -331,8 +333,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 1.0
           memoryLimit: 4.294967296
@@ -370,8 +372,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 1.0
           memoryLimit: 3.221225472
@@ -406,8 +408,8 @@ deploymentSpec:
         - name: MLFLOW_TRACKING_URI
           value: http://mlflow:5000
         - name: ML_IMAGE
-          value: localhost:5001/fraud/ml-train:latest
-        image: localhost:5001/fraud/ml-train:latest
+          value: ghcr.io/cvinhnguyen/fraud-ml-train:latest
+        image: ghcr.io/cvinhnguyen/fraud-ml-train:latest
         resources:
           cpuLimit: 1.0
           memoryLimit: 4.294967296

@@ -1,14 +1,3 @@
-# System prompts of this release, one key per agent (prompts/<name>.md; from Langfuse when deployed by the pipeline)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}-prompts
-  namespace: {{ .Release.Namespace }}
-data:
-  {{- range $name, $a := .Values.agents }}
-  {{ $name }}: |
-{{ $.Files.Get (printf "prompts/%s.md" $name) | indent 4 }}
-  {{- end }}
 {{- range $name, $a := include "card-support.agents" . | fromYaml }}
 ---
 # replicas are left to KEDA (scaledobjects.yaml): the controller sets them only when spec.deployment.replicas is set
@@ -17,8 +6,9 @@ kind: Agent
 metadata:
   name: {{ $name }}
   namespace: {{ $.Release.Namespace }}
-  {{- with (index $.Values.promptVersions $name) }}
-  annotations: {card-support/prompt: "card-support/{{ $name }} v{{ . }}"}
+  {{- $p := $a.promptOf | default $name }}
+  {{- with (index $.Values.promptVersions $p) }}
+  annotations: {card-support/prompt: "card-support/{{ $p }} v{{ . }}"}
   {{- end }}
 spec:
   type: Declarative

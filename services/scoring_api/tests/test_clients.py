@@ -15,9 +15,23 @@ URL = "http://predictor/v1/models/card-fraud:predict"
 @respx.mock
 async def test_model_client_sends_instances_and_reads_version():
     route = respx.post(URL).mock(return_value=httpx.Response(200, json={"predictions": [0.25], "model_version": "3"}))
-    score, version = await ModelClient(URL, 1.0).predict({"amount": 1.0})
-    assert (score, version) == (0.25, "3")
+    score, version, thresholds = await ModelClient(URL, 1.0).predict({"amount": 1.0})
+    assert (score, version, thresholds) == (0.25, "3", None)   # an image without thresholds: the configured ones
     assert route.calls.last.request.content == b'{"instances":[{"amount":1.0}]}'
+
+
+@respx.mock
+@pytest.mark.parametrize("body, expected", [
+    ({"t_low": 0.003, "t_high": 0.06}, (0.003, 0.06)),          # the version's own pair
+    ({"t_low": "0.003", "t_high": "0.06"}, (0.003, 0.06)),      # MLflow tags are strings
+    ({"t_low": 0.003}, None),                                   # half a pair is no pair
+    ({"t_low": 0.2, "t_high": 0.1}, None),                      # out of order: the configured ones decide
+    ({"t_low": -0.1, "t_high": 0.1}, None),
+    ({"t_low": 0.1, "t_high": 1.5}, None),
+])
+async def test_model_client_reads_the_versions_thresholds(body, expected):
+    respx.post(URL).mock(return_value=httpx.Response(200, json={"predictions": [0.25], "model_version": "3", **body}))
+    assert (await ModelClient(URL, 1.0).predict({}))[2] == expected
 
 
 @respx.mock

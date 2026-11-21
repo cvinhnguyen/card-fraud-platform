@@ -1,11 +1,13 @@
-# The model server: model-inside-image (fraud/predictor:<model version>, built from the MLflow alias
-# `production`). Standard (raw Deployment) mode: no Knative Serving, so it fits the local cluster. The Scoring API
+# The model server: model-inside-image (ghcr.io/cvinhnguyen/fraud-predictor:v<model version>-<commit>, built from the
+# MLflow alias `production`). Standard (raw Deployment) mode: no Knative Serving, so it fits the local cluster. The Scoring API
 # (compose) calls it through NodePort 31080 (infra/k8s/nodeports.yaml): http://fraud-control-plane:31080/v1/models/card-fraud:predict
 # Drift feed, the KServe way: the payload logger (KServe agent sidecar, port 9081, in front of the model on 8080) sends
 # every request and response as a CloudEvent to the Knative Broker below; the Trigger delivers them to the Drift API,
 # our drift detector. Outlier or adversarial detectors would be more Triggers on the same Broker. Logging is
 # asynchronous: the caller does not wait for the Broker. Knative Eventing itself is installed by platform.sh.
-# Apply: sed 's/MODEL_VERSION/<version>/' infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -
+# Released by services/predictor/Jenkinsfile; the A/B challenger is kserve-card-fraud-challenger.yaml. By hand:
+#   sed -e 's|MODEL_IMAGE|<image>|' -e 's|MODEL_VERSION|<version>|' infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -
+# The annotation fraud.platform/model-version records the MLflow version that runs; the image tag says it too.
 apiVersion: eventing.knative.dev/v1
 kind: Broker
 metadata:
@@ -34,8 +36,10 @@ metadata:
   namespace: serving
   annotations:
     serving.kserve.io/deploymentMode: Standard
+    fraud.platform/model-version: "MODEL_VERSION"   # MLflow card_fraud_xgb version (alias production)
 spec:
   predictor:
+    imagePullSecrets: [{name: ghcr-pull}]   # fraud-predictor is a private GHCR package (it holds the model)
     minReplicas: 1
     maxReplicas: 3
     logger:
@@ -43,7 +47,7 @@ spec:
       url: http://broker-ingress.knative-eventing.svc.cluster.local/serving/default   # the Broker above
     containers:
       - name: kserve-container
-        image: localhost:5001/fraud/predictor:MODEL_VERSION
+        image: MODEL_IMAGE
         args: ["--model_name", "card-fraud", "--http_port", "8080"]
         ports: [{containerPort: 8080, protocol: TCP}]
         resources:

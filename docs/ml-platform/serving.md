@@ -11,11 +11,11 @@ An outage of any dependency gives a safe fallback decision instead of an error.
 
 | | |
 |---|---|
-| Code | [`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api), [`services/predictor/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kserve-card-fraud.yaml) |
-| Runs on | KServe: kind namespace `serving`; Scoring API: compose service `scoring-api` (profile `ml`, port 8000) |
-| Reads | Feast feature service `fraud_model_v1` (Redis online store); the model image built from the MLflow alias `production` |
-| Writes | Scoring API: Kafka `fraud_predictions` (every request, response and feature vector); KServe payload logger: every model request and response as CloudEvents to the Knative Broker `serving/default` |
-| Related | [ml_training.md](ml_training.md), [drift.md](drift.md), [testing.md](../operations/testing.md) |
+| Code | [`services/scoring_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api), [`services/predictor/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/services/predictor), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/kserve-card-fraud.yaml), `infra/k8s/kserve-card-fraud-challenger.yaml`, `services/predictor/Jenkinsfile` (model release), `ml/tools/ab_report.py` |
+| Runs on | KServe: kind namespace `serving` (`card-fraud`, and `card-fraud-challenger` during an A/B test); Scoring API: compose service `scoring-api` (profile `ml`, port 8000) |
+| Reads | Feast feature service `fraud_model_v1` (Redis online store); the model images built from the MLflow aliases `production` and `challenger` |
+| Writes | Scoring API: Kafka `fraud_predictions` (every request, response, feature vector, A/B arm and latency); KServe payload logger: every model request and response of `card-fraud` as CloudEvents to the Knative Broker `serving/default` |
+| Related | [ml_training.md](ml_training.md), [drift.md](drift.md), [testing.md](../operations/testing.md), [cicd.md](../operations/cicd.md) |
 
 ## Where it fits
 
@@ -52,16 +52,38 @@ flowchart LR
 
 ## Run it
 
-With the production model in MLflow and the kind cluster with KServe (`infra/k8s/platform.sh`):
+With the production model in MLflow and the kind cluster with KServe (`infra/k8s/platform.sh`), the Jenkins job
+`fraud-predictor` releases the model ([Model release pipeline](#model-release-pipeline)). It checks the MLflow aliases
+every 15 minutes, so moving the alias `production` is enough. The same steps by hand, logged in to GHCR
+(`docker login ghcr.io`):
 
 ```bash
 MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python services/predictor/fetch_model.py --alias production   # MLflow alias -> services/predictor/model/
-docker build -t localhost:5001/fraud/predictor:<version> services/predictor && docker push localhost:5001/fraud/predictor:<version>
-sed 's/MODEL_VERSION/<version>/' infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -   # also the Broker and Trigger
+img=ghcr.io/cvinhnguyen/fraud-predictor:v<version>-$(git rev-parse --short=7 HEAD)
+docker build -t $img services/predictor && docker push $img
+# the pull secret, from infra/.env: the token goes through files and stdin, never onto a command line
+( umask 077; tok=$(grep '^GHCR_PULL_TOKEN=' infra/.env | cut -d= -f2-); usr=$(grep '^GHCR_USER=' infra/.env | cut -d= -f2-)
+  printf '{"auths": {"ghcr.io": {"auth": "%s"}}}' "$(printf '%s:%s' "$usr" "$tok" | base64 | tr -d '\n')" > ghcr-pull.json )
+kubectl -n serving create secret generic ghcr-pull --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=ghcr-pull.json --dry-run=client -o yaml | kubectl apply --server-side -f - && rm ghcr-pull.json
+sed -e "s|MODEL_IMAGE|$img|" -e "s|MODEL_VERSION|<version>|" infra/k8s/kserve-card-fraud.yaml | kubectl apply -f -   # also the Broker and Trigger
 ```
 
-Replace `<version>` with the model version in the MLflow registry. The manifest holds the placeholder
-`MODEL_VERSION` in the image tag, so the `sed` sets the tag to that version.
+Replace `<version>` with the model version in the MLflow registry. The manifest holds two placeholders, `MODEL_IMAGE`
+for the image and `MODEL_VERSION` for the annotation `fraud.platform/model-version`, which records the version that
+runs.
+
+The package `fraud-predictor` is Private on GHCR, because each image holds the model and its
+`reference_profile.json` (the distribution of every feature). Both InferenceServices pull it with the Secret
+`ghcr-pull` (`imagePullSecrets` in the manifests). The pipeline creates or updates that Secret from the Jenkins
+credential `ghcr-pull`, a read-only token (`read:packages`), before every deploy, so the push token never
+reaches the cluster; by hand it is the two commands above. `printf` is a shell builtin, so the token
+never shows up in the process list, and server-side apply keeps it out of a last-applied annotation. To see what is
+live:
+
+```bash
+kubectl -n serving get isvc -o custom-columns='NAME:.metadata.name,MODEL:.metadata.annotations.fraud\.platform/model-version,IMAGE:.spec.predictor.containers[0].image'
+```
 
 ## Model server (KServe)
 
@@ -103,8 +125,10 @@ metadata:
   namespace: serving
   annotations:
     serving.kserve.io/deploymentMode: Standard
+    fraud.platform/model-version: "MODEL_VERSION"   # MLflow card_fraud_xgb version (alias production)
 spec:
   predictor:
+    imagePullSecrets: [{name: ghcr-pull}]   # fraud-predictor is a private GHCR package (it holds the model)
     minReplicas: 1
     maxReplicas: 3
     logger:
@@ -112,7 +136,7 @@ spec:
       url: http://broker-ingress.knative-eventing.svc.cluster.local/serving/default   # the Broker above
     containers:
       - name: kserve-container
-        image: localhost:5001/fraud/predictor:MODEL_VERSION
+        image: MODEL_IMAGE
         args: ["--model_name", "card-fraud", "--http_port", "8080"]
         ports: [{containerPort: 8080, protocol: TCP}]
         resources:
@@ -140,10 +164,12 @@ model.
 
 ### Decision and fallback
 
-The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step_up (OTP), else approve. The thresholds
-come from configuration (`T_LOW`, `T_HIGH`), not from the model, so the risk team can tune them without a release;
-the model version carries the recommended values from validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR,
-FPR = false positive rate, the share of legitimate payments flagged)
+The decision is `ThresholdPolicy`: `score >= t_high` decline, `>= t_low` step_up (OTP), else approve. Each model
+version brings its own thresholds, set on its validation (`t_low` at 1% FPR, `t_high` at 0.1% FPR, FPR = false
+positive rate, the share of legitimate payments flagged). They are MLflow tags of the version; `fetch_model.py`
+copies them into `metadata.json`, and the predictor returns them next to `model_version`. A retrained model has a
+different score distribution, so it needs its own cut-offs. The configured `T_LOW` and `T_HIGH` decide only when the
+model sends none, for example an image built before this change
 ([`services/scoring_api/app/policy.py`
 L20-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/policy.py#L20-L37)):
 
@@ -223,9 +249,77 @@ metrics registry
 ([`services/scoring_api/app/main.py`
 L25-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py#L25-L35)).
 
+## Model release pipeline
+
+`services/predictor/Jenkinsfile` (Jenkins job `fraud-predictor`) makes the MLflow aliases the source of truth for
+what runs. Every 15 minutes it reads the version behind `production` and `challenger` from the MLflow REST API
+(`http://mlflow:5000`, Jenkins is on the compose network) and compares each with the annotation
+`fraud.platform/model-version` of its InferenceService. It also runs when `services/predictor/` or the manifests
+change, or by hand; then it rebuilds both models even if no alias moved.
+
+| Stage | What it does |
+|---|---|
+| Changed? | a change under `services/predictor/` or `infra/k8s/kserve-card-fraud*.yaml`, or a manual run, forces a rebuild |
+| Aliases vs what runs | `production` goes to `card-fraud`; `challenger` goes to `card-fraud-challenger` only when it exists and differs from `production` |
+| Fetch models | `fetch_model.py --alias <alias>` in the Dockerfile's `fetch` stage, one folder `model-<alias>` per model |
+| Release check (pytest) | `test_predictor.py` in the image: the model loads and scores a row, its version is the one planned (a moved alias fails here), and it has its own `t_low` / `t_high` tags (a version without them fails here) |
+| Build + push image | `ghcr.io/cvinhnguyen/fraud-predictor:v<model version>-<commit>`: the model version and the predictor code's commit |
+| Sign image (cosign) | `infra/k8s/supply-chain.sh sign fraud-predictor <tag>` ([novel_supply_chain.md](../operations/novel_supply_chain.md)) |
+| Deploy | creates or updates the pull secret `ghcr-pull` from the `ghcr` credential, saves the image and version each InferenceService runs, applies the manifest with the new ones, waits for the rollout and Ready |
+| Smoke test | a V1 predict through the NodePort the Scoring API uses must answer with the released `model_version` |
+| A/B split | sets the Scoring API's `AB_PERCENT` to 10 while an approved challenger runs, and to 0 otherwise ([A/B test](#ab-test-of-the-fraud-model)) |
+| Remove challenger | deletes `card-fraud-challenger` once the split is off |
+| Drift reference | writes the new production model's `reference_profile.json` into the file the Drift API mounts, restarts it and checks the version `/v1/drift` reports; a failure here marks the build unstable and keeps the new model |
+| post: failure | re-applies the image and version each InferenceService ran before (or deletes one that did not exist) and puts the split back |
+| Approve the A/B test | only after a new challenger was deployed: the input "Start the A/B test: send 10% of the cards to model v<N>?" waits up to 7 days for the user `admin`, without holding an executor |
+| Start the A/B test | writes the approval on the challenger (`fraud.platform/ab-approved-version`, `fraud.platform/ab-approved-by`), then sets `AB_PERCENT` on the Scoring API |
+
+Two human steps keep real payments away from a model nobody looked at. The training pipeline sets the alias
+`challenger` on its own when a model beats production offline, so a new challenger is deployed with no traffic and
+only smoke-tested. Real cards reach it only after a person approves in Jenkins. Jenkins records who approved in the
+build, and the annotation on the InferenceService records it in the cluster. Without an answer for 7 days, or on
+Abort, the build ends as aborted, the split stays off and the challenger keeps running with no traffic. A manual run
+of the job deploys it again and asks again. The job does not block builds while it waits, so a production release
+can go out in the meantime.
+
+Promotion is the other human step, in MLflow, and needs no approval in Jenkins. Move the alias `production` to the
+challenger's version: the next check releases it as `card-fraud`, finds `challenger` equal to `production`, turns
+the split off and removes the challenger. A rollback of the model is the same move back to the previous version.
+
+## A/B test of the fraud model
+
+The challenger runs next to production as its own InferenceService, `card-fraud-challenger`, reached on NodePort
+31081. KServe's `canaryTrafficPercent` needs Knative Serving, which this cluster does not run (Standard mode), and
+a canary split by request would send one card to both models. The split happens in the Scoring API instead:
+
+- `ab_arm(card_id)` is `crc32(card_id) % 100 < AB_PERCENT`. crc32 gives the same answer in every process and after a
+  restart, so a card always meets the same model while the test runs.
+- `AB_PERCENT` unset or 0 turns the split off; the challenger client is then not even created.
+- A challenger that fails or runs out of its time budget hands the request to production, so the experiment never
+  costs a payment its model decision. `fraud_challenger_failures_total{cause}` counts these.
+- Each arm decides with its own model's thresholds: the challenger's scores are cut where its own validation put
+  them, so each model is judged with the cut-offs set for its own scores.
+- Every decision log record carries `ab_arm` (the card's arm), `model_version` (the model that scored), `t_low` and
+  `t_high` (the thresholds that decided; empty for the amount rule) and `latency_ms` (features + model).
+  `ab_report.py` prints the thresholds of each row.
+- The payload logger and the drift feed stay on production only: the challenger has no `logger`.
+
+The predictor pipeline turns the split on (after the approval) and off by recreating the compose service
+`scoring-api` with `AB_PERCENT` set, keeping the image it runs. The switch is one environment variable, read once at
+start, and the pipeline that knows whether an approved challenger is live sets it. A recreate costs a few seconds of scoring downtime, like any release of the API. By hand:
+
+```bash
+AB_PERCENT=10 docker compose -f infra/docker-compose.yaml --profile ml up -d --no-deps scoring-api   # 0 turns it off
+python ml/tools/ab_report.py --since 2026-11-21   # per arm and model version: decisions, decline / step-up rate, p95 latency, PR-AUC, recall
+```
+
+`ab_report.py` reads `fraud_predictions` the way `drift_by_day.py` does and joins the labels in
+`data/drift/labels/labels.parquet` where they exist (labels arrive late, see [drift.md](drift.md)).
+
 ## Runs on 2026-10-19 and 2026-10-21 (model v1)
 
-The commands of that run, for model version 1:
+These runs used the local compose registry (`localhost:5001`), replaced by GHCR since. The commands of that run, for
+model version 1:
 
 ```bash
 MLFLOW_TRACKING_URI=http://mlflow:5000 python services/predictor/fetch_model.py --alias production   # v1 -> model/
@@ -315,9 +409,11 @@ L65-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597
 - One Scoring API container with one worker, about 45 requests a second
   ([Capacity](#capacity-and-a-bug-the-first-load-found)). Nothing scales it: more traffic needs more replicas behind a
   load balancer.
-- The decision thresholds are configuration (`T_LOW`, `T_HIGH` in compose), set to model v1's values. Promoting a new
-  model does not change them; its own recommended values are MLflow tags of its version and have to be copied into
-  the configuration by hand.
+- The thresholds come with the model. The risk team can no longer move them with a configuration change alone: a
+  new pair means new tags on the version and a new release of the image. `T_LOW` and `T_HIGH` in compose are only
+  the fallback for a model without tags.
+- A challenger that fails waits for its own time budget before production answers, so such a request can take up to
+  twice `MODEL_TIMEOUT_S`.
 - `auth_ts` is the bank's local time without an offset, as in the training data. A switch that sends an offset (for
   example `+07:00`) has not been tested, and the hour behind `is_night` could then be off.
 - A Kafka outage after start costs only the prediction log: a record that cannot be queued within 50 ms is dropped

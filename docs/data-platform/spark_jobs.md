@@ -51,7 +51,9 @@ Trino and analysts read every zone; Layer 2 reads the labels and the features
 
 ## Run it
 
-From the repo root. The `batch` profile needs the `core` profile (Postgres, SeaweedFS, Kafka) up as well:
+From the repo root. The `batch` profile needs the `core` profile (Postgres, SeaweedFS, Kafka) up as well. These
+commands run the working tree mounted at `/opt/jobs`. The jobs Airflow starts run the released copy instead
+([airflow.md, Releases](airflow.md#releases-cicd)):
 
 ```bash
 docker compose -f infra/docker-compose.yaml --profile core --profile batch up -d --build

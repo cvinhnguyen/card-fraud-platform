@@ -1,0 +1,176 @@
+// CI/CD of the batch pipelines: the Airflow DAGs (DP1-DP3, feast_materialize, drift_monitoring, datahub_metadata),
+// the Spark jobs (pipelines/spark), dbt (pipelines/dbt) and the ml/ code those DAGs run. lint -> unit tests -> every
+// DAG imports in the Airflow image with its tasks -> dbt parse -> release -> the scheduler parses it -> run DP2 silver
+// and read its checks. Runs when that code changed (Jenkins polls main), or by hand. Needs Airflow (profile orch) and
+// Spark (profile batch) up.
+//
+// Release design. Airflow and the Spark drivers it starts read the code through one symlink, /opt/release/current,
+// in the volume fraud_batch_release (AIRFLOW__CORE__DAGS_FOLDER and the Variables spark_jobs_dir, dbt_project_dir,
+// feast_repo all go through it). A release is a copy of this commit's files in /opt/release/<sha>; moving the symlink
+// switches DAGs, jobs and dbt together, without restarting Airflow and without Airflow's own secrets (the git-sync
+// pattern of Airflow's Helm chart). Before any release, current points at `local`, the working tree mounted as before,
+// so a fresh `docker compose up` works without Jenkins. pipelines/airflow/release.sh does the volume side.
+// The version is recorded in the Airflow Variable batch_release, the tag release:<sha> of every batch DAG (what the
+// scheduler parsed), the dataset event each pipeline publishes, the lakeFS commit of DP1 and the Spark conf
+// spark.fraud.release. If a check after the switch fails, post moves current back to the previous release.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 75, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    AIRFLOW = 'http://airflow-webserver:8080/api/v1'
+    AF_IMAGE = 'fraud/airflow:2.10.5'
+    RELEASES = 'fraud_batch_release'
+    DAGS = 'dp1_source_to_bronze dp2_bronze_to_silver dp2_silver_to_gold dp3_gold_to_features feast_materialize drift_monitoring datahub_metadata'
+    SMOKE = 'dp2_bronze_to_silver'   // reads the last committed bronze version; a rerun adds nothing twice
+    CODE = 'pipelines/airflow/dags pipelines/spark pipelines/dbt ml/fraud_ml ml/jobs ml/tools ml/feature_repo ml/pipelines'
+  }
+  stages {
+    stage('Batch pipelines') {
+      when {
+        beforeAgent true
+        anyOf {
+          changeset 'pipelines/airflow/**'; changeset 'pipelines/spark/**'; changeset 'pipelines/dbt/**'
+          changeset 'ml/fraud_ml/**'; changeset 'ml/feature_repo/**'; changeset 'ml/jobs/drift_job.py'
+          changeset 'ml/tools/check_online.py'
+          triggeredBy 'UserIdCause'
+        }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "batch release ${TAG}"
+          }
+        }
+        stage('Lint') {
+          // syntax errors and pyflakes (undefined names, unused imports): the rules the code already passes
+          steps {
+            sh '''git archive HEAD pipelines/airflow pipelines/spark | docker run -i --rm --entrypoint sh ghcr.io/astral-sh/ruff:0.16.3-alpine -c \
+                  'mkdir /src && tar -x -C /src && ruff check --isolated --select E9,F /src' '''
+          }
+        }
+        stage('Unit tests') {
+          // the ml library the drift and Feast DAGs import (ml image's test stage), and the release script
+          steps {
+            sh 'docker build -f ml/Dockerfile --target test -t fraud/ml-train:test-$TAG .'
+            sh 'docker run --rm fraud/ml-train:test-$TAG'
+            sh '''git archive HEAD pipelines/airflow | docker run -i --rm --entrypoint bash $AF_IMAGE -c \
+                  'mkdir -p /tmp/c && tar -x -C /tmp/c && sh /tmp/c/pipelines/airflow/test_release.sh' '''
+          }
+        }
+        stage('DAG check') {
+          // every DAG file imports in the Airflow image (operators, providers, lineage entities); each batch DAG has
+          // exactly its tasks (pipelines/airflow/check_dags.py)
+          steps {
+            sh '''git archive HEAD pipelines/airflow | docker run -i --rm --entrypoint bash $AF_IMAGE -c \
+                  'mkdir -p /tmp/c && tar -x -C /tmp/c && python /tmp/c/pipelines/airflow/check_dags.py /tmp/c/pipelines/airflow/dags' '''
+          }
+        }
+        stage('dbt parse') {
+          // models, sources, refs and tests resolve with the target DP2 uses; dbt build and its tests need the
+          // lakehouse, so they run in the DP2 gold pipeline itself
+          steps {
+            sh '''git archive HEAD pipelines/dbt | docker run -i --rm --entrypoint bash -e DBT_SEND_ANONYMOUS_USAGE_STATS=false \
+                  -e DBT_TARGET_PATH=/tmp/t -e DBT_LOG_PATH=/tmp/l \
+                  -e PYTHONPATH=/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip $AF_IMAGE -c \
+                  'mkdir -p /tmp/c && tar -x -C /tmp/c && cd /tmp/c/pipelines/dbt && /opt/venvs/dbt/bin/dbt parse --profiles-dir . --target session \
+                   && echo "dbt tests: $(/opt/venvs/dbt/bin/dbt ls --profiles-dir . --target session --resource-type test --output name -q | wc -l)"' '''
+          }
+        }
+        stage('Release') {
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
+                api "$AIRFLOW/health" >/dev/null || { echo "Airflow is not up (compose profile orch)" >&2; exit 1; }
+                curl -fsS http://spark-master:8080/json/ >/dev/null || { echo "Spark is not up (compose profile batch)" >&2; exit 1; }
+                docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' airflow-scheduler | grep -qw $RELEASES \
+                  || { echo "airflow-scheduler does not mount $RELEASES: recreate it (docker compose --profile orch up -d)" >&2; exit 1; }
+                rel() { docker run -i --rm --user 0 --entrypoint sh -v $RELEASES:/opt/release $AF_IMAGE -c "$(cat pipelines/airflow/release.sh)" release "$@"; }
+                git archive HEAD $CODE | rel install $TAG
+                rel switch $TAG
+                touch switched   # post rolls back from here on
+                api -X POST "$AIRFLOW/variables" -d "{\\"key\\": \\"batch_release\\", \\"value\\": \\"$TAG\\"}" >/dev/null \
+                  || api -X PATCH "$AIRFLOW/variables/batch_release" -d "{\\"key\\": \\"batch_release\\", \\"value\\": \\"$TAG\\"}" >/dev/null
+                echo "released: current -> $TAG, Variable batch_release = $TAG"
+              '''
+            }
+          }
+        }
+        stage('Scheduler parsed it') {
+          // the scheduler re-parses every file within about 30 s; each batch DAG must carry release:<sha> and no
+          // file may fail to import
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
+                for i in $(seq 40); do
+                  missing=""
+                  for d in $DAGS; do
+                    api "$AIRFLOW/dags/$d" | jq -e --arg t "release:$TAG" '[.tags[].name] | index($t) != null' >/dev/null || missing="$missing $d"
+                  done
+                  [ -z "$missing" ] && break
+                  sleep 15
+                done
+                errors=$(api "$AIRFLOW/importErrors" | jq -r '.import_errors[] | "\\(.filename): \\(.stack_trace | split("\\n") | last)"')
+                [ -z "$errors" ] || { echo "import errors:"; echo "$errors"; exit 1; }
+                [ -z "$missing" ] || { echo "not parsed as release $TAG:$missing" >&2; exit 1; }
+                echo "all batch DAGs parsed as release:$TAG"
+              '''
+            }
+          }
+        }
+        stage('Run + checks') {
+          // one real run on the new release: DP2 silver (Spark job + Great Expectations). Its publish starts the
+          // gold -> features -> materialize chain on the same release, as any run does.
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
+                api -X PATCH "$AIRFLOW/dags/$SMOKE" -d '{"is_paused": false}' >/dev/null
+                run="ci-$TAG-$(date +%s)"
+                api -X POST "$AIRFLOW/dags/$SMOKE/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG, release $TAG\\"}" >/dev/null
+                deadline=$(( $(date +%s) + 2700 ))   # a run blocked by depends_on_past (an older failed run) times out here
+                while :; do
+                  state=$(api "$AIRFLOW/dags/$SMOKE/dagRuns/$run" | jq -r .state)
+                  case "$state" in success|failed) break;; esac
+                  [ "$(date +%s)" -lt "$deadline" ] || { echo "dag run $run still $state after 45 min" >&2; break; }
+                  sleep 15
+                done
+                api "$AIRFLOW/dags/$SMOKE/dagRuns/$run/taskInstances" | jq -r '.task_instances[] | "\\(.task_id) \\(.state) \\(.duration // 0 | floor) s"' | sort
+                printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Accept: text/plain' \
+                  "$AIRFLOW/dags/$SMOKE/dagRuns/$run/taskInstances/validate_dp2_silver.publish_results/logs/1?full_content=true" \
+                  | grep -E -o "(ok  |FAIL) [a-z]+\\.[a-z_]+ .*" || true
+                echo "dag run $run: $state"
+                [ "$state" = success ]
+              '''
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    failure {
+      // a failed check after the switch: back to the release that ran before, and the Variable with it
+      withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+        sh '''
+          if [ -f switched ]; then
+            out=$(docker run -i --rm --user 0 --entrypoint sh -v $RELEASES:/opt/release $AF_IMAGE -c "$(cat pipelines/airflow/release.sh)" release switch previous)
+            echo "rolled back: $out"
+            prev=$(echo "$out" | sed -n 's/^current -> \\([^ ]*\\).*/\\1/p')
+            printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' -X PATCH \
+              "$AIRFLOW/variables/batch_release" -d "{\\"key\\": \\"batch_release\\", \\"value\\": \\"$prev\\"}" >/dev/null
+          fi
+        '''
+      }
+    }
+    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
+    cleanup { sh 'rm -f switched' }
+  }
+}

@@ -16,10 +16,10 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
-from common import DEFAULT_ARGS
+from common import CODE, DEFAULT_ARGS, RELEASE_TAG
 
 DATAHUB = "/opt/venvs/datahub/bin/datahub"
-RECIPES = "/opt/airflow/dags/datahub_recipes"
+RECIPES = f"{CODE}/dags/datahub_recipes"
 ENV = {
     "DATAHUB_GMS_URL": "{{ conn.datahub_rest_default.host }}",
     "DATAHUB_TELEMETRY_ENABLED": "false",
@@ -31,7 +31,7 @@ ENV = {
 }
 
 with DAG("datahub_metadata", schedule="@daily", start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
-         default_args={**DEFAULT_ARGS, "depends_on_past": False}, doc_md=__doc__, tags=["governance"]) as dag:
+         default_args={**DEFAULT_ARGS, "depends_on_past": False}, doc_md=__doc__, tags=["governance", RELEASE_TAG]) as dag:
     for name in ["core_banking", "kafka_topics", "dbt"]:
         recipe = {"kafka_topics": "kafka"}.get(name, name)
         BashOperator(task_id=name, bash_command=f"{DATAHUB} ingest -c {RECIPES}/{recipe}.yml", env=ENV, append_env=True)

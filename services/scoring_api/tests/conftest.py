@@ -37,10 +37,13 @@ class FakeFeatures:
 
 
 class FakeModel:
-    """Deterministic model: score is a pure function of the features (or fixed); can be slow or failing."""
+    """Deterministic model: score is a pure function of the features (or fixed); can be slow or failing. No
+    thresholds of its own unless given, so the scorer's configured ones decide."""
 
-    def __init__(self, score: float | None = None, delay_s: float = 0.0, error: Exception | None = None):
+    def __init__(self, score: float | None = None, delay_s: float = 0.0, error: Exception | None = None,
+                 thresholds: tuple[float, float] | None = None):
         self.score, self.delay_s, self.error, self.calls = score, delay_s, error, 0
+        self.thresholds = thresholds
 
     async def predict(self, features):
         self.calls += 1
@@ -49,8 +52,8 @@ class FakeModel:
         if self.error:
             raise self.error
         if self.score is not None:
-            return self.score, "7"
-        return min(1.0, (features.get("amount") or 0) / 10_000_000), "7"
+            return self.score, "7", self.thresholds
+        return min(1.0, (features.get("amount") or 0) / 10_000_000), "7", self.thresholds
 
     async def ready(self):
         return self.error is None

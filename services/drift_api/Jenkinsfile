@@ -1,0 +1,106 @@
+// CI/CD of the Drift Detection API (compose service drift-api): unit tests + coverage gate -> mutation test -> build +
+// push ghcr.io/cvinhnguyen/fraud-drift-api:<commit> -> recreate the compose service on it -> smoke test (/readyz, and
+// /v1/drift reports the model version of its reference profile). A failure after the recreate puts back the image the
+// container ran before. Runs when services/drift_api changed (Jenkins polls main), or by hand.
+// The reference profile is a host file (services/predictor/model/reference_profile.json, written by fetch_model.py or
+// the predictor pipeline). Compose here runs in Jenkins' workspace, so the recreate passes the host path the running
+// container mounts (DRIFT_REFERENCE): drift-api must have been started once by hand.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    SVC = 'services/drift_api'
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-drift-api'
+    COMPOSE = 'docker compose -p fraud -f infra/docker-compose.yaml'
+  }
+  stages {
+    stage('Drift API') {
+      when {
+        beforeAgent true
+        anyOf { changeset 'services/drift_api/**'; triggeredBy 'UserIdCause' }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image ${IMAGE}:${TAG}"
+          }
+        }
+        stage('Unit tests + coverage gate') {
+          // PSI exact values, histogram store on a fake Redis, the CloudEvents endpoint; fails under 90 % coverage
+          steps {
+            sh 'docker build --target test -t fraud/drift-api:test-$TAG $SVC'
+            sh 'docker run --rm fraud/drift-api:test-$TAG'
+          }
+        }
+        stage('Mutation test') {
+          // mutmut on psi.py and store.py (setup.cfg); fails under 80 % killed
+          steps {
+            sh '''
+              docker run --rm fraud/drift-api:test-$TAG sh -c 'mutmut run >/dev/null 2>&1; mutmut results --all true' > mutmut.txt || true
+              total=$(grep -c ': ' mutmut.txt || true); killed=$(grep -c ': killed' mutmut.txt || true)
+              echo "mutation score: $killed / $total killed"; grep -E ': (survived|timeout|suspicious)' mutmut.txt || true
+              [ "$total" -gt 0 ] && [ $((killed * 100 / total)) -ge 80 ]
+            '''
+          }
+        }
+        stage('Build + push image') {
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''docker build --target runtime --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
+                      -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'''
+            }
+          }
+        }
+        stage('Deploy (compose)') {
+          // prev-image.txt: the image before this build, which post puts back on failure
+          steps {
+            withCredentials([string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+              sh '''
+                ref=$(docker inspect drift-api --format '{{range .Mounts}}{{if eq .Destination "/config/reference_profile.json"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)
+                [ -n "$ref" ] || { echo "drift-api is not running: start it once by hand (docker compose --profile ml up -d drift-api)" >&2; exit 1; }
+                echo "$ref" > reference-path.txt
+                docker inspect drift-api --format '{{.Config.Image}}' > prev-image.txt
+                DRIFT_API_IMAGE=$IMAGE:$TAG DRIFT_REFERENCE="$ref" $COMPOSE --profile ml up -d --no-deps --no-build --wait drift-api
+                docker inspect drift-api --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+              '''
+            }
+          }
+        }
+        stage('Smoke test') {
+          steps {
+            sh '''
+              ok=""
+              for i in $(seq 1 12); do curl -fsS http://drift-api:8000/readyz && ok=1 && break; sleep 5; done
+              [ "$ok" = 1 ] || { echo "drift-api is not ready" >&2; exit 1; }
+              curl -fsS http://drift-api:8000/v1/drift | jq -e '.model_version != null and .model_version != "None"' >/dev/null
+              echo "drift-api reports model v$(curl -fsS http://drift-api:8000/v1/drift | jq -r .model_version)"
+            '''
+          }
+        }
+      }
+    }
+  }
+  post {
+    failure {
+      withCredentials([string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+        sh '''
+          if [ -s prev-image.txt ]; then
+            DRIFT_API_IMAGE=$(cat prev-image.txt) DRIFT_REFERENCE="$(cat reference-path.txt)" \
+              $COMPOSE --profile ml up -d --no-deps --no-build drift-api
+            echo "drift-api back on $(cat prev-image.txt)"
+          fi
+          docker logs --tail 30 drift-api 2>&1 || true
+        '''
+      }
+    }
+    always { sh 'docker image rm fraud/drift-api:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
+    cleanup { sh 'rm -f prev-image.txt reference-path.txt mutmut.txt' }   // cleanup runs after failure, which reads them
+  }
+}

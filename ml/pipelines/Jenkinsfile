@@ -1,0 +1,104 @@
+// CI/CD of the training pipeline (Kubeflow Pipelines, ml/pipelines/train_fraud_model.py): unit tests in the ml
+// image's test stage (registry, training, the compiled pipeline's image pin) -> build + push the code image
+// ghcr.io/cvinhnguyen/fraud-ml-train:<sha> -> compile the pipeline pinned to that tag and upload it as KFP pipeline
+// version <sha> -> check every step of the uploaded version runs that image -> release it to the drift DAG (Airflow
+// Variable train_release). Runs when the pipeline, the ML library, the Feast repo or the image changed (Jenkins polls
+// main), or by hand. Needs the kind cluster with KFP (NodePort 31888) and Airflow (profile orch) up.
+//
+// Versioning: one id, the git short sha, is the image tag and the pipeline version name. Each training run tags its
+// MLflow run with ml_image (step 1), so a model version leads back to its commit. The Variable moves last, after
+// the check, so a failed build leaves the drift DAG on the release it had; :latest also moves, for runs by hand.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-ml-train'   // public package: kind pulls it without a secret
+    KFP = 'http://fraud-control-plane:31888'
+    AIRFLOW = 'http://airflow-webserver:8080/api/v1'
+  }
+  stages {
+    stage('Training pipeline') {
+      when {
+        beforeAgent true
+        anyOf {
+          changeset 'ml/pipelines/**'; changeset 'ml/fraud_ml/**'; changeset 'ml/feature_repo/**'; changeset 'ml/Dockerfile*'
+          changeset 'ml/jobs/tests/test_registry.py'; changeset 'ml/jobs/tests/test_train*.py'
+          triggeredBy 'UserIdCause'
+        }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image ${IMAGE}:${TAG}, pipeline version ${TAG}"
+          }
+        }
+        stage('Unit tests') {
+          steps {
+            sh 'docker build -f ml/Dockerfile --target test -t fraud/ml-train:test-$TAG .'
+            sh 'docker run --rm fraud/ml-train:test-$TAG python3 -m pytest -q tests/test_registry.py tests/test_train.py tests/test_train_pipeline.py'
+          }
+        }
+        stage('Build + push image') {
+          steps {
+            sh 'docker build -f ml/Dockerfile -t $IMAGE:$TAG -t $IMAGE:latest .'
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+            }
+            sh 'docker push $IMAGE:$TAG && docker push $IMAGE:latest'
+          }
+        }
+        stage('Pipeline version') {
+          // compiled inside the image just pushed (same kfp as the steps); the script asserts every step runs
+          // $IMAGE:$TAG before it uploads, and reuses the version if this commit was released before
+          steps {
+            sh '''
+              docker run --rm --network fraud_default -e ML_IMAGE=$IMAGE:$TAG -e KFP_HOST=$KFP $IMAGE:$TAG \
+                python3 /opt/ml/pipelines/train_fraud_model.py --upload $TAG | tee upload.log
+              tail -1 upload.log > release.json
+              jq -e '.pipeline_id and .version_id' release.json >/dev/null
+            '''
+          }
+        }
+        stage('Check version') {
+          // what KFP stored: every container of version $TAG runs exactly the pushed image
+          steps {
+            sh '''
+              pid=$(jq -r .pipeline_id release.json); vid=$(jq -r .version_id release.json)
+              images=$(curl -fsS "$KFP/apis/v2beta1/pipelines/$pid/versions/$vid" | jq -r '[.. | objects | .image? // empty] | unique | join(" ")')
+              echo "version $TAG runs: $images"
+              [ "$images" = "$IMAGE:$TAG" ]
+            '''
+          }
+        }
+        stage('Release to Airflow') {
+          // the drift DAG's trigger_retraining starts runs of this version from now on
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
+                api "$AIRFLOW/health" >/dev/null || { echo "Airflow is not up (compose profile orch)" >&2; exit 1; }
+                echo "previous: $(api "$AIRFLOW/variables/train_release" 2>/dev/null | jq -r .value || echo none)"
+                body=$(jq -n --arg v "$(jq -c . release.json)" '{key: "train_release", value: $v}')
+                api -X POST "$AIRFLOW/variables" -d "$body" >/dev/null || api -X PATCH "$AIRFLOW/variables/train_release" -d "$body" >/dev/null
+                echo "released: train_release = $(cat release.json)"
+              '''
+            }
+          }
+        }
+      }
+    }
+  }
+  post {
+    always {
+      sh 'docker logout ghcr.io >/dev/null 2>&1 || true'
+      sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true'
+    }
+    cleanup { sh 'rm -f upload.log release.json' }
+  }
+}

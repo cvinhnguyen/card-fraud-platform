@@ -1,0 +1,27 @@
+# The A/B challenger: the model behind the MLflow alias `challenger`, next to card-fraud (alias production). Same
+# image recipe and Standard mode; no payload logger, so the drift feed (Broker, Trigger drift-detector) stays on
+# production only. The Scoring API sends AB_PERCENT of the cards (sticky by card_id) here through NodePort 31081
+# (infra/k8s/nodeports.yaml): http://fraud-control-plane:31081/v1/models/card-fraud-challenger:predict
+# Deployed and removed by services/predictor/Jenkinsfile. By hand:
+#   sed -e 's|MODEL_IMAGE|<image>|' -e 's|MODEL_VERSION|<version>|' infra/k8s/kserve-card-fraud-challenger.yaml | kubectl apply -f -
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: card-fraud-challenger
+  namespace: serving
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+    fraud.platform/model-version: "MODEL_VERSION"   # MLflow card_fraud_xgb version (alias challenger)
+spec:
+  predictor:
+    imagePullSecrets: [{name: ghcr-pull}]   # fraud-predictor is a private GHCR package (it holds the model)
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: MODEL_IMAGE
+        args: ["--model_name", "card-fraud-challenger", "--http_port", "8080"]
+        ports: [{containerPort: 8080, protocol: TCP}]
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {cpu: "1", memory: 512Mi}

@@ -47,13 +47,15 @@ CONNECTIONS = [
                password=E["LLM_API_KEY"], description="Embedding server (llama.cpp on the host GPU machine)"),
 ]
 VARIABLES = {
-    "spark_jobs_dir": "/opt/jobs",                         # pipelines/spark/ is mounted here in the Spark and Airflow containers
-    "dbt_project_dir": "/opt/airflow/dbt",
+    # the released code (pipelines/airflow/Jenkinsfile): /opt/release/current is the live release, or the working tree
+    # mounted into the container before the first one (pipelines/airflow/release.sh)
+    "spark_jobs_dir": "/opt/release/current/spark",        # pipelines/spark/
+    "dbt_project_dir": "/opt/release/current/dbt",         # pipelines/dbt/
     "dbt_artifacts_dir": "/opt/airflow/dbt-artifacts",
     "export_bucket": "core-banking-export",                # nightly transaction exports, one folder per export_date
     "lakehouse_bucket": "lakehouse",
     "validation_prefix": "_validation",                    # GE results: s3://lakehouse/_validation/<suite>/ds=<ds>/
-    "feast_repo": "/opt/airflow/feature_repo",             # Layer 2: ml/feature_repo/ mounted read-only
+    "feast_repo": "/opt/release/current/ml/feature_repo",  # Layer 2: ml/feature_repo/
     "feast_kb_repo": "/opt/airflow/ml/feature_repo_kb",    # Layer 3: the knowledge base's Feast repo (in the ml/ mount)
     "drift_psi_threshold": "0.25",                         # PSI above this on any input = major drift
     "drift_pr_auc_drop": "0.05",                           # PR-AUC this far below the model's test PR-AUC = decay

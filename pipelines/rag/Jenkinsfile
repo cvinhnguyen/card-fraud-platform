@@ -1,8 +1,10 @@
 // CI/CD of the RAG data pipeline (Airflow DAG rag_ingest): unit tests of the steps -> the DAG imports in the Airflow
-// image -> build the ml image the steps run in -> release it (Airflow Variable rag_image) -> run the DAG -> its
+// image -> build + push the ml image the steps run in, ghcr.io/cvinhnguyen/fraud-ml-train:<commit> -> release it
+// (Airflow Variable rag_image) -> run the DAG -> its
 // checks (row count, unique ids, text, embedding size, all documents, online = offline) must pass. Runs when the
 // steps, the DAG, the documents or the image changed (Jenkins polls main), or by hand. Needs Airflow up (profile
-// orch); Jenkins only holds the Airflow admin credential, not Airflow's own secrets.
+// orch); Jenkins only holds the Airflow admin credential, not Airflow's own secrets. If the run or its checks fail,
+// post sets rag_image back to the image released before.
 pipeline {
   agent any
   options {
@@ -14,6 +16,7 @@ pipeline {
   environment {
     AIRFLOW = 'http://airflow-webserver:8080/api/v1'
     DAG = 'rag_ingest'
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-ml-train'   // the same package the training pipeline releases
   }
   stages {
     stage('RAG pipeline') {
@@ -29,7 +32,7 @@ pipeline {
         stage('Version') {
           steps {
             script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
-            echo "image fraud/ml-train:${TAG}"
+            echo "image ${IMAGE}:${TAG}"
           }
         }
         stage('Unit tests') {
@@ -45,20 +48,33 @@ pipeline {
                   'mkdir -p /tmp/d && tar -x -C /tmp/d && cd /tmp/d && python -c "import rag_ingest as m; t = sorted(m.dag.task_ids); print(t); assert len(t) == 5"' '''
           }
         }
-        stage('Build image') {
+        stage('Build + push image') {
           steps {
-            sh 'docker build -f ml/Dockerfile -t fraud/ml-train:$TAG .'
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''docker build -f ml/Dockerfile --label org.opencontainers.image.revision=$(git rev-parse HEAD) -t $IMAGE:$TAG . && docker push $IMAGE:$TAG'''
+            }
           }
         }
         stage('Release + run') {
           steps {
             withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+              script {   // the image released before, for the rollback in post (the DAG's default when none was)
+                env.PREV_IMAGE = sh(returnStdout: true, script: '''
+                  v=$(printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - "$AIRFLOW/variables/rag_image" 2>/dev/null | jq -r .value)
+                  echo "${v:-fraud/ml-train:latest}"
+                ''').trim()
+              }
               sh '''
                 api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
                 api "$AIRFLOW/health" >/dev/null || { echo "Airflow is not up (compose profile orch)" >&2; exit 1; }
-                api -X POST "$AIRFLOW/variables" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"fraud/ml-train:$TAG\\"}" >/dev/null \
-                  || api -X PATCH "$AIRFLOW/variables/rag_image" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"fraud/ml-train:$TAG\\"}" >/dev/null
-                echo "released: rag_image = fraud/ml-train:$TAG"
+                api -X POST "$AIRFLOW/variables" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"$IMAGE:$TAG\\"}" >/dev/null \
+                  || api -X PATCH "$AIRFLOW/variables/rag_image" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"$IMAGE:$TAG\\"}" >/dev/null
+                echo "released: rag_image = $IMAGE:$TAG (previous $PREV_IMAGE)"
+              '''
+              script { env.RELEASED = 'true' }   // from here on a failure sets rag_image back (post)
+              sh '''
+                api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
                 api -X PATCH "$AIRFLOW/dags/$DAG" -d '{"is_paused": false}' >/dev/null
                 run="ci-$TAG-$(date +%s)"
                 api -X POST "$AIRFLOW/dags/$DAG/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG\\"}" >/dev/null
@@ -92,6 +108,18 @@ pipeline {
     }
   }
   post {
-    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
+    failure {
+      // a release whose run or checks failed: the DAG goes back to the image released before
+      script {
+        if (env.RELEASED == 'true') {
+          withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
+            sh '''printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' -X PATCH \
+                    "$AIRFLOW/variables/rag_image" -d "{\\"key\\": \\"rag_image\\", \\"value\\": \\"$PREV_IMAGE\\"}" >/dev/null'''
+          }
+          echo "rag_image set back to ${env.PREV_IMAGE}"
+        }
+      }
+    }
+    always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
   }
 }

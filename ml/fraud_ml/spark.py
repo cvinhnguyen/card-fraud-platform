@@ -7,7 +7,7 @@ import os
 
 from pyspark.sql import SparkSession
 
-IMAGE = os.environ.get("ML_IMAGE", "localhost:5001/fraud/ml-train:latest")
+IMAGE = os.environ.get("ML_IMAGE", "ghcr.io/cvinhnguyen/fraud-ml-train:latest")
 S3 = {
     "spark.hadoop.fs.s3a.endpoint": "http://lakehouse-s3:8333",
     "spark.hadoop.fs.s3a.endpoint.region": "us-east-1",

@@ -182,7 +182,7 @@ L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac5
 
 The two push jobs are always-on containers `push-online` and `push-offline` in compose profile `ml`, both running
 [`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py)
-from the `fraud/ml-train` image. Their own CI pipeline, the Jenkins pipeline `stream-feature-jobs`
+from the ml code image (`ghcr.io/cvinhnguyen/fraud-ml-train:<commit>` after a release). Their own CI pipeline, the Jenkins pipeline `stream-feature-jobs`
 ([`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/Jenkinsfile.stream),
 [cicd.md](../operations/cicd.md#stream-feature-jobs)), deploys them: unit tests, the ml image, `push-online` and
 `push-offline` recreated on it, then a smoke test that sends one marked message to Kafka and waits for it in both
@@ -205,11 +205,12 @@ The streaming features of the whole history are rebuilt from the start of the to
 after it:
 
 ```bash
-# empty topics card_authorizations / card_features_rt / card_device_seen, landing, bronze.raw_card_authorizations
+# empty topics card_authorizations / card_features_rt / card_device_seen, landing, bronze.raw_card_authorizations,
+# and delete the consumer group raw_landing
 python generator/producer.py --topic card_authorizations --speed 0            # 8,119,499 events, in 4 chunks (RAM)
 docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/rt_features.py --topic card_authorizations --parallelism 4
 docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/device_seen.py --topic card_authorizations
-docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/raw_landing.py
+docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/raw_landing.py --topic card_authorizations --live   # stays on
 docker compose -f infra/docker-compose.yaml --profile ml up -d push-online push-offline   # after Flink: catch up
 ```
 
@@ -241,7 +242,9 @@ cache only needs to hold the keys of one worker (130k cards / 4).
   L313-L316](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L313-L316))
   fixed it: checkpoints of ~2 MB on S3, ~270 events/s.
 - `raw_landing.py` always started at the earliest offset, so landing the live period would have landed the 8.1M
-  history events again; `--from-ms` starts at a Kafka timestamp instead (the producers stamp event time).
+  history events again; `--from-ms` starts at a Kafka timestamp instead (the producers stamp event time). The
+  always-on `--live` mode resumes from the committed offsets of group `raw_landing`, so a restart does not land the
+  history again.
 - `SparkSource(file_format=...)` accepts only csv / json / parquet / avro: a Delta table is
   `file_format="parquet", table_format=DeltaFormat()`
   ([`ml/feature_repo/fraud_features.py`

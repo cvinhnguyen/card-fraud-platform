@@ -10,7 +10,7 @@ coursework in three layers: a data platform (Layer 1), an ML platform (Layer 2) 
   - [Layer 1: data platform](#layer-1-data-platform) · [Pipelines on Airflow](#pipelines-on-airflow) · [Layer 2: ML
     platform](#layer-2-ml-platform) · [Layer 3: LLM and agent platform](#layer-3-llm-and-agent-platform)
   - [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) · [System diagram, Layer
-    3](#system-diagram-layer-3) · [Deployment](#deployment)
+    3](#system-diagram-layer-3) · [Deployment](#deployment) · [CI/CD](#cicd)
 - [Repo structure](#repo-structure)
 - [Quick start](#quick-start)
   - [Start Layer 3](#start-layer-3) · [UIs](#uis)
@@ -30,7 +30,7 @@ and monitor the model on history. That needs a data platform that brings togethe
 |---|---|---|---|
 | Customers, accounts, cards, merchants, disputes | core banking (Postgres) | DP1 (the ingest pipeline) reads it over JDBC | SCD2 history (slowly changing dimension type 2: every past version of a customer kept), province names before / after the 2025-07-01 reorganization (63 -> 34 units) |
 | Settled transactions | core banking nightly export (files on S3) | DP1 loads the new export folders | 2% duplicates from export re-runs, auth columns added on 2024-07-01 (schema evolution), merchant and city skew |
-| Card authorizations | card network | Kafka `card_authorizations` | late events from offline POS terminals, network-retry duplicates |
+| Card authorizations | card network, through the bank's authorization switch | Kafka `card_authorizations` | late events from offline POS terminals, network-retry duplicates |
 | App events | mobile app | Kafka `app_events` | events out of order within a session |
 | Fraud labels | disputes, reported days to weeks later | DP2 (the pipeline that builds silver and gold) writes `gold.label_transaction` | label delay |
 | Card documents (terms, fees, disputes, authentication rules, FAQ) | product and legal teams | markdown files in `s3://bank-documents` | must be searchable by meaning, kept in sync with what the agents cite |
@@ -48,7 +48,7 @@ realtime features. Layer 3 (agents) reads Layer 2's online features and model.
 
 ## Architecture
 
-Four pictures describe the platform, each answering one question:
+Five pictures describe the platform, each answering one question:
 
 | Picture | Answers |
 |---|---|
@@ -56,15 +56,16 @@ Four pictures describe the platform, each answering one question:
 | [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) | Which containers exchange which data, step by step, in each flow (scoring, streaming, batch, training, monitoring)? |
 | [System diagram, Layer 3](#system-diagram-layer-3) | The same for the agents: a question, the knowledge ingest, CI/CD, monitoring |
 | [Deployment](#deployment) | Where does each container run: the PC, the Docker VM, the kind cluster, Azure, the internet? |
+| [CI/CD](#cicd) | How does a new version of a unit reach the platform, and what happens when it is bad? |
 
-All four pictures are drawn by `python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG
+All five pictures are drawn by `python docs/diagrams/platform.py` (stdlib only; PNG through headless Chrome; SVG
 next to each PNG).
 
 Start with the overview. The bank's data comes in on the left. Layer 1 (the top band) turns it into clean tables
 and features. In Layer 2 (bottom right) a model scores every card payment in real time and is retrained when the
 data drifts. In Layer 3 (bottom left) agents answer the support staff's questions about a card with the same
-data. Under the layers, the CI/CD row shows how a change reaches the platform, the next row holds the services
-every layer uses, and the flow key is at the bottom.
+data. Under the layers, one row holds the services every layer uses (CI/CD among them, drawn on its own
+picture), and the flow key is at the bottom.
 
 Each colour, box shape and arrow is explained in [docs/architecture.md](docs/architecture.md#overview).
 
@@ -167,7 +168,7 @@ call between them passes one gateway that decides what each agent may do.
 | Agent Substrate | Sandboxed copies of the agents: one gVisor sandbox per conversation, restored from a warm snapshot on a shared worker pool | [agents.md](docs/llm-platform/agents.md#sandboxed-agents-on-agent-substrate-warm-up) |
 | agentregistry | Catalog of the agents and the three MCP servers they use, for people; not on the call path | [agents.md](docs/llm-platform/agents.md#agent-registry) |
 | Operations | Prometheus + Grafana (metrics), VictoriaLogs (logs), Jaeger (traces), Vault (secrets) | [observability.md](docs/operations/observability.md), [edge_security.md](docs/operations/edge_security.md) |
-| CI/CD | Jenkins, five pipelines: the MCP servers, the data agents, the coordinator, the RAG data pipeline and the push jobs. Agent prompts come from Langfuse; the MCP server image is signed and the cluster runs only signed images of it (Layer 3 novel idea 2); each release of the data agents passes an eval gate on the risk agent (Layer 3 novel idea 1) | [cicd.md](docs/operations/cicd.md) |
+| CI/CD | Jenkins, 11 pipelines, one per deployable unit: batch pipelines, Flink jobs, push jobs, training, model release, the Scoring and Drift APIs, RAG, the MCP servers and the agents. Images go to GitHub Container Registry tagged with their version, each running unit shows its version, and a failed check rolls the release back. A challenger model gets an A/B test once a person approves it. Agent prompts come from Langfuse; the MCP server image is signed and the cluster runs only signed images of it (Layer 3 novel idea 2); each release of the data agents passes an eval gate on the risk agent (Layer 3 novel idea 1) | [cicd.md](docs/operations/cicd.md) |
 
 ### System diagram, Layers 1 and 2
 
@@ -180,7 +181,7 @@ flow has its own colour, letter and numbering:
 
 | Letter | Flow | Who / when | Path |
 |---|---|---|---|
-| S | Payment scoring | end user, every authorization | card network -> Scoring API (features from Redis, score from KServe) -> decision; every decision logged to Kafka |
+| S | Payment scoring | end user, every authorization | authorization switch -> Scoring API (features from Redis, score from KServe) -> decision; every decision logged to Kafka |
 | R | Streaming features | continuous | Kafka -> Flink -> Kafka -> push jobs -> Redis (online) and Delta (offline) |
 | B | Batch data | daily, Airflow | Postgres + export files -> DP1 (bronze) -> DP2 silver pipeline (silver) -> DP2 gold pipeline (gold) -> DP3 (`feat_*`) -> materialize pipeline -> Redis; each one starts on the dataset event of the zone it reads |
 | T | Training and deploy | ML engineer | lakehouse -> notebook / training pipeline -> MLflow -> model image -> KServe |
@@ -202,7 +203,7 @@ and vectors that the RAG data pipeline writes into a second Feast project (pgvec
 |---|---|---|---|
 | A | Agent conversation | support staff, every question | NGINX -> support chat -> gateway -> coordinator -> gateway -> card-data / risk agents -> gateway -> MCP servers card-data (Redis, pgvector), fraud-score (Scoring API), policy-rag (embeddings, pgvector); LLM calls -> gateway -> llm-d -> llama.cpp |
 | K | Knowledge ingest | RAG data pipeline `rag_ingest`, per release | bank documents (S3) -> chunks -> embeddings -> pgvector online + Parquet offline -> DataHub checks and lineage |
-| C | CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse) -> signed image in the registry -> helm --atomic -> eval gate through the gateway -> Langfuse experiment |
+| C | CI/CD | developer push | GitHub -> Jenkins (prompts from Langfuse, model aliases from MLflow) -> signed image in GHCR -> deploy -> gates (signed images, eval gate) -> live release with its version; a failed gate rolls back |
 | O | Observability and scaling | continuous | gateway + MCP metrics -> Prometheus -> Grafana and KEDA (agent replicas 2-4); agent spans -> Jaeger |
 
 Every Layer 3 arrow, one line each: [docs/architecture.md](docs/architecture.md#numbered-arrows-layer-3).
@@ -224,6 +225,16 @@ The rest of the platform is containers and Helm charts that could run on Azure t
 Students subscription keep it on the PC: 6 vCPU and 3 public IPs per region, a quota of 0 for the T4, A10, A100 and H100
 GPU families, and $100 of credit, which a 16 GB VM would use up in about 18 days ([what would move where, and the
 numbers](docs/operations/iac.md#why-not-all-of-it-on-azure)).
+
+### CI/CD
+
+How a new version of a unit reaches the platform. Jenkins runs 11 pipelines, one per deployable unit: each tests a
+change, gives it a version, deploys it, checks the running unit and brings back the version before when the check
+fails. The model release (from the MLflow aliases to KServe) and the agent release (from the Langfuse prompts to the
+Agents) are drawn step by step; the other eight pipelines are one row each
+([docs/architecture.md](docs/architecture.md#cicd), [cicd.md](docs/operations/cicd.md)).
+
+![CI/CD: the path every release shares, the model release and the agent release step by step, one row for each other pipeline](docs/images/platform-cicd.png)
 
 ## Repo structure
 
@@ -338,15 +349,16 @@ sh infra/k8s/llm-platform.sh           # Gateway API, agentgateway, llm-d router
 sh infra/k8s/observability.sh          # Prometheus + Grafana (dashboards), VictoriaLogs, Jaeger
 sh infra/k8s/edge.sh && sh infra/k8s/tls.sh   # NGINX Ingress + routes, then the HTTPS certificate (DuckDNS, Let's Encrypt)
 .venv/Scripts/python generator/load_source.py --part documents && docker exec airflow-scheduler airflow dags trigger rag_ingest
-sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 5 pipelines build, test and deploy the MCP servers and the agents
+sh infra/jenkins/setup.sh              # Jenkins (profile cicd): its 11 pipelines test, build and deploy every unit (docs/operations/cicd.md)
 arctl apply -f agents/registry/catalog.yaml   # the registry catalog (kubectl -n agentregistry port-forward svc/agentregistry 12121:12121)
 ```
 
 By hand instead of Jenkins:
 
 ```bash
-docker build --target runtime -t localhost:5001/card-support-mcp:<tag> services/card_support_mcp
-docker push localhost:5001/card-support-mcp:<tag>
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+docker build --target runtime -t ghcr.io/cvinhnguyen/card-support-mcp:<tag> services/card_support_mcp
+docker push ghcr.io/cvinhnguyen/card-support-mcp:<tag>
 for s in card-data fraud-score policy-rag; do
   helm upgrade --install $s-mcp services/card_support_mcp/chart -f services/card_support_mcp/chart/values-$s.yaml -n card-support --atomic --set image.tag=<tag>
 done

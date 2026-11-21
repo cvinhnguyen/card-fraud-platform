@@ -13,8 +13,8 @@ from datetime import datetime
 
 from airflow import DAG
 
-from common import DEFAULT_ARGS, FEATURES, GOLD, publish, spark_job, validate
+from common import DEFAULT_ARGS, FEATURES, GOLD, RELEASE_TAG, publish, spark_job, validate
 
 with DAG("dp3_gold_to_features", schedule=[GOLD], start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
-         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp3", "features"]) as dag:
+         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp3", "features", RELEASE_TAG]) as dag:
     spark_job("build_features", "build_features.py") >> validate("dp3") >> publish(FEATURES)

@@ -5,15 +5,15 @@ what runs: anyone who can push to the registry or edit a Deployment could run an
 data, and a tag can be moved to other content after it was tested. The MCP (Model Context Protocol) servers'
 pipeline now signs every image it builds with a key only CI holds ([cosign](https://github.com/sigstore/cosign)), and
 an admission policy ([Kyverno](https://kyverno.io)) refuses a Pod in `card-support` unless its image comes from the
-platform registry (the compose registry, `registry:5000`) and carries a valid signature, then pins the Pod to the
-digest it verified. Not covered in the EDAI course: software supply-chain security (image signing and signature
+platform registry (GHCR, `ghcr.io/cvinhnguyen`) and carries a valid signature, then pins the Pod to the digest it
+verified. The model server pipeline signs the predictor images the same way. Not covered in the EDAI course: software supply-chain security (image signing and signature
 verification at admission).
 
 | | |
 |---|---|
 | Code | [`infra/k8s/supply-chain.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain.sh), [`infra/k8s/supply-chain/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain), [`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/Jenkinsfile) (stage "Sign image (cosign)") |
-| Runs on | signing: Jenkins (compose profile `cicd`) with cosign v2.6.5 in a container; admission: Kyverno 1.19.1 in kind namespace `kyverno`, policy on namespace `card-support` |
-| Reads | images in the compose registry (`registry:5000`) |
+| Runs on | signing: Jenkins (compose profile `cicd`) with cosign v2.6.5 in its image; admission: Kyverno 1.19.1 in kind namespace `kyverno`, policy on namespace `card-support` |
+| Reads | images in GHCR (`ghcr.io/cvinhnguyen`, public packages) |
 | Writes | one signature artifact (`sha256-<digest>.sig`) per signed image, in the same registry |
 | Related | [cicd.md](cicd.md), [agents.md](../llm-platform/agents.md) |
 
@@ -21,7 +21,7 @@ From the CI build to the admitted Pod:
 
 ```mermaid
 flowchart LR
-    j["Jenkins<br/>card-support-mcp"] -->|"1. docker build + push<br/>localhost:5001/card-support-mcp:sha"| r[("compose registry<br/>registry:5000")]
+    j["Jenkins<br/>card-support-mcp"] -->|"1. docker build + push<br/>ghcr.io/cvinhnguyen/card-support-mcp:sha"| r[("GHCR<br/>ghcr.io/cvinhnguyen")]
     j -->|"1. cosign sign --key env://COSIGN_KEY<br/>by digest"| r
     h["helm upgrade<br/>card-data / fraud-score / policy-rag"] --> api["kube-apiserver"]
     api -->|"3. admission webhook"| k["Kyverno<br/>policy card-support-signed-images"]
@@ -43,8 +43,8 @@ for the demo and then removed ([Limits](#limits)).
 
 ## How it works
 
-1. The pipeline builds the image and pushes it to the compose registry. It then signs the image's digest with a
-   private key only CI holds. The signature is stored next to the image, in the same registry ([Pieces](#pieces)).
+1. The pipeline builds the image and pushes it to GHCR. It then signs the image's digest with a private key only CI
+   holds. The signature is stored next to the image, in the same registry ([Pieces](#pieces)).
 2. The public half of the key sits in the repo and is written into a Kyverno policy on the namespace `card-support`.
 3. When a Pod is created there, Kyverno checks two rules: the image comes from the platform registry, and its
    signature verifies with the public key. Any other image is refused.
@@ -60,8 +60,10 @@ Run these in the kind cluster (after `infra/k8s/up.sh`). The key pair comes from
 (or `COSIGN_KEY`):
 
 ```bash
-sh infra/k8s/supply-chain.sh                              # install / update: Kyverno, the policy, the node's registry:5000
-sh infra/k8s/supply-chain.sh sign card-support-mcp <tag>  # sign a pushed image (CI does this in "Sign image (cosign)")
+sh infra/k8s/supply-chain.sh                              # install / update: Kyverno and the policy
+GHCR_USER=<user> GHCR_TOKEN=<token> sh infra/k8s/supply-chain.sh sign card-support-mcp <tag>   # CI does this in "Sign image (cosign)"
+docker run --rm -v "$PWD/infra/k8s/supply-chain:/k:ro" ghcr.io/sigstore/cosign/cosign:v2.6.5 verify \
+  --key /k/cosign.pub --insecure-ignore-tlog=true ghcr.io/cvinhnguyen/card-support-mcp:<tag>   # check a signature
 helm uninstall kyverno -n kyverno                         # remove after the demo, then delete the *kyverno* webhook configurations
 ```
 
@@ -72,8 +74,10 @@ Replace `<tag>` with the tag CI pushed: the short commit SHA (`git rev-parse --s
 The MCP servers in `card-support` serve the card data, and two of them (card-data, policy-rag) get the passwords of
 the online stores from their Secrets ([`infra/k8s/secrets.sh`
 L65-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/secrets.sh#L65-L69)).
-Before this change the cluster ran whatever image a Deployment named. The compose registry (`registry:3`, published on
-`127.0.0.1:5001`) asks for no login, so a pushed image was enough to run there. A tag proves nothing either: build #16
+Before this change the cluster ran whatever image a Deployment named. The registry of that time (the compose service
+`registry:3`, published on `127.0.0.1:5001`) asked for no login, so a pushed image was enough to run there. GHCR asks
+for a token with `write:packages` to push, but a leaked token or a re-pushed tag would still run without a signature
+check. A tag proves nothing either: build #16
 pushed commit `7da43e5` again under the same tag with a new digest ([Proof](#proof)), so the tag that was tested can
 point at other bytes the next time a Pod starts.
 
@@ -94,16 +98,18 @@ and is written into the policy.
 
 [`infra/k8s/supply-chain.sh`
 L14-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain.sh#L14-L25)
-(`sign <repo> <tag>`) signs with cosign v2.6.5 in a container: it looks up the tag's digest in the registry and signs
-`registry:5000/<repo>@<digest>`, and the key reaches the container only through its environment
-(`--key env://COSIGN_KEY`). The signature is a separate artifact in the same registry. Nothing is uploaded to the public
-Rekor transparency log, because the registry and its images are private.
+(`sign <repo> <tag>`) looks up the tag's digest in GHCR (`docker buildx imagetools inspect`) and signs
+`ghcr.io/cvinhnguyen/<repo>@<digest>` with cosign v2.6.5. The key reaches cosign only through its environment
+(`--key env://COSIGN_KEY`). In Jenkins, cosign is part of the Jenkins image and pushes the signature with the
+pipeline's `docker login ghcr.io`. By hand it runs in a container and takes `GHCR_USER` and `GHCR_TOKEN` from the
+environment. The signature is a separate artifact in the same package. Nothing is uploaded to the public Rekor
+transparency log.
 
 Admission is
 [`infra/k8s/supply-chain/signed-images.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain/signed-images.yaml)
 on Kyverno 1.19.1 (chart 3.9.1, only the admission controller:
 [`infra/k8s/supply-chain/kyverno-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain/kyverno-values.yaml)).
-Rule `platform-registry-only` requires the images of `card-support` Pods to come from `registry:5000`. Rule
+Rule `platform-registry-only` requires the images of `card-support` Pods to come from `ghcr.io/cvinhnguyen`. Rule
 `signed-by-ci` (`verifyImages`: required, signature by `cosign.pub`, `mutateDigest` + `verifyDigest`) makes the Pod run
 exactly the bytes that were verified, even if the tag moves later ([`infra/k8s/supply-chain/signed-images.yaml`
 L14-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/supply-chain/signed-images.yaml#L14-L31)):
@@ -113,30 +119,29 @@ L14-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597
   match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
   validate:
     failureAction: Enforce
-    message: "card-support runs images from the platform registry (registry:5000) only"
+    message: "card-support runs images from the platform registry (ghcr.io/cvinhnguyen) only"
     pattern:
       spec:
-        =(containers): [{image: "registry:5000/*"}]
-        =(initContainers): [{image: "registry:5000/*"}]
-        =(ephemeralContainers): [{image: "registry:5000/*"}]
+        =(containers): [{image: "ghcr.io/cvinhnguyen/*"}]
+        =(initContainers): [{image: "ghcr.io/cvinhnguyen/*"}]
+        =(ephemeralContainers): [{image: "ghcr.io/cvinhnguyen/*"}]
 - name: signed-by-ci   # verifyImages checks containers, initContainers and ephemeralContainers
   match: {any: [{resources: {kinds: [Pod, Pod/ephemeralcontainers], namespaces: [card-support]}}]}
   verifyImages:
-    - imageReferences: ["registry:5000/*"]
+    - imageReferences: ["ghcr.io/cvinhnguyen/*"]
       failureAction: Enforce
       mutateDigest: true
       verifyDigest: true
       required: true
 ```
 
-Images are pushed to `localhost:5001` from the host. In the cluster they are referenced as `registry:5000/...`, a name
-that both the kind node (containerd `certs.d`,
-[`infra/k8s/up.sh`
-L10-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/up.sh#L10-L15))
-and the Kyverno pod resolve. The registry speaks plain HTTP, so Kyverno runs with `registryClient.allowInsecure`; that
-setting covers the transport only, and the signature check is unchanged.
+GHCR serves HTTPS and the packages are public (set once in each package's settings on GitHub), so the kind node
+pulls the images and Kyverno reads the signatures without a login or a registry mirror.
 
 ## The run of 2026-10-24, step by step
+
+This run used the compose registry of that time (`registry:5000`, pushed to as `localhost:5001`), so the
+console output and screenshots show that name. Since 2026-11-21 the same steps run against `ghcr.io/cvinhnguyen`.
 
 ### 1. CI signs the image it built
 
@@ -217,10 +222,10 @@ run:
   8 GB Docker VM ran out of memory with the rest of the platform up. `sh infra/k8s/supply-chain.sh` installs it and the
   policy in under a minute once the images are cached; `helm uninstall kyverno -n kyverno` plus deleting the `*kyverno*`
   webhook configurations removes it (they fail closed, so a leftover one would block every Pod). The CI keeps signing
-  every image either way, and the cluster keeps pulling `registry:5000/...`, so turning enforcement on needs no other
-  change. On a real cluster it stays on.
-- The registry is plain HTTP: `cosign verify` needs `--allow-http-registry --allow-insecure-registry`, and with no
-  Rekor upload, `--insecure-ignore-tlog=true` (cosign warns about it, as in step 2 of the run).
+  every image either way, and the cluster keeps pulling from `ghcr.io/cvinhnguyen`, so turning enforcement on needs no
+  other change. On a real cluster it stays on.
+- With no Rekor upload, `cosign verify` needs `--insecure-ignore-tlog=true` (cosign warns about it, as in step 2 of the
+  run). The code packages are public, so anyone can pull those images. That is fine for this coursework; a bank would keep them private. `fraud-predictor`, which holds the model, is already private.
 - `kyverno.io/v1 ClusterPolicy` is deprecated in Kyverno 1.19 in favour of `ImageValidatingPolicy` (CEL, the Common
   Expression Language); it still
   enforces, and the migration is a rewrite of this one file.

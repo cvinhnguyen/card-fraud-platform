@@ -14,7 +14,8 @@
 runtime: go
 modelConfig: {{ .a.modelConfig | default .root.Values.modelConfig }}
 stream: true
-systemMessageFrom: {type: ConfigMap, name: {{ .root.Release.Name }}-prompts, key: {{ .a.promptOf | default .name }}}
+# inline, next to the version annotation on the same object, so one write changes both (no separate ConfigMap)
+systemMessage: {{ .root.Files.Get (printf "prompts/%s.md" (.a.promptOf | default .name)) | toJson }}
 tools:
   {{- range $server, $tools := .a.mcpServers }}
   - type: McpServer

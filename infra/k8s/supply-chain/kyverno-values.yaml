@@ -2,8 +2,8 @@
 # policy reports, one replica.
 features:
   registryClient:
-    allowInsecure: true      # the compose registry serves plain HTTP (registry:5000); signatures are still verified
-    credentialHelpers: []    # no cloud registry to log in to
+    allowInsecure: false     # GHCR serves HTTPS
+    credentialHelpers: []    # public packages: no registry login needed to read images and signatures
 admissionController:
   replicas: 1
   container:

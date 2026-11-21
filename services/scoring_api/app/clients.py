@@ -22,9 +22,12 @@ class FeatureSource(Protocol):
     async def features(self, req: ScoreRequest) -> dict[str, float | None]: ...
 
 
+Thresholds = tuple[float, float] | None   # the model version's own (t_low, t_high); None: use the configured ones
+
+
 class ModelSource(Protocol):
-    """Anything that scores one feature vector."""
-    async def predict(self, features: dict[str, float | None]) -> tuple[float, str]: ...
+    """Anything that scores one feature vector: score, model version, the version's thresholds."""
+    async def predict(self, features: dict[str, float | None]) -> tuple[float, str, Thresholds]: ...
 
 
 class FeatureClient:
@@ -62,8 +65,9 @@ class ModelClient:
         self.url = url
         self.client = client or httpx.AsyncClient(timeout=timeout_s)
 
-    async def predict(self, features: dict[str, float | None]) -> tuple[float, str]:
-        """Score of one feature vector and the model version that produced it.
+    async def predict(self, features: dict[str, float | None]) -> tuple[float, str, Thresholds]:
+        """Score of one feature vector, the model version that produced it and that version's thresholds (None when
+        the predictor does not send a valid pair, e.g. an image built before they were added).
         The scorer's time budget cancels only the shield: the HTTP call itself ends under httpx's own timeouts and
         returns its connection. Cancelled mid-request, httpx calls left the pool exhausted after a load burst, and
         every later request fell back (model_timeout / PoolTimeout) until the API was restarted."""
@@ -72,7 +76,9 @@ class ModelClient:
         r = await asyncio.shield(call)
         r.raise_for_status()
         body = r.json()
-        return float(body["predictions"][0]), str(body.get("model_version", "unknown"))
+        lo, hi = body.get("t_low"), body.get("t_high")
+        th = (float(lo), float(hi)) if lo is not None and hi is not None and 0 <= float(lo) <= float(hi) <= 1 else None
+        return float(body["predictions"][0]), str(body.get("model_version", "unknown")), th
 
     async def ready(self) -> bool:
         """The InferenceService answers its model-ready endpoint."""

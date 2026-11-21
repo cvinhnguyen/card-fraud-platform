@@ -63,20 +63,47 @@ steps pass S3 paths and the MLflow run id, never data, and each run's files live
 
 ## Run it
 
-The notebook needs the `ml` profile; the pipeline needs the kind cluster with Kubeflow Pipelines and the code image in
-the local registry:
+The notebook needs the `ml` profile; the pipeline needs the kind cluster with Kubeflow Pipelines and the code image on
+GitHub Container Registry. The Jenkins job `training-pipeline` builds and pushes the image and releases the pipeline
+(see [Releases](#releases-cicd)); a run by hand uses the newest image (`:latest`):
 
 ```bash
 # notebook (compose profile ml; token = JUPYTER_TOKEN in infra/.env)
 docker compose -f infra/docker-compose.yaml --profile ml up -d notebook      # http://127.0.0.1:8899
 # pipeline (kind cluster with Kubeflow Pipelines: infra/k8s/up.sh + infra/k8s/platform.sh)
-docker build -f ml/Dockerfile -t localhost:5001/fraud/ml-train:latest . && docker push localhost:5001/fraud/ml-train:latest
 kubectl -n kubeflow port-forward svc/ml-pipeline 8888:8888 &
 KFP_HOST=http://127.0.0.1:8888 python ml/pipelines/train_fraud_model.py --run --label-as-of 2026-11-08
 # label_as_of = day D: load_labels reads the gold.label_transaction version that the DP2 gold run wrote on D (or the
 # last one before D). Both tables keep 365 days of versions; before that fix a day older than 7 days failed with
 # DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION (see Gotchas).
-python ml/pipelines/train_fraud_model.py --compile    # only writes ml/pipelines/train_fraud_model.yaml, the package the data drift pipeline submits
+python ml/pipelines/train_fraud_model.py --compile    # only writes ml/pipelines/train_fraud_model.yaml (drift DAG fallback before any release)
+```
+
+## Releases (CI/CD)
+
+The Jenkins job `training-pipeline`
+([`ml/pipelines/Jenkinsfile`](../../ml/pipelines/Jenkinsfile)) releases the pipeline when the pipeline, the ML
+library, the Feast repo or the image change. One id, the git short sha, names everything in a release:
+
+| Stage | What it does |
+|---|---|
+| Unit tests | registry, training and `test_train_pipeline.py` (the compiled pipeline runs only the image it was compiled for) in the ml image's test stage |
+| Build + push image | `ghcr.io/cvinhnguyen/fraud-ml-train:<sha>`, and `:latest` for runs by hand. The package is public, so kind pulls it without a secret |
+| Pipeline version | inside that image: compile with `ML_IMAGE` = the `<sha>` image, assert every step runs it, upload it as version `<sha>` of the KFP pipeline `train_fraud_model` |
+| Check version | reads the version back from the KFP API: every container must be the `<sha>` image |
+| Release to Airflow | the Variable `train_release` = `{"pipeline_id", "version_id", "version", "image"}` |
+
+The drift DAG's `trigger_retraining` starts a run of the version in `train_release`. Before the first release the
+Variable is absent, and it submits the package compiled in the repo (`ml/pipelines/train_fraud_model.yaml`). The Variable moves last, after the
+check, so a failed build leaves the drift DAG on the version it had. To go back to an older version, set
+`train_release` to that version's JSON (the Jenkins log of its build prints it).
+
+Which version trained a model: step 1 tags the MLflow run with `ml_image` (the image with its sha) next to
+`kfp_run_id`, and each model version tags its `run_id`. A run of a released version also shows the version name
+`<sha>` on its KFP page.
+
+```bash
+docker exec airflow-scheduler airflow variables get train_release   # the version the drift DAG starts
 ```
 
 ## Labels and the split

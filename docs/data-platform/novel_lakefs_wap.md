@@ -39,7 +39,7 @@ the bucket `core-banking-export`. It writes `bronze.raw_transactions` on the lak
 (bronze to silver and gold), dbt and Trino read. lakeFS keeps the history of every published export. DataHub shows
 the branch, the merge and the table as one lineage chain ([datahub.md](datahub.md)). In the platform overview this is
 the DP1 paragraph of Layer 1 ([architecture.md](../architecture.md#layer-1-the-data-platform-top-band)), and in the
-system diagram arrow B4 ([numbered arrows](../architecture.md#numbered-arrows)).
+system diagram arrow B5 ([numbered arrows](../architecture.md#numbered-arrows)).
 
 ## How it works
 

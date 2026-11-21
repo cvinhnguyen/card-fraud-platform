@@ -4,7 +4,8 @@
 #   helm upgrade --install card-support-data-agents agents/chart -n kagent -f agents/chart/values-data-agents.yaml
 #   helm upgrade --install card-support-coordinator agents/chart -n kagent -f agents/chart/values-coordinator.yaml
 # System prompts: prompts/<agent>.md, replaced by the pipeline with the Langfuse prompt card-support/<agent> labelled
-# production (promptVersions records which version is deployed, as an annotation on each Agent).
+# production. Each Agent carries its prompt inline (spec.declarative.systemMessage) and the version as the annotation
+# card-support/prompt (promptVersions), so one write of the Agent changes both.
 modelConfig: default-model-config   # the global model config: agentgateway -> llm-d -> Qwen3-8B
 resources:
   requests: {cpu: 50m, memory: 96Mi}

@@ -17,7 +17,7 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
-from common import DAY, DEFAULT_ARGS, GOLD, S3_ENV, SILVER, publish, spark_job, validate
+from common import DAY, DEFAULT_ARGS, GOLD, RELEASE, RELEASE_TAG, S3_ENV, SILVER, publish, spark_job, validate
 
 DBT = "/opt/venvs/dbt/bin/dbt"
 DBT_ARGS = "--project-dir {{ var.value.dbt_project_dir }} --profiles-dir {{ var.value.dbt_project_dir }} --target session"
@@ -29,13 +29,14 @@ DBT_ENV = {
     "PYTHONPATH": "/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip",
     "PYSPARK_PYTHON": "python3",   # executors' Python; the driver is the dbt venv's
     "PYSPARK_SUBMIT_ARGS": "--conf spark.executor.memory=1536m --conf spark.openlineage.appName=dp2_silver_to_gold "
-                           "--conf spark.driver.bindAddress=0.0.0.0 --name dbt_gold pyspark-shell",   # as spark_job()
+                           f"--conf spark.driver.bindAddress=0.0.0.0 --conf spark.fraud.release={RELEASE} "
+                           "--name dbt_gold pyspark-shell",   # as spark_job()
     "DBT_TARGET_PATH": "{{ var.value.dbt_artifacts_dir }}/target",
     "DBT_LOG_PATH": "{{ var.value.dbt_artifacts_dir }}/logs",
 }
 
 with DAG("dp2_silver_to_gold", schedule=[SILVER], start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
-         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp2", "gold", "dbt"]) as dag:
+         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp2", "gold", "dbt", RELEASE_TAG]) as dag:
     # pool `spark`: a dbt run is a Spark application like the others
     dbt_build = BashOperator(task_id="dbt_build", bash_command=f"{DBT} build {DBT_ARGS}", env=DBT_ENV, append_env=True,
                              pool="spark")

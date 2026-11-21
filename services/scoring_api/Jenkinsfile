@@ -1,0 +1,113 @@
+// CI/CD of the Fraud Scoring API (compose service scoring-api): unit tests + coverage gate -> mutation test -> build +
+// push ghcr.io/cvinhnguyen/fraud-scoring-api:<commit> -> recreate the compose service on it -> smoke test (/readyz and
+// one POST /v1/score answered by the model). A failure after the recreate puts back the image the container ran
+// before. Runs when services/scoring_api changed (Jenkins polls main), or by hand. The A/B split (AB_PERCENT) belongs
+// to the predictor pipeline: it is carried over from the running container.
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    SVC = 'services/scoring_api'
+    IMAGE = 'ghcr.io/cvinhnguyen/fraud-scoring-api'
+    COMPOSE = 'docker compose -p fraud -f infra/docker-compose.yaml'
+  }
+  stages {
+    stage('Scoring API') {
+      when {
+        beforeAgent true
+        anyOf { changeset 'services/scoring_api/**'; triggeredBy 'UserIdCause' }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "image ${IMAGE}:${TAG}"
+          }
+        }
+        stage('Unit tests + coverage gate') {
+          // fakes, respx, hypothesis properties, the A/B split; pytest.ini fails the stage under 90 % coverage
+          steps {
+            sh 'docker build --target test -t fraud/scoring-api:test-$TAG $SVC'
+            sh 'docker run --rm fraud/scoring-api:test-$TAG'
+          }
+        }
+        stage('Mutation test') {
+          // mutmut on policy.py and scorer.py (setup.cfg); fails under 80 % killed
+          steps {
+            sh '''
+              docker run --rm fraud/scoring-api:test-$TAG sh -c 'mutmut run >/dev/null 2>&1; mutmut results --all true' > mutmut.txt || true
+              total=$(grep -c ': ' mutmut.txt || true); killed=$(grep -c ': killed' mutmut.txt || true)
+              echo "mutation score: $killed / $total killed"; grep -E ': (survived|timeout|suspicious)' mutmut.txt || true
+              [ "$total" -gt 0 ] && [ $((killed * 100 / total)) -ge 80 ]
+            '''
+          }
+        }
+        stage('Build + push image') {
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'ghcr', usernameVariable: 'GHCR_USER', passwordVariable: 'GHCR_PW')]) {
+              sh 'echo "$GHCR_PW" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+              sh '''docker build --target runtime --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
+                      -t $IMAGE:$TAG $SVC && docker push $IMAGE:$TAG'''
+            }
+          }
+        }
+        stage('Deploy (compose)') {
+          // prev-image.txt: the image before this build, which post puts back on failure
+          steps {
+            withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                             string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+              sh '''
+                docker inspect scoring-api --format '{{.Config.Image}}' > prev-image.txt 2>/dev/null || : > prev-image.txt
+                ab=$(docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^AB_PERCENT=//p')
+                SCORING_API_IMAGE=$IMAGE:$TAG AB_PERCENT=${ab:-0} $COMPOSE --profile ml up -d --no-deps --no-build --wait scoring-api
+                docker inspect scoring-api --format '{{.Name}} {{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'
+              '''
+            }
+          }
+        }
+        stage('Smoke test') {
+          // a known card through the real path (Feast, KServe); a fallback answer means the model path is broken
+          steps {
+            sh '''
+              curl -fsS http://scoring-api:8000/readyz
+              body='{"auth_id": "auth_jenkins_smoke", "card_id": "card_00006087", "customer_id": "cus_smoke",
+                     "merchant_id": "mer_smoke", "amount_vnd": 250000, "channel": "pos", "currency": "VND",
+                     "auth_method": "chip_pin", "auth_ts": "2026-10-16T09:30:00"}'
+              ok=""
+              for i in 1 2 3; do
+                out=$(curl -fsS -H 'Content-Type: application/json' -d "$body" http://scoring-api:8000/v1/score) && echo "$out" \
+                  && printf '%s' "$out" | jq -e '.fallback == false and .score != null' >/dev/null \
+                  && ok=1 && break
+                sleep 3
+              done
+              [ "$ok" = 1 ] || { echo "no request was scored by the model" >&2; exit 1; }
+            '''
+          }
+        }
+      }
+    }
+  }
+  post {
+    failure {
+      // the container goes back to the image it ran before this build, with the same A/B split
+      withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
+                       string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
+        sh '''
+          if [ -s prev-image.txt ]; then
+            ab=$(docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^AB_PERCENT=//p')
+            SCORING_API_IMAGE=$(cat prev-image.txt) AB_PERCENT=${ab:-0} $COMPOSE --profile ml up -d --no-deps --no-build scoring-api
+            echo "scoring-api back on $(cat prev-image.txt)"
+          fi
+          docker logs --tail 30 scoring-api 2>&1 || true
+        '''
+      }
+    }
+    always { sh 'docker image rm fraud/scoring-api:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
+    cleanup { sh 'rm -f prev-image.txt mutmut.txt' }   // cleanup runs after failure, which reads the file
+  }
+}

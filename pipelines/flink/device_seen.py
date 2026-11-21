@@ -56,6 +56,7 @@ if __name__ == "__main__":
     ap.add_argument("--topic", default="card_authorizations")
     ap.add_argument("--live", action="store_true", help="unbounded, resume from the group's committed offsets")
     ap.add_argument("--parallelism", type=int, default=1, help="> 1 for the history backfill (state is keyed by pair)")
+    ap.add_argument("--release", default="", help="code version, added to the job name (pipelines/flink/Jenkinsfile)")
     args = ap.parse_args()
     conf = Configuration()
     conf.set_integer("python.state.cache-size", 30_000)   # as rt_features.py
@@ -77,4 +78,4 @@ if __name__ == "__main__":
      .key_by(lambda e: f"{e[0]}|{e[1]}", key_type=Types.STRING())
      .process(FirstSeen(), output_type=Types.STRING())
      .sink_to(sink).name("card_device_seen"))
-    env.execute("device_seen")
+    env.execute(f"device_seen {args.release}".strip())   # the running job shows its version

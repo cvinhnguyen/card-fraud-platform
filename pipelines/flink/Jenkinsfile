@@ -1,0 +1,125 @@
+// CI/CD of the PyFlink jobs (pipelines/flink): lint -> every job imports in the Flink image -> upgrade the three live
+// jobs, rt_features, device_seen and raw_landing, with stop-with-savepoint and a resubmit from that savepoint. Runs
+// when the jobs changed (Jenkins polls main), or by hand. The other jobs (ato_*, auth_windows, hot_key) are bounded
+// runs started by hand and the check_*.py scripts reset topics, so they only get the CI part.
+//
+// Release design. A release is this commit's job files copied into the Flink containers at /tmp/release/<sha> (the
+// working tree stays mounted at /opt/flink/jobs for runs by hand). Only a job that is RUNNING with checkpoints on
+// (the --live mode) is upgraded; a stopped job stays stopped. Its name carries the version: `rt_features <sha>`,
+// in the Flink UI and in `flink list`. If the new job does not restore the savepoint and complete a checkpoint
+// within 3 minutes, it is cancelled and the code that ran before is resubmitted from the same savepoint, so no state
+// is lost. Needs Flink up (profile stream).
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 30, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+  environment {
+    FLINK = 'http://flink-jobmanager:8081'
+    SAVEPOINTS = 's3://lakehouse/flink/savepoints'
+    LIVE = 'rt_features device_seen raw_landing'
+    ARGS = '--topic card_authorizations --live'   // as in docs/data-platform/flink_jobs.md
+  }
+  stages {
+    stage('Flink jobs') {
+      when {
+        beforeAgent true
+        anyOf { changeset 'pipelines/flink/**'; triggeredBy 'UserIdCause' }
+      }
+      stages {
+        stage('Version') {
+          steps {
+            script { env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim() }
+            echo "flink release ${TAG}"
+          }
+        }
+        stage('Lint') {
+          steps {
+            sh '''git archive HEAD pipelines/flink | docker run -i --rm --entrypoint sh ghcr.io/astral-sh/ruff:0.16.3-alpine -c \
+                  'mkdir /src && tar -x -C /src && ruff check --isolated --select E9,F /src' '''
+          }
+        }
+        stage('Import check') {
+          // the jobs import with the PyFlink of the image (API names, types); the check_*.py need the host's data
+          steps {
+            sh '''git archive HEAD pipelines/flink | docker run -i --rm --entrypoint bash fraud/flink:2.2.1 -c \
+                  'mkdir -p /tmp/c && tar -x -C /tmp/c --strip-components=2 && cd /tmp/c \
+                   && python -c "import rt_features, device_seen, raw_landing, ato_cep, ato_sequence, auth_windows, hot_key; print(\\"jobs import\\")"' '''
+          }
+        }
+        stage('Upgrade live jobs') {
+          when {
+            anyOf {
+              changeset 'pipelines/flink/rt_features.py'; changeset 'pipelines/flink/device_seen.py'
+              changeset 'pipelines/flink/raw_landing.py'; triggeredBy 'UserIdCause'
+            }
+          }
+          steps {
+            sh '''
+              curl -fsS "$FLINK/overview" >/dev/null || { echo "Flink is not up (compose profile stream)" >&2; exit 1; }
+              for c in flink-jobmanager flink-taskmanager; do
+                git archive HEAD pipelines/flink | docker exec -i $c sh -c \
+                  "rm -rf /tmp/release/$TAG && mkdir -p /tmp/release/$TAG && tar -x -C /tmp/release/$TAG --strip-components=2"
+              done
+              job_id() { curl -fsS "$FLINK/jobs/overview" | jq -r --arg n "$1" --arg s "$2" '.jobs[] | select(.name == $n and (.state | test($s))) | .jid' | head -1; }
+              submit() {   # <file> <release or empty> <savepoint>
+                docker exec flink-jobmanager flink run -d -s "$3" -py "$1" $ARGS ${2:+--release $2} || true
+              }
+              healthy() {   # <job name> <savepoint>: RUNNING, restored from that savepoint, one checkpoint completed
+                for i in $(seq 36); do
+                  id=$(job_id "$1" '^RUNNING$')
+                  if [ -n "$id" ] && curl -fsS "$FLINK/jobs/$id/checkpoints" 2>/dev/null | jq -e --arg sp "${2##*/}" \
+                      '((.latest.restored.external_path // "") | contains($sp)) and .counts.completed >= 1' >/dev/null; then
+                    echo "$id"; return 0
+                  fi
+                  sleep 5
+                done
+                return 1
+              }
+              for job in $LIVE; do
+                # by name: a raw_landing backfill also checkpoints, but it keeps Flink's default name and is never matched
+                jid=$(curl -fsS "$FLINK/jobs/overview" | jq -r --arg j "$job" \
+                  '.jobs[] | select(.state == "RUNNING" and (.name == $j or (.name | startswith($j + " ")))) | .jid' | head -1)
+                if [ -z "$jid" ]; then echo "$job: not running, left as it is"; continue; fi
+                if ! curl -fsS "$FLINK/jobs/$jid/checkpoints/config" >/dev/null 2>&1; then
+                  echo "$job ($jid): no checkpoints, a bounded run started by hand: left as it is"; continue
+                fi
+                name=$(curl -fsS "$FLINK/jobs/$jid" | jq -r .name); old=${name#"$job"}; old=${old# }
+                oldfile=/opt/flink/jobs/$job.py   # a job started by hand ran the working tree
+                if [ -n "$old" ] && docker exec flink-jobmanager test -f /tmp/release/$old/$job.py; then oldfile=/tmp/release/$old/$job.py; fi
+                if [ "$old" = "$TAG" ]; then echo "$job: already on $TAG"; continue; fi
+
+                rid=$(curl -fsS -X POST -H 'Content-Type: application/json' "$FLINK/jobs/$jid/stop" \
+                  -d "$(jq -n --arg d "$SAVEPOINTS" '{targetDirectory: $d, drain: false}')" | jq -r '.["request-id"]')
+                for i in $(seq 60); do
+                  r=$(curl -fsS "$FLINK/jobs/$jid/savepoints/$rid" || true)
+                  [ "$(echo "$r" | jq -r .status.id)" = COMPLETED ] && break
+                  sleep 5
+                done
+                sp=$(echo "$r" | jq -r '.operation.location // empty')
+                [ -n "$sp" ] || { echo "$job: stop with savepoint failed, the job keeps running: $(echo "$r" | jq -c .operation)" >&2; exit 1; }
+                echo "$job ($name): stopped with savepoint $sp"
+
+                submit /tmp/release/$TAG/$job.py "$TAG" "$sp"
+                if nid=$(healthy "$job $TAG" "$sp"); then
+                  echo "$job: release $TAG running as $nid, state restored from $sp"
+                  continue
+                fi
+                echo "$job: release $TAG did not restore and checkpoint in 3 min, back to ${old:-the working tree}" >&2
+                bad=$(job_id "$job $TAG" '^(CREATED|INITIALIZING|RUNNING|RESTARTING|FAILING)$')
+                [ -z "$bad" ] || curl -fsS -X PATCH "$FLINK/jobs/$bad?mode=cancel" >/dev/null
+                submit "$oldfile" "$old" "$sp"
+                if healthy "$(echo "$job $old" | sed 's/ *$//')" "$sp" >/dev/null; then echo "$job: rolled back to ${old:-the working tree}" >&2
+                else echo "$job: ROLLBACK FAILED, resubmit by hand from $sp (docs/data-platform/flink_jobs.md)" >&2; fi
+                exit 1
+              done
+            '''
+          }
+        }
+      }
+    }
+  }
+}

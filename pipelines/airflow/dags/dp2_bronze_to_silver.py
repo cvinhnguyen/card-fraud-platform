@@ -16,7 +16,7 @@ from datetime import datetime
 from airflow import DAG
 from datahub_airflow_plugin.entities import Dataset
 
-from common import BRONZE, DEFAULT_ARGS, SILVER, publish, spark_job, validate
+from common import BRONZE, DEFAULT_ARGS, RELEASE_TAG, SILVER, publish, spark_job, validate
 
 # OpenLineage reports the MERGE into silver.stg_transactions with its target only, not the bronze source (OpenLineage
 # 1.53 on Delta 4; probed 2026-10-25: the same with a SQL MERGE, without cache, without source materialization).
@@ -25,6 +25,6 @@ SILVER_IN = [Dataset("hive", f"bronze.{t}") for t in ("raw_transactions", "raw_c
 SILVER_OUT = [Dataset("hive", f"silver.{t}") for t in ("stg_transactions", "stg_customers")]
 
 with DAG("dp2_bronze_to_silver", schedule=[BRONZE], start_date=datetime(2026, 10, 1), catchup=False, max_active_runs=1,
-         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp2", "silver"]) as dag:
+         default_args=DEFAULT_ARGS, doc_md=__doc__, tags=["dp2", "silver", RELEASE_TAG]) as dag:
     silver = spark_job("build_silver", "build_silver.py", inlets=SILVER_IN, outlets=SILVER_OUT)
     silver >> validate("dp2_silver") >> publish(SILVER)

@@ -1,5 +1,7 @@
 # Jenkins deploys with this ServiceAccount, not with cluster-admin: full rights only in the namespaces the MCP server
-# and agents charts write to (their releases, their gateway routes and policies), nothing elsewhere.
+# and agents charts write to (their releases, their gateway routes and policies), nothing elsewhere. In `serving` (the
+# model server pipeline) a narrower Role: InferenceServices, the drift feed's Broker and Trigger, read access to the
+# rollout, and of the Secrets only the image pull secret ghcr-pull.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -53,4 +55,41 @@ metadata:
   name: jenkins-deployer
   namespace: agentgateway-system
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ci-deployer}
+subjects: [{kind: ServiceAccount, name: jenkins-deployer, namespace: ci}]
+---
+# services/predictor/Jenkinsfile in `serving`. Kubernetes cannot limit `create` to a resource name (the name is not
+# known when the request is authorized), so `create` covers any new Secret in serving; reading, changing and deleting
+# are limited to ghcr-pull, so the pipeline can neither read nor overwrite another Secret there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: model-deployer
+  namespace: serving
+rules:
+  - apiGroups: [serving.kserve.io]
+    resources: [inferenceservices]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [eventing.knative.dev]
+    resources: [brokers, triggers]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [ghcr-pull]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-model-deployer
+  namespace: serving
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: model-deployer}
 subjects: [{kind: ServiceAccount, name: jenkins-deployer, namespace: ci}]

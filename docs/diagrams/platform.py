@@ -41,7 +41,7 @@ FLOWS = {
     "S": ("Payment scoring", "end user: every card authorization, real time", "#e8590c"),
     "R": ("Streaming features", "continuous: Kafka -> Flink -> feature stores", "#1971c2"),
     "B": ("Batch data", "daily, Airflow: DP1, DP2, DP3, then the materialize pipeline", "#2f9e44"),
-    "T": ("Training and deploy", "ML engineer: notebook, pipeline run, model image", "#9c36b5"),
+    "T": ("Training and deploy", "on drift or by hand: pipeline run; Jenkins builds the model image", "#9c36b5"),
     "M": ("Monitoring and retraining", "live Drift API + daily data drift pipeline", "#8d5524"),
 }
 # Layer 3 flows: data, engineer and monitoring share the colours of their Layer 1-2 counterparts; the conversation has
@@ -150,8 +150,21 @@ def icon(name, x, y, size=20, color=INK):
             f'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{glyph}</svg>')
 
 
+PROFILES = {"core": "Core services", "stream": "Streaming", "batch": "Batch processing", "orch": "Orchestration",
+            "gov": "Data governance"}   # compose profile -> the name the deployment diagram gives it
+ML_STORES = {"Feast online store", "ml-db (PostgreSQL)", "Vector store"}   # profile ml is drawn as ML stores + ML apps
+
+
+def tag_name(b: Box) -> str:
+    """The tag as written on the card: a compose profile by its full name, a namespace or place as it is."""
+    if b.tag == "ml":
+        return "ML stores" if b.title in ML_STORES else "ML apps"
+    return PROFILES.get(b.tag, b.tag)
+
+
 def box_svg(b: Box) -> str:
     """SVG of one card."""
+    tag = tag_name(b)
     stroke, fill = (LINE, "#fafafa") if b.soft else ("#9aa1b1", "#ffffff")
     dash = ' stroke-dasharray="4 3"' if b.soft else ""
     ink = b.accent or INK
@@ -160,11 +173,11 @@ def box_svg(b: Box) -> str:
     if b.accent:
         stroke, fill = b.accent, b.accent + "14"   # 8% tint
     s = [f'<rect x="{b.x}" y="{b.y}" width="{b.w}" height="{b.h}" rx="8" fill="{fill}" stroke="{stroke}"{dash}/>']
-    if b.tag:
-        tw = text_w(b.tag, 9, True, 0.06) + 10   # the tag is drawn with 0.06em letter-spacing
+    if tag:
+        tw = text_w(tag, 9, True, 0.06) + 10   # the tag is drawn with 0.06em letter-spacing
         s.append(f'<rect x="{b.x + 8}" y="{b.y + 8}" width="{tw:.0f}" height="15" rx="3" fill="none" '
                  f'stroke="{b.accent or LINE}"/>')
-        s.append(t(b.x + 13, b.y + 19, b.tag, 9, b.accent or INK2, "start", mono=True, spacing=0.06))
+        s.append(t(b.x + 13, b.y + 19, tag, 9, b.accent or INK2, "start", mono=True, spacing=0.06))
     rows = pill_rows(b.chips, b.w - 16)
     note = [ln for part in b.note.split("\n") for ln in wrap(part, b.w - 20, 11.5)]   # \n = a line break by meaning
     top = b.y + (22 if b.tag else 0)
@@ -173,11 +186,14 @@ def box_svg(b: Box) -> str:
         y0 = top + 6
         s.append(chain(b.x + 14, y0 + 40, b.w - 28, b.steps, up=b.up)[0])
     ico = b.icon or ("db" if b.store else "")
-    tw = text_w(b.title, 14.5, False)
+    size = 14.5                                    # a long name shrinks until logo + name fit inside the card
+    while text_w(b.title, size, False) * 1.04 + (34 if ico else 0) > b.w - 18 and size > 11.5:   # 600 weight: ~4% wider
+        size -= 0.5
+    tw = text_w(b.title, size, False) * 1.04
     lx = b.x + (b.w - tw - (34 if ico else 0)) / 2
     if ico:
         s.append(icon(ico, lx, y0 + 1, 26, ink if not b.soft else INK2))
-    s.append(t(lx + (34 if ico else 0), y0 + 19, b.title, 14.5, ink, "start", 600))
+    s.append(t(lx + (34 if ico else 0), y0 + 19, b.title, size, ink, "start", 600))
     for i, ln in enumerate(note):
         s.append(t(b.x + b.w / 2, y0 + 38 + 15 * i, ln, 11.5, INK2))
     for i, row in enumerate(rows):
@@ -453,24 +469,22 @@ def r(j):
 def system_layers_1_2():
     """The system diagram of Layers 1 and 2; returns (svg, arrows) so the arrow table comes from the same data."""
     B = {
-        "card": Box(28, r(1), 172, BH, "Card network", "host", "card", note="each payment, replayed\nby a script"),
-        "app": Box(28, r(2), 172, BH, "Banking app", "host", "phone", note="app events, replayed\nby a script"),
-        "export": Box(28, r(5), 172, BH, "Nightly export", "host", "bucket",
+        "card": Box(28, r(1), 172, BH, "Authorization switch", "host", "card", note="the bank's, replayed\nby a script"),
+        "app": Box(28, r(2), 172, BH, "Mobile banking app", "host", "phone", note="app events, replayed\nby a script"),
+        "export": Box(28, r(5), 172, BH, "Nightly export job", "host", "bucket",
                       note="core banking's settled\npayments, by a script"),
-        "api": Box(c(3), r(1), BW, BH, "Scoring API", "ml",
+        "api": Box(c(3), r(1), BW, BH, "Fraud Scoring API", "ml",
                    "fastapi", note="approves, steps up or declines each payment"),
-        "redis": Box(c(3), r(2), BW, BH, "Redis", "ml", "redis", note="latest card features"),
+        "redis": Box(c(3), r(2), BW, BH, "Feast online store", "ml", "redis", note="latest card features"),
         "pushon": Box(c(2), r(3), BW, BH, "push-online", "ml", "python",
                       note="always-on container:\nlive features to Redis"),   # the Python logo read as "a script"
         "drift": Box(c(4), r(3), BW, BH, "Drift API", "ml", "fastapi", note="PSI of each feature\nper minute"),
-        "registry": Box(c(5), r(3), BW, BH, "Docker registry", "ml",
-                        "docker", note="keeps the built images"),
         "kafka": Box(c(1), r(4), c(3) + BW - c(1), BH + 26, "Kafka", "core", "kafka",
                      chips=("card_authorizations", "app_events", "card_features_rt", "card_device_seen",
                             "fraud_predictions", "ato_alerts_cep")),
-        "pg": Box(c(4), r(4), BW, BH, "PostgreSQL", "core", "postgres", note="the bank's core banking data"),
+        "pg": Box(c(4), r(4), BW, BH, "Core banking database", "core", "postgres", note="the bank's core banking data"),
         "mlflow": Box(c(5), r(4), BW, BH, "MLflow", "ml", "mlflow", note="model versions;\nchallenger, production"),
-        "flink": Box(c(1), r(5), BW, BH, "Flink", "stream",
+        "flink": Box(c(1), r(5), BW, BH, "Flink streaming jobs", "stream",
                      "flink", note="turns payments into live features"),
         "pushoff": Box(c(2), r(5), BW, BH, "push-offline", "ml",
                        "python", note="always-on container:\nlive features to Delta"),
@@ -478,7 +492,7 @@ def system_layers_1_2():
         "spark": Box(c(4), r(5), BW, BH, "Spark", "batch", "spark", note="runs the batch jobs"),
         "airflow": Box(c(5), r(5), BW, BH, "Airflow", "orch",
                        "airflow", note="schedules and runs the pipelines"),
-        "jupyter": Box(c(6), r(5), BW, BH, "Jupyter", "ml", "jupyter", note="notebook to explore data and train"),
+        "jupyter": Box(c(6), r(5), BW, BH, "JupyterLab notebook", "ml", "jupyter", note="notebook to explore data and train"),
         "s3": Box(c(1), r(5) + BH + GY, c(6) + BW - c(1), S3H, "SeaweedFS (S3) + Delta Lake", "core", "seaweedfs",
                   note="four buckets; the lakehouse bucket holds one folder per zone, as Delta tables",
                   chips=("lakehouse/landing", "lakehouse/bronze", "lakehouse/silver", "lakehouse/gold + feat_*",
@@ -502,7 +516,8 @@ def system_layers_1_2():
     api, redis, kafka, kfp = B["api"], B["redis"], B["kafka"], B["kfp"]
     A = [
         Arrow("S", 1, "payment to score", [B["card"].right(0.32), api.left(0.32)], 0.5,
-              desc="The card network's switch sends each payment authorization to POST /v1/score (card, amount, channel, device)"),
+              desc="The bank's authorization switch, which receives each card payment from the card network, sends it to "
+                   "POST /v1/score (card, amount, channel, device); here ml/tools/replay_scoring.py plays the switch"),
         Arrow("S", 2, "online features", [redis.top(0.35), api.bottom(0.35)],
               desc="Feast reads the card's stored features from Redis (feature service fraud_model_v1)"),
         Arrow("S", 3, "20 features", [api.right(0.3), B["kserve"].left(0.3)], 0.3,
@@ -575,11 +590,12 @@ def system_layers_1_2():
         Arrow("T", 5, "metrics + candidate model", [kfp.left(0.06), (B["mlflow"].x + BW, kfp.y + kfp.h * 0.06)], 0.6, "u",
               desc="Steps 5 to 7 (train, evaluate, register) log params, data versions, metrics and the model; every model is "
                    "kept as a version, and gets alias challenger only when it passes the evaluation gate"),
-        Arrow("T", 6, "production model", [B["mlflow"].top(), B["registry"].bottom()],
-              desc="ML engineer: fetch_model.py --alias production, docker build + push of fraud/predictor:<v>"),
-        Arrow("T", 7, "predictor image", [B["registry"].right(), (B["kserve"].x + 260, B["registry"].y + 42),
-                                     B["kserve"].bottom(260 / 300)], 0.4, "u",
-              desc="kubectl apply of the InferenceService; the node pulls the image from the registry"),
+        Arrow("T", 6, "production model,\nas an image", [B["mlflow"].top(), (B["mlflow"].x + BW / 2, r(3) + 42),
+                                                     (B["kserve"].x + 260, r(3) + 42), B["kserve"].bottom(260 / 300)],
+              0.7, "u",
+              desc="Jenkins pipeline fraud-predictor: on a new alias it builds the model into the predictor image "
+                   "(fraud-predictor:v<model>-<commit>), pushes it to ghcr.io, signs it and applies the InferenceService; "
+                   "a challenger waits for a person to approve the A/B test"),
         Arrow("M", 1, "each request\n+ response", [B["kserve"].bottom(110 / 300), B["broker"].top()],
               desc="KServe's payload logger (the agent sidecar, mode all) posts every request and its response as CloudEvents "
                    "to the broker serving/default"),
@@ -613,12 +629,13 @@ def system_layers_1_2():
     body += [box_svg(b) for b in B.values()]
     body += [arrow_svg(a, PANEL) for a in A]
     body.append(legend(28, B["datahub"].y + 72 + 40, FLOWS, [
-        "Numbers give the order inside each flow: S1 to S6 follow one payment from the card network and back.",
+        "Numbers give the order inside each flow: S1 to S6 follow one payment from the authorization switch and back.",
         "Arrow = data moving from A to B, labelled with the data; a call without data (B2, M7) points from caller to callee.",
         "White box = one container or pod. Tag top left = where it runs: compose profile, namespace (ns) or host.",
         "Dashed boxes: support services used by many units (arrows left out).",
         "Feast is a library, not a unit: it runs inside the Scoring API, the push jobs, Airflow, Jupyter and the training pipeline's pods.",
-        "Layer 3 (agents, gateway, tool servers) is on its own diagram; its tool servers read Redis and call the Scoring API (A11, A14)."]))
+        "Layer 3 (agents, gateway, tool servers) is on its own diagram; its tool servers read the Feast online store and "
+        "call the Fraud Scoring API (A11, A14)."]))
     check("system-layers-1-2", B, A)
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: system diagram, Layers 1 and 2",
                    "Deployable units of Layer 1 and Layer 2 and the data between them, numbered per flow."), A
@@ -668,12 +685,13 @@ def system_layer_3():
         "groq": Box(28, q(3), 180, BH, "Groq API", "internet", note="second LLM for an A/B test (off)", soft=True),
         # row 1: the callers of the gateway
         "nginx": Box(x1, q(1), BW, BH, "NGINX Ingress", "ns nginx-ingress", "nginx", note="HTTPS entry and login"),
-        "ui": Box(x2, q(1), BW, BH, "support-chat", "ns kagent", note="chat page: sends the question to the gateway"),
-        "coord": Box(x3, q(1), BW, BH, "coordinator", "ns kagent", "kagent", note="splits the question, asks the agents"),
+        "ui": Box(x2, q(1), BW, BH, "Support chat", "ns kagent", note="chat page: sends the question to the gateway"),
+        "coord": Box(x3, q(1), BW, BH, "Coordinator agent", "ns kagent", "kagent", note="splits the question, asks the agents"),
         "card": Box(x4, q(1), BW, BH, "card-data-agent", "ns kagent", "kagent", note="looks up card data and policy"),
         "risk": Box(x5, q(1), BW, BH, "risk-agent", "ns kagent", "kagent", note="checks fraud risk and policy"),
         # row 2: the gateway
-        "kagent": Box(x1, q(2), BW, BH, "kagent", "ns kagent", "kagent", note="runs the agents; admin chat UI", soft=True),
+        "kagent": Box(x1, q(2), BW, BH, "kagent", "ns kagent", "kagent", note="controller: turns each Agent into pods",
+                      soft=True),
         "gw": Box(gx, q(2), gr - gx, GH, "agentgateway", "ns agentgateway-system", "agentgateway",
                   note="the first stop of every agent call: it checks the caller's key, then routes",
                   chips=("A2A routes", "MCP routes", "LLM route", "API key per agent", "rate + token limits",
@@ -697,13 +715,13 @@ def system_layer_3():
         "embed": Box(x2, q(4), BW, BH, "llama.cpp embed", "host", "llamacpp", note="turns text into vectors"),
         "datahub": Box(x1, q(5), BW, BH, "DataHub", "gov", "datahub", note="lineage and check results"),
         "airflow": Box(x2, q(5), BW, BH, "Airflow", "orch", "airflow", note="runs the RAG data pipeline"),
-        "vdb": Box(p1, q(5), BW, BH, "vector-db", "ml", "postgres", note="policy text and its vectors"),
-        "redis": Box(p2, q(5), BW, BH, "Redis", "ml", "redis", note="latest card features"),
-        "scoring": Box(p3, q(5), BW, BH, "Scoring API", "ml", "fastapi", note="fraud score and decision"),
-        "registry": Box(o3, q(5), BW, BH, "Docker registry", "ml", "docker", note="keeps the signed images"),
+        "vdb": Box(p1, q(5), BW, BH, "Vector store", "ml", "postgres", note="vector-db: PostgreSQL\n+ pgvector"),
+        "redis": Box(p2, q(5), BW, BH, "Feast online store", "ml", "redis", note="latest card features"),
+        "scoring": Box(p3, q(5), BW, BH, "Fraud Scoring API", "ml", "fastapi", note="fraud score and decision"),
+        "registry": Box(o3, q(5), BW, BH, "GHCR", "internet", "github", note="ghcr.io: the signed images"),
         "s3": Box(x2, q(6), BW, BH, "SeaweedFS (S3)", "core", "seaweedfs", note="bank documents, chunk history"),
         # CI/CD band
-        "langfuse": Box(o1, TOP3, BW, BH, "Langfuse Cloud", "internet", "langfuse", note="prompts and eval results"),
+        "langfuse": Box(o1, TOP3, BW, BH, "Langfuse Cloud EU", "internet", "langfuse", note="prompts and eval results"),
         "jenkins": Box(o2, TOP3, BW, BH, "Jenkins", "CI/CD", "jenkins", note="tests, builds and deploys"),
         "github": Box(o3, TOP3, BW, BH, "GitHub", "internet", "github", note="the code"),
     }
@@ -746,8 +764,9 @@ def system_layer_3():
         Arrow("A", 13, "question vector", [b["embed"].top(144 / BW), (x2 + 144, r3_bot + 24), (p1 + 26, r3_bot + 24),
                                             (p1 + 26, r3_bot)], 0.4, "u",
               desc="policy-rag-mcp, search_policy: the question's vector from Qwen3-Embedding-0.6B"),
-        Arrow("A", 14, "fraud score", [b["scoring"].top(78 / BW), (p3 + 78, r3_bot)], 0.5,
-              desc="fraud-score-mcp, score_payment: the Layer 2 Scoring API answers with the fraud score and its decision"),
+        Arrow("A", 14, "payment to score", [(p3 + 78, r3_bot), b["scoring"].top(78 / BW)], 0.5,
+              desc="fraud-score-mcp, score_payment: POST /v1/score with the payment the customer describes (merchant "
+                   "agent-what-if, direct HTTP, not through the gateway); the Scoring API answers with the score and decision"),
         Arrow("A", 15, "prompts", [(x2 + 26, g_bot), (x2 + 26, q(3) + 42), b["llmd"].right()], 0.75, "u",
               desc="Route /v1: the agent's API key is checked, request and token limits applied, personal data masked, then the "
                    "InferencePool qwen3-8b"),
@@ -767,20 +786,21 @@ def system_layer_3():
         Arrow("K", 5, "checks,\nlineage", [b["airflow"].left(), b["datahub"].right()], side="u",
               desc="Step validate: 7 checks as assertions, plus lineage documents -> jobs -> feature view"),
         Arrow("C", 1, "commits", [b["github"].left(), b["jenkins"].right()],
-              desc="Jenkins polls GitHub main for its 5 pipelines (MCP servers, data agents, coordinator, RAG, push jobs)"),
+              desc="Jenkins polls GitHub main for its 11 pipelines, one per deployable unit (docs/operations/cicd.md)"),
         Arrow("C", 2, "prompts", [b["langfuse"].right(0.3), b["jenkins"].left(0.3)],
               desc="Agent pipelines fetch the prompt labelled production for each agent"),
         Arrow("C", 3, "image + signature", [b["jenkins"].bottom(0.8), (o2 + 136, jb + 60), (2180, jb + 60),
                                             (2180, q(5) + 42), b["registry"].right()],
               (60 + 2180 - o2 - 136 + q(1) + BH + 36 - jb - 60) / (60 + 2180 - o2 - 136 + q(5) + 42 - jb - 60 + 42), "l",
-              desc="MCP pipeline: tests (coverage gate 90 %), mutation test, image build, push, cosign signature"),
-        Arrow("C", 4, "signed image", [b["registry"].top(25 / BW), (o3 + 25, r3_bot + 30), (gr - 26, r3_bot + 30),
+              desc="MCP pipeline: tests (coverage gate 90 %), mutation test, image build, push to ghcr.io, cosign signature"),
+        Arrow("C", 4, "signed image", [b["registry"].top(110 / BW), (o3 + 110, r3_bot + 30), (gr - 26, r3_bot + 30),
                                        (gr - 26, my + mh)], 0.3, "u",
-              desc="helm upgrade --atomic of each MCP server; the node pulls the signed image (Kyverno verifies it whenever "
-                   "it is installed)"),
+              desc="helm upgrade --atomic of each MCP server; the node pulls the signed image from ghcr.io (Kyverno verifies "
+                   "it whenever it is installed)"),
         Arrow("C", 5, "agents + prompts", [b["jenkins"].bottom(0.2), (o2 + 34, jb + 64), (x4 + 85, jb + 64),
                                            (x4 + 85, fy)], 0.7, "d",
-              desc="Agent pipelines: helm upgrade --atomic of the agents, the Langfuse prompts in a ConfigMap"),
+              desc="Agent pipelines: helm upgrade --atomic of the agents, each Agent with its Langfuse prompt inline and the "
+                   "prompt version as an annotation"),
         Arrow("C", 6, "eval questions", [b["jenkins"].bottom(0.1), (o2 + 17, jb + 40), (x3 - 39, jb + 40),
                                          (x3 - 39, g_top)], 0.25, "u",
               desc="Eval gate: the eval dataset asked to risk-agent through the gateway; below 0.6 accuracy, "
@@ -816,7 +836,8 @@ def system_layer_3():
             panel(x1 - 30, kind_t, o3 + BW + 26 - (x1 - 30), kind_b - kind_t, "KIND CLUSTER · fraud", KIND_PANEL,
                   "#b5c0d6", note="tag = namespace"),
             panel(x1 - 30, host_t, x2 + BW + 24 - (x1 - 30), BH + 42, "HOST · GTX 1070", "none", LINE, True),
-            panel(x1 - 30, comp_t, o3 + BW + 26 - (x1 - 30), comp_b - comp_t, "DOCKER COMPOSE · fraud", PANEL, LINE)]
+            panel(x1 - 30, comp_t, o3 - 24 - (x1 - 30), comp_b - comp_t, "DOCKER COMPOSE · fraud", PANEL, LINE),
+            panel(o3 - 14, q(5) - 26, BW + 28, BH + 42, "INTERNET", "none", LINE, True)]
     for x0, y0, w0, h0 in ((fx, fy, fw, fh), (mx, my, mw, mh)):   # dotted frames: the agents, the MCP servers
         body.append(f'<rect x="{x0}" y="{y0}" width="{w0}" height="{h0}" rx="12" fill="none" stroke="#9aa1b1" '
                     f'stroke-dasharray="2 4"/>')
@@ -832,7 +853,8 @@ def system_layer_3():
         "(one image, one Helm release each; A10, C4, O2 apply to each). Dashed boxes: support services.",
         "NGINX also serves registry, grafana, logs, traces and the Web API (api.<domain>: card data",
         "and policy chunks by id, from card-data-mcp, over HTTPS).",
-        "Redis and the Scoring API are Layer 2 units, drawn again here because the tool servers call them (A11, A14)."]))
+        "The Feast online store and the Fraud Scoring API are Layer 2 units, drawn again here because the tool servers "
+        "call them (A11, A14)."]))
     check("system-layer-3", B, A)
     crossings("system-layer-3", A)
     return svg_doc(W, H, "\n".join(body), "Card fraud platform: system diagram, Layer 3",
@@ -864,7 +886,10 @@ def deployment():
             lx += 25
         s.append(t(lx + 3, y + 25, title, 14, INK, "start", 700))
         if tag:
-            s.append(t(lx + 3 + text_w(title, 14, False) + 16, y + 25, tag, 10.5, INK2, "start", mono=True))
+            tx, ms = lx + 3 + text_w(title, 14, False) * 1.08 + 14, 10.5
+            while text_w(tag, ms, True) > x + w - 10 - tx and ms > 8.5:   # the tag shrinks to stay inside the unit
+                ms -= 0.5
+            s.append(t(tx, y + 25, tag, ms, INK2, "start", mono=True))
         s += [t(x + 14, y + 48 + 17 * i, r, 12, INK, "start") for i, r in enumerate(rows)]
         body.append("\n".join(s))
         return Box(x, y, w, h, title)
@@ -900,27 +925,29 @@ def deployment():
     kcol = tuple(kx0 + 20 + i * (kw + 14) for i in range(3))
     uy = top + 40                                    # first unit row, under the frame titles
     c_left = column(ccol[0], uy, cw, [
-        ("core", "always on", ["postgres", "seaweedfs", "kafka"], [
-            "postgres :5433 (postgres:16-alpine)", "seaweedfs :8333: the S3 lakehouse (alias lakehouse-s3)",
+        # title: what the profile is for; tag: the profile's name, as typed in `--profile <name>`
+        ("Core services", "profile core", ["postgres", "seaweedfs", "kafka"], [
+            "Always on. postgres :5433 (postgres:16-alpine)", "seaweedfs :8333: the S3 lakehouse (alias lakehouse-s3)",
             "kafka :9092 (apache/kafka 3.9.0, KRaft)"], "store"),
-        ("stream", "run it alone", ["flink"], [
-            "flink-jobmanager :8088 (fraud/flink:2.2.1)", "flink-taskmanager: 6 slots, 3.5 GB"], "job"),
-        ("batch", "Spark 4.1.3 · Trino · lakeFS", ["spark", "trino", "lakefs", "hive"], [
-            "spark-master :8080, spark-worker :8081, history :18080", "hive-metastore + metastore-db (Postgres)",
-            "trino :8090 (2 GB), lakefs :8001"], "job"),
-        ("dbt", "by hand", ["dbt", "spark"], ["spark-thrift :10000 (fraud/spark:4.1.3)"], "job"),
-        ("cicd", "Jenkins 2.580.1", ["jenkins"], ["jenkins :8095: 5 pipelines"], "out")])
+        ("Streaming", "profile stream", ["flink"], [
+            "Run it alone. flink-jobmanager :8088 (fraud/flink:2.2.1)", "flink-taskmanager: 6 slots, 3.5 GB"], "job"),
+        ("Batch processing", "profile batch", ["spark", "trino", "lakefs", "hive"], [
+            "spark-master :8080 (Spark 4.1.3), spark-worker :8081, history :18080",
+            "hive-metastore + metastore-db (Postgres)", "trino :8090 (2 GB), lakefs :8001"], "job"),
+        ("dbt", "profile dbt", ["dbt", "spark"], ["By hand. spark-thrift :10000 (fraud/spark:4.1.3)"], "job"),
+        ("CI/CD", "profile cicd", ["jenkins"], ["jenkins :8095 (Jenkins 2.580.1): 11 pipelines"], "out")])
     c_right = column(ccol[1], uy, cw, [
-        ("orch", "Airflow 2.10.5", ["airflow", "docker"], [
-            "airflow-webserver :8082", "scheduler: LocalExecutor + a Feast venv",
-            "docker-proxy: Docker API for the RAG steps", "airflow-db (Postgres); airflow-init runs once"], "job"),
-        ("gov", "DataHub v1.5.0.6", ["datahub", "opensearch"], [
-            "datahub-frontend :9002, datahub-gms :8083", "OpenSearch, datahub-db (Postgres)",
+        ("Orchestration", "profile orch", ["airflow", "docker"], [
+            "airflow-webserver :8082 (Airflow 2.10.5)", "scheduler: LocalExecutor + a Feast venv",
+            "docker-proxy: Docker API for the RAG steps",
+            "airflow-db (Postgres); airflow-init, batch-release-init run once"], "job"),
+        ("Data governance", "profile gov", ["datahub", "opensearch"], [
+            "datahub-frontend :9002 (DataHub v1.5.0.6), datahub-gms :8083", "OpenSearch, datahub-db (Postgres)",
             "datahub-system-update runs once"], "store"),
-        ("ml · stores", "", ["postgres", "redis", "docker"], [
+        ("ML stores", "profile ml", ["postgres", "redis"], [
             "ml-db :5434: MLflow, Feast registry", "vector-db :5435: pgvector, the RAG chunks",
-            "redis :6379: the Feast online store", "registry :5001: the images and their signatures"], "store"),
-        ("ml · apps", "", ["fastapi", "mlflow", "jupyter"], [
+            "redis :6379: the Feast online store"], "store"),
+        ("ML apps", "profile ml", ["fastapi", "mlflow", "jupyter"], [
             "scoring-api :8000, drift-api :8002", "mlflow :5000, notebook :8899 (Jupyter)",
             "push-online, push-offline (ml-train image)"], "svc")])
     k_left = column(kcol[0], uy, kw, [
@@ -948,7 +975,7 @@ def deployment():
             "ml-pipeline API :31888, UI :31880", "Argo workflow-controller runs the DAG",
             "step pods + 2 Spark executors", "metadata-grpc; mysql + seaweedfs"], "job"),
         ("serving · kserve", "KServe 0.21", ["kserve"], [
-            "card-fraud-predictor :31080 + logger", "kserve-controller: InferenceService"], "svc"),
+            "card-fraud :31080 + logger; challenger :31081", "kserve-controller: InferenceService"], "svc"),
         ("knative-eventing", "1.23.1", ["kubernetes"], [
             "mt-broker: Broker serving/default", "controllers + in-memory channel"], "svc"),
         ("monitoring", "", ["prometheus", "grafana", "victoria", "jaeger"], [
@@ -989,7 +1016,8 @@ def deployment():
     ab = a[-1].y + a[-1].h + 16
     iy = ab + 24
     s = column(ix - 4, iy + 40, iw + 8, [
-        ("GitHub", "", ["github"], ["the code; Jenkins polls branch main"], "svc"),
+        ("GitHub + GHCR", "", ["github"], ["the code; Jenkins polls branch main",
+                                            "ghcr.io: the images and their signatures"], "svc"),
         ("Langfuse Cloud EU", "", ["langfuse"], ["agent prompts, eval datasets and results"], "svc"),
         ("Groq", "", [], ["a second LLM for an A/B test (off now)"], "svc"),
         ("Let's Encrypt + DuckDNS", "", ["letsencrypt"], ["the HTTPS certificate for NGINX"], "svc")])
@@ -1004,7 +1032,7 @@ def deployment():
     wire([(xs["py"], hb), (xs["py"], top)])
     num(xs["py"], mid, 1, "127.0.0.1 ports")
     wire([(xs["docker"], hb), (xs["docker"], top)])
-    num(xs["docker"], mid, 2, "push :5001")
+    num(xs["docker"], mid, 2, "docker API")
     wire([(xs["llama"], top), (xs["llama"], hb)])
     num(xs["llama"], mid, 3, ":8085, :8086")
     wire([(xs["browser"], hb), (xs["browser"], top)])
@@ -1014,10 +1042,12 @@ def deployment():
     wire([(1876, 166), (ix - 14, 166)])
     num(1890, 166 - 26, 6)
     gx = (comp_r + kx0) / 2
-    for n, y, back, label in ((7, uy + 130, True, "by name"), (8, uy + 250, False, "NodePorts"),
-                              (9, uy + 370, True, "image pulls")):
+    for n, y, back, label in ((7, uy + 130, True, "by name"), (8, uy + 250, False, "NodePorts")):
         wire([(kx0, y), (comp_r, y)] if back else [(comp_r, y), (kx0, y)])
         num(gx, y, n, label, "u")
+    y9 = s[0].y + 30                                 # Docker Desktop <-> ghcr.io, into the GitHub + GHCR unit
+    wire([(1890, y9), (ix - 14, y9)])
+    num(1890, y9 - 26, 9)
     legend_y = max(vb, sb) + 40
 
     # ---- the key, the paths, the notes
@@ -1033,7 +1063,7 @@ def deployment():
     foot.append(t(34, py0, "NETWORK PATHS", 11, INK2, "start", 600, mono=True, spacing=0.08))
     paths = [
         "Python scripts → compose on 127.0.0.1:<port>: Kafka, Postgres, S3, the APIs and the UIs",
-        "docker CLI → the registry: pushes the images to localhost:5001",
+        "docker CLI → the Docker Desktop engine: builds the images (path 9 pushes them)",
         "kind pods → llama.cpp on the host: host.docker.internal :8085 (chat), :8086 (embed)",
         "Browser → NGINX in kind, HTTPS :443: support., agents., registry., grafana., logs., traces., api.<domain>",
         "kind · helm → the kind API: creates the cluster, installs the charts",
@@ -1042,7 +1072,7 @@ def deployment():
         "vector-db, scoring-api, drift-api",
         "compose → kind NodePorts: scoring-api → :31080 KServe; Airflow → :31888 KFP; Jenkins → kind API (helm), "
         ":31508 (eval)",
-        "kind node → registry:5000 (localhost:5001 on the host): pulls the images"]
+        "Docker Desktop → ghcr.io, HTTPS: Jenkins pushes the images and signatures; the kind node and compose pull them"]
     for i, ln in enumerate(paths):
         x, y = (34 if i < 5 else 1130), py0 + 30 + 26 * (i % 5)
         foot += [f'<circle cx="{x + 11}" cy="{y - 4}" r="11" fill="#ffffff" stroke="{INK2}" stroke-width="1.6"/>',
@@ -1074,7 +1104,7 @@ OVERVIEW_FLOWS = {
     "S": ("Payment scoring", "each card payment, in milliseconds"),
     "R": ("Streaming", "always on, seconds after each payment"),
     "B": ("Batch data", "nightly and daily pipelines; the policy documents"),
-    "T": ("Training and release", "on drift or by an engineer; CI/CD"),
+    "T": ("Training and release", "on drift or by an engineer"),
     "M": ("Monitoring", "drift per minute and per day"),
     "A": ("Agent question", "each question from support staff"),
 }
@@ -1112,9 +1142,16 @@ def info(x, y, w, title, tech="", bullets=(), kind="svc", ico="", novel="", pad=
     if ico:
         s.append(icon(ico, x + 14, y + 10, 22))
         tx = x + 44
-    s.append(t(tx, y + 27, title, 15.5, INK, "start", 700))
+    room = x + w - tx - 12 - (text_w(novel, 8.5, True, 0.06) + 22 if novel else 0)   # what the pill leaves
+    ts = 15.5                                      # a long name or tech line shrinks until it fits the card
+    while text_w(title, ts, False) * 1.08 > room and ts > 12:                       # 700 weight: ~8% wider
+        ts -= 0.5
+    ms = 11
+    while tech and text_w(tech, ms, True) > x + w - tx - 12 and ms > 9:
+        ms -= 0.5
+    s.append(t(tx, y + 27, title, ts, INK, "start", 700))
     if tech:
-        s.append(t(tx, y + 44, tech, 11, INK2, "start", mono=True))
+        s.append(t(tx, y + 44, tech, ms, INK2, "start", mono=True))
     if novel:
         s.append(novel_tag(x + w - 10, y + 8, novel))
     for i, (first, ln) in enumerate(lines):
@@ -1174,9 +1211,18 @@ def overview():
     def flow(x, y, w, name, when, steps, halo=PANEL):
         """A pipeline drawn as its steps, top to bottom, inside a dashed frame. A step (text, artifact) names what it
         hands to the next step, written on the arrow between them. A step (question, yes, no) is a check: the
-        question, then both outcomes side by side, yes on the right. Returns (frame, step boxes)."""
+        question, then both outcomes side by side, yes on the right; no = None when a failed check only stops the
+        run (one outcome, under the question). A step ("||", [texts]) is tasks that run at the same time: one row
+        each, no arrow between them, joined on the right into the next step. A step text "what|engine" gets the
+        engine that runs it as a tag on its right (Airflow only starts the steps). Returns (frame, step boxes)."""
+        def lines_of(text, rw, kind="job"):
+            """The wrapped lines of a step, its engine tag and the tag's width."""
+            text, _, tag = text.partition("|")
+            pw = text_w(tag, 9.5, True) + 12 if tag else 0
+            return wrap(text, rw - (44 if kind == "check" else 20) - (pw + 6 if tag else 0), 12.5), tag, pw
+
         def rect(rx, ry, rw, text, kind="job", h=None):
-            lines = wrap(text, rw - (44 if kind == "check" else 20), 12.5)
+            lines, tag, pw = lines_of(text, rw, kind)
             h = h or 16 + 16 * len(lines)
             if kind == "check":                    # a decision: white, with pointed ends
                 pts = [(rx + 14, ry), (rx + rw - 14, ry), (rx + rw, ry + h / 2), (rx + rw - 14, ry + h), (rx + 14, ry + h),
@@ -1188,20 +1234,49 @@ def overview():
                 body.append(f'<rect x="{rx}" y="{ry}" width="{rw}" height="{h}" rx="7" fill="{fill}" stroke="{stroke}" '
                             f'stroke-width="1.2"/>')
             y0 = ry + h / 2 - 8 * (len(lines) - 1) + 4.5
-            body.extend(t(rx + rw / 2, y0 + 16 * i, ln, 12.5, INK) for i, ln in enumerate(lines))
+            tx = rx + (rw - (pw + 6 if tag else 0)) / 2  # the text centres in what the tag leaves
+            body.extend(t(tx, y0 + 16 * i, ln, 12.5, INK) for i, ln in enumerate(lines))
+            if tag:
+                px = rx + rw - (18 if kind == "check" else 7) - pw
+                body.extend([f'<rect x="{px}" y="{ry + h / 2 - 8}" width="{pw}" height="16" rx="8" fill="#ffffff" '
+                             f'stroke="{INK2}" stroke-width="0.8"/>', t(px + pw / 2, ry + h / 2 + 3.5, tag, 9.5, INK2, mono=True)])
             return Box(rx, ry, rw, h, text)
 
         frame = len(body)
         body.append("")                            # the frame, drawn under its steps once its height is known
         cy, prev, out, plab = y + 46, None, [], ""
         for st in steps:
-            if isinstance(st, tuple) and len(st) > 2:
+            if isinstance(st, tuple) and st[0] == "||":   # parallel tasks: rows, a join bus on the right
+                bx, rows = x + w - 18, []
+                body.append(t(x + 14, cy + 8, f"these {len(st[1])} run at the same time", 11.5, INK2, "start"))
+                cy += 20
+                for text in st[1]:
+                    rows.append(rect(x + 12, cy, w - 46, text))
+                    cy = bot(rows[-1]) + 12
+                jy = cy + 4                         # the bus turns under the last row, to the middle
+                for r in rows:
+                    arrows.append(f'<path d="M{r.x + r.w},{mid(r)} H{bx}" fill="none" stroke="{ALL_FLOWS[F[0]][2]}" '
+                                  f'stroke-width="2"/>')
+                arrows.append(f'<path d="M{bx},{mid(rows[0])} V{jy} H{x + w / 2}" fill="none" '
+                              f'stroke="{ALL_FLOWS[F[0]][2]}" stroke-width="2"/>')
+                out += rows
+                prev, cy, plab = Box(x + w / 2, jy, 0, 0, ""), jy + 26, ""
+            elif isinstance(st, tuple) and len(st) > 2 and st[2] is None:   # a check whose failure only stops the run
+                q, yes = st[:2]
+                qb = rect(x + 12, cy, w - 24, q, "check")
+                if prev:
+                    link([(x + w / 2, bot(prev)), (x + w / 2, qb.y)], plab, halo=halo)
+                yb = rect(x + 12, bot(qb) + 28, w - 24, yes)
+                link([(x + w / 2, bot(qb)), (x + w / 2, yb.y)], "yes", halo=halo)
+                out += [qb, yb]
+                prev, cy, plab = yb, bot(yb) + 18, ""
+            elif isinstance(st, tuple) and len(st) > 2:
                 q, yes, no, *left = st              # a fourth item "yes left": yes goes on the side its arrow leaves
                 qb = rect(x + 12, cy, w - 24, q, "check")
                 if prev:
                     link([(x + w / 2, bot(prev)), (x + w / 2, qb.y)], plab, halo=halo)
                 hw = (w - 36) / 2
-                hh = 16 + 16 * max(len(wrap(s, hw - 20, 12.5)) for s in (yes, no))
+                hh = 16 + 16 * max(len(lines_of(s, hw)[0]) for s in (yes, no))
                 oy = bot(qb) + 28
                 xn, xy = (x + 24 + hw, x + 12) if left else (x + 12, x + 24 + hw)
                 nb = rect(xn, oy, hw, no, "job", hh)
@@ -1226,42 +1301,46 @@ def overview():
     air = box(410, 236, 1840, "Airflow", "the scheduler · a dotted arrow: Airflow starts that pipeline, no data moves", [
         "On a timer: DP1 every night; the drift pipeline and the DataHub metadata every day",
         "On new data: DP2, DP3 and the materialize pipeline start when the table they read gets a new checked version",
-        "On a call: Jenkins starts the RAG data pipeline after each release"], "svc", "airflow")
+        "On a call: after a release, Jenkins starts the RAG data pipeline, or a DP2 silver run to check the batch code"],
+        "svc", "airflow")
 
     # ---- batch: sources -> bronze -> silver -> gold, each pipeline as its steps
     R1 = 420
-    dp1, s1 = flow(410, R1, 350, "DP1 · SOURCES TO BRONZE", "Airflow + Spark + lakeFS · every night", [
-        "Copy the 6 core banking tables (JDBC)", "Load Flink's raw payment files", "Open the lakeFS branch dp1_<day>",
-        "Load the night's export onto the branch",
-        ("Great Expectations checks pass on the branch?", "Merge the branch into main, publish bronze",
-         "Stop: main unchanged, branch kept to inspect")])
+    dp1, s1 = flow(410, R1, 350, "DP1 · SOURCES TO BRONZE", "Airflow runs the steps · every night", [
+        ("||", ["Copy the 6 core banking tables (JDBC)|Spark",
+                "Load the night's export onto lakeFS branch dp1_<day>|Spark",
+                "Load Flink's raw payment files|Spark"]),
+        ("Great Expectations checks pass?|GE on Spark", "lakeFS merges the branch into main; Airflow publishes bronze",
+         "Stop: the export stays on its branch, to inspect")])
     db = box(40, R1, 300, "Core banking database", "PostgreSQL · another department", [
         "customers, accounts, cards", "merchants, disputes", "province mapping (63 old, 34 new)"], "out", "postgres")
-    exp_text = ("Nightly export job", "core banking · 01:00 to 03:00",
-                ["Writes the day's settled card transactions as Parquet files into an S3 bucket"], "out")
-    _, m = info(40, 0, 300, *exp_text)
-    exp = box(40, mid(s1[3]) - m.h / 2, 300, *exp_text)
-    bronze = box(830, R1, 310, "Bronze", "Delta on S3 · lakeFS branches of data", [
-        "raw_* tables: copies of the sources", "A new export waits on its own branch",
-        "Checks fail: no merge. Readers keep yesterday's data"], "store", "lakefs", "NOVEL IDEA")
-    dp2s, s2 = flow(1210, R1, 320, "DP2 · BRONZE TO SILVER", "Airflow + Spark · on a new bronze version", [
-        "Remove duplicate transactions", "Map 63 old provinces to 34 units", "Write the silver tables",
-        ("Checks pass? (no row lost)", "Publish a new silver version", "Stop: gold does not start")])
+    exp = box(40, bot(db) + 14, 300, "Nightly export job", "core banking · 01:00 to 03:00",
+              ["Writes the day's settled card transactions as Parquet files into an S3 bucket"], "out")
+    bronze = box(830, R1, 310, "Bronze", "Delta tables on S3 · lakeFS", [
+        "The sources as they arrived: core banking tables, transactions, raw payments",
+        "A new export reaches readers only after its checks pass (lakeFS merge)"], "store", "lakefs", "NOVEL IDEA")
+    dp2s, s2 = flow(1210, R1, 320, "DP2 · BRONZE TO SILVER", "Airflow runs the steps · on a new bronze version", [
+        "Remove duplicate transactions|Spark", "Map 63 old provinces to 34 units|Spark", "Write the silver tables|Spark",
+        ("Checks pass? (no row lost)|GE on Spark", "Publish a new silver version|Airflow", None)])
     silver = box(1600, R1, 250, "Silver", "Delta tables on S3", [
         "stg_transactions", "stg_customers", "cleaned: one row per payment"], "store", "deltalake")
-    dp2g, s3 = flow(1920, R1, 330, "DP2 · SILVER TO GOLD", "Airflow + dbt on Spark · on a new silver version", [
-        "dbt builds the star schema", "Spark builds the fraud labels from disputes",
-        ("dbt tests + Great Expectations pass?", "Publish a new gold version", "Stop: DP3 does not start")])
+    dp2g, s3 = flow(1920, R1, 330, "DP2 · SILVER TO GOLD", "Airflow runs the steps · on a new silver version", [
+        ("||", ["Build the star schema|dbt on Spark", "Build the fraud labels from disputes|Spark"]),
+        ("dbt tests + Great Expectations pass?|Spark", "Publish a new gold version|Airflow", None)])
     gold = box(2320, R1, 260, "Gold", "Delta tables on S3", [
         "fact_transaction", "dim_customer, dim_card", "dim_merchant, dim_date", "label_transaction (labels)"],
         "store", "deltalake")
-    assert R1 + 20 < mid(s1[0]) < bot(db) and exp.y > bot(db) + 10, "sources do not face DP1's steps"
+    # the database faces the JDBC copy; the export job sits under it, its arrow turns up into the export load at x 360
+    # (left of the raw files' lane at 375, so the two never cross)
+    EY = exp.y + 24
+    assert R1 + 20 < mid(s1[0]) < bot(db) - 8 and mid(s1[1]) < EY, "sources do not face DP1's loads"
     link([(340, mid(s1[0])), (422, mid(s1[0]))], "6 tables")
-    link([(340, mid(s1[3])), (422, mid(s1[3]))], "export files")
+    link([(340, EY), (360, EY), (360, mid(s1[1])), (422, mid(s1[1]))], "export\nfiles", lx=388,
+         ly=mid(s1[1]) - 21, anchor="middle")   # two short lines: the gap before DP1's frame is 50 px
     RY = mid(s2[0])                                # height of the arrows into each pipeline's first step
     yes1 = s1[-1]
-    link([(yes1.x + yes1.w, mid(yes1)), (795, mid(yes1)), (795, RY), (830, RY)], "checked\nraw tables")
-    link([(1140, RY), (1222, RY)], "raw\ntables")
+    link([(yes1.x + yes1.w, mid(yes1)), (795, mid(yes1)), (795, RY), (830, RY)], "checked\ntables")
+    link([(1140, RY), (1222, RY)], "bronze\ntables")
     link([(s2[-1].x + s2[-1].w, mid(s2[-1])), (1565, mid(s2[-1])), (1565, RY), (1600, RY)], "cleaned\ntables",
          lx=1573, ly=bot(silver) + 17)
     link([(1850, RY), (1932, RY)], "cleaned\ntables")
@@ -1294,26 +1373,27 @@ def overview():
     RL = LR + 38                                   # lane of Flink's raw payment files, up to DP1
     R2 = max(RL + 52, bot(exp) + 30)
     app = box(40, R2, 300, "Mobile banking app", "outside", ["logins, password resets", "new payees, transfers"], "out", "phone")
-    card = box(40, bot(app) + 14, 300, "Card network", "outside", ["sends every card payment", "waits for the decision"],
-               "out", "card")
+    card = box(40, bot(app) + 14, 300, "Authorization switch", "outside · replay_scoring.py plays it", [
+        "The bank's system: card payments arrive here from the card network",
+        "Asks the Scoring API, waits for the decision", "Copies each payment to Kafka"], "out", "card")
     kafka = box(410, R2, 320, "Kafka", "the event stream", [
         "in: card_authorizations, app_events", "out: card_features_rt, card_device_seen", "out: ato_alerts_cep (alerts)"],
         "stream", "kafka")
     flink = box(800, R2, 370, "Flink streaming jobs", "PyFlink · results in seconds", [
         "Card features (DataStream, always on)", "First device per card (DataStream, always on)",
-        "Raw payments to files, for DP1 (SQL, by hand)", "Account takeover alerts (SQL patterns, replay)"], "job", "flink",
+        "Raw payment files for DP1 (SQL, always on)", "Account takeover alerts (SQL patterns, replay)"], "job", "flink",
         "NOVEL IDEA: THE ALERTS")
-    push_off = box(1240, R2, 300, "Push offline", "Python + Feast · always on", [
-        "Live features to Delta, for training"], "job", "python")
-    push_on = box(1240, bot(push_off) + 15, 300, "Push online", "Python + Feast · always on", [
-        "Live features to Redis, for scoring"], "job", "python")
+    push_off = box(1240, R2, 300, "push-offline", "container · deployed by Jenkins", [
+        "Feast push: live features to Delta, for training"], "svc", "python")
+    push_on = box(1240, bot(push_off) + 15, 300, "push-online", "container · deployed by Jenkins", [
+        "Feast push: live features to Redis, for scoring"], "svc", "python")
     online = box(1610, R2, 270, "Feast online store", "Redis", [
         "latest features of each card", "read in milliseconds"], "store", "redis")
     offline = box(1950, R2, 290, "Feast offline store", "Delta tables gold.feat_*", [
         "each card's features at any past moment", "for training"], "store", "feast")
-    dp3, s4 = flow(2310, R2, 270, "DP3 · GOLD TO FEATURES", "Airflow + Spark · on a new gold version", [
-        "Per-card statistics over 30, 90 and 180 days, written to gold.feat_*",
-        ("Checks pass?", "Publish the new features", "Stop: Redis keeps the old ones", "yes left")])
+    dp3, s4 = flow(2310, R2, 270, "DP3 · GOLD TO FEATURES", "Airflow runs the steps · on a new gold version", [
+        "Per-card statistics over 30, 90 and 180 days, written to gold.feat_*|Spark",
+        ("Checks pass?|GE on Spark", "Publish the new features|Airflow", None)])
     F[0] = "R"
     link([app.right(), (410, mid(app))], "app events")
     link([card.right(), (375, mid(card)), (375, R2 + 90), (410, R2 + 90)], "payments", lx=382, ly=card.y + 14)
@@ -1324,7 +1404,8 @@ def overview():
          lx=900, ly=FT - 7, anchor="middle")
     link([(1205, mid(push_on)), (1240, mid(push_on))])
     dot(1205, mid(push_on))
-    link([(840, R2), (840, RL), (585, RL), (585, bot(dp1))], "raw payment files", lx=712, ly=RL - 7, anchor="middle")
+    link([(840, R2), (840, RL), (375, RL), (375, mid(s1[2])), (422, mid(s1[2]))], "raw payment files", lx=608, ly=RL - 7,
+         anchor="middle")
     link([(1540, mid(push_on)), (1580, mid(push_on)), (1580, R2 + 72), (1610, R2 + 72)], "live\nfeatures", lx=1588,
          ly=mid(push_on) - 22)
     link([(1500, R2), (1500, R2 - 28), (2095, R2 - 28), (2095, R2)], "live features, kept for training", lx=1790,
@@ -1351,18 +1432,20 @@ def overview():
     # ================================================================ Layer 2: the ML platform
     L = PB + 60                                    # top of layers 2 and 3
     H2 = KIND_PANEL
-    scoring = box(1130, L + 60, 340, "Fraud Scoring API", "FastAPI", [
+    scoring = box(1130, L + 60, 340, "Fraud Scoring API", "FastAPI · compose", [
         "Reads the card's online features", "Asks KServe for the fraud score", "Answers approve, step up or decline",
+        "A/B test, once a person approves it: a fixed share of the cards goes to the challenger model",
         "Model down: a rule on the amount decides"], "svc", "fastapi")
     kserve = box(1540, L + 60, 300, "KServe model server", "Kubernetes", [
-        "Serves the production XGBoost model", "Its logger copies every request and response as events"], "svc", "kserve")
+        "Serves the production XGBoost model", "During an A/B test, also the challenger",
+        "Its logger copies every request and response as events"], "svc", "kserve")
     RB = bot(scoring, kserve) + 56
     log = box(1130, RB, 340, "Decision log", "Kafka topic fraud_predictions", [
         "Written by the Scoring API after every decision", "Holds the payment, its features, the score and the decision"],
         "store", "kafka")
-    knative = box(1540, RB, 300, "Knative Eventing broker", "Kubernetes", [
+    knative = box(1540, RB, 300, "Knative broker", "Knative Eventing · Kubernetes", [
         "Receives the logger's events",
-        "A Trigger sends them to each detector: drift today; outlier and adversarial detectors can be added"],
+        "A Trigger sends them to the drift detector; outlier and adversarial detectors can be added"],
         "svc", "kubernetes")
     drift = box(1540, bot(knative) + 45, 300, "Drift API", "FastAPI · the drift detector", [
         "Drift score (PSI) of every input over the last 15 minutes", "Compared with the model's training data"],
@@ -1377,22 +1460,24 @@ def overview():
 
     # training, on the right, under the features and the labels it reads
     F[0] = "T"
-    train, s5 = flow(2258, L + 24, 334, "TRAINING PIPELINE", "Kubeflow Pipelines · on drift, or by hand", [
+    train, s5 = flow(2258, L + 24, 334, "TRAINING PIPELINE", "Kubeflow Pipelines: each step a pod · on drift, or by hand", [
         ("Load the labels as of the day (Delta time travel)", "label rows"),
         ("Join them with the features, point in time (Feast)", "training set (Delta version)"),
         ("Check the data, then split it by time (60-day gaps)", "train, validation and test files"),
         ("Train a baseline and XGBoost on Spark", "model files"),
         ("Evaluate against the baseline and the production model", "passed: true or false"),
         "Register the model in MLflow, tagged passed or not",
-        ("Better than production?", "Alias challenger: a reviewer can promote it", "No alias: kept to compare")], H2)
+        ("Better than production?", "Alias challenger: deployed with no traffic; a person approves the A/B test", None)], H2)
     FY = mid(s5[1])                                # where the offline features enter the training set
     F[0] = "M"
-    driftp, s6 = flow(1920, FY + 40, 290, "DRIFT PIPELINE", "Airflow · every day", [
-        "Rebuild the last 7 days with point-in-time features", "Score them with the production model",
-        "Measure accuracy (PR-AUC, recall) and the drift score (PSI) of every input", "Save the drift report in MLflow",
-        ("PSI above 0.25 or PR-AUC down by 0.05?", "Start a training run", "Keep the production model")], H2)
-    mlflow = box(1920, bot(driftp) + 40, 290, "MLflow", "model registry", [
-        "every run: metrics, data version, model", "aliases: challenger, production"], "svc", "mlflow")
+    driftp, s6 = flow(1920, FY + 40, 290, "DRIFT PIPELINE", "Airflow runs the steps · every day", [
+        "Rebuild the last 7 days with point-in-time features|Feast", "Score them with the production model|Python",
+        "Measure accuracy (PR-AUC, recall) and the drift score (PSI) of every input|Python",
+        "Save the drift report in MLflow|Python",
+        ("PSI above 0.25 or PR-AUC down by 0.05?|Airflow", "Start a training run|KFP API", None)], H2)
+    mlflow = box(1920, bot(driftp) + 40, 290, "MLflow", "experiment tracking + model registry", [
+        "Experiments: params, metrics and plots of every run", "Registry: model versions, aliases challenger and production",
+        "The drift reports, one run per day"], "svc", "mlflow")
     F[0] = "T"
     link([(2095, bot(offline)), (2095, FY), (2270, FY)], "point-in-time features", lx=2103, ly=L - 26, halo=PAGE)
     link([(2095, FY), (2095, driftp.y)], halo=H2, f="M")
@@ -1410,7 +1495,7 @@ def overview():
     NY = mlflow.y + 100                            # the notebook logs its runs into MLflow on this line
     body.append(actor(1125, NY - 20, "Data scientist", "person", w=140))   # the arrow leaves the glyph's middle
     link([(1228, NY), (1300, NY)], "explores,\ntrains")
-    notebook = box(1300, NY - 30, 340, "JupyterLab notebook", "compose · the training image", [
+    notebook = box(1300, NY - 30, 340, "JupyterLab notebook", "compose on the platform host · :8899", [
         "Where the data is explored", "Same steps, Feast features and Spark as the training pipeline",
         "Trained and registered the first model"], "svc", "jupyter")
     assert notebook.y > bot(log, drift) + 30 and NY < bot(mlflow) - 8, "notebook does not fit under the drift API"
@@ -1421,8 +1506,6 @@ def overview():
     assert bot(report) + 16 < NY - 20, "the drift report does not fit above the data scientist and the notebook"
     link([(1300, bot(log)), (1300, report.y)], "logged decisions", halo=H2, f="M")
     link([(notebook.x + notebook.w, NY), (1920, NY)], "first model, runs", lx=1780, ly=NY - 7, anchor="middle", halo=H2)
-    link([(1920, mlflow.y + 76), (1880, mlflow.y + 76), (1880, L + 102), (1840, L + 102)],
-         "production model,\nbuilt into the\npredictor image", lx=1890, ly=L + 58, anchor="start", halo=H2)
 
     # ================================================================ Layer 3: the LLM and agent platform
     body.append(actor(40, L + 80, "Support staff", "people", w=130))
@@ -1437,16 +1520,18 @@ def overview():
         "Limits requests and tokens, masks personal data"], "gate", "agentgateway")
     RC = bot(gw) + 55
     coord = box(40, RC, 310, "Coordinator agent", "kagent", [
-        "Splits the question", "Asks the two data agents", "Writes one answer"], "svc", "kagent")
+        "Splits the question", "Asks the two data agents", "Writes one answer",
+        "System prompt: the Langfuse prompt named after the agent, the version labelled production"], "svc", "kagent")
     agents = box(375, RC, 310, "Data agents", "kagent", [
-        "card-data agent: looks up the card and the policy", "risk agent: checks the fraud score against the policy"],
-        "svc", "kagent")
+        "card-data-agent: looks up the card and the policy", "risk-agent: checks the fraud score against the policy",
+        "System prompts: the Langfuse prompt named after each agent, the version labelled production"], "svc", "kagent")
     mcp = box(740, RC, 310, "MCP tool servers", "three FastAPI servers", [
-        "card-data: a card's features, a policy chunk", "fraud-score: scores a payment",
-        "policy-rag: searches the bank's policies"], "svc", "mcp")
+        "card-data-mcp: a card's features, a policy chunk",
+        "fraud-score-mcp: sends a what-if payment to the Fraud Scoring API",
+        "policy-rag-mcp: searches the bank's policies"], "svc", "mcp")
     RR = bot(coord, agents, mcp) + 45
     F[0] = "B"
-    rag, s7 = flow(375, RR, 310, "RAG DATA PIPELINE", "Airflow · after each release", [
+    rag, s7 = flow(375, RR, 310, "RAG DATA PIPELINE", "Airflow: each step a container · after each release", [
         "Read the bank's 5 policy documents from S3", "Cut them into chunks: one clause, section or FAQ each",
         "Turn each chunk into a vector (embedding model server)", "Write chunks + vectors: newest to pgvector, history to the lakehouse",
         "Check the chunks"])
@@ -1463,11 +1548,14 @@ def overview():
     link([(590, agents.y), (590, bot(gw))], "tool calls,\nprompts")
     link([(895, bot(gw)), (895, mcp.y)], "tool calls")
     wr = s7[3]
-    link([(wr.x + wr.w, mid(wr)), (712, mid(wr)), (712, vec.y + 50), (740, vec.y + 50)], "chunks +\nvectors", f="B",
-         lx=720, ly=bot(vec) + 30)
+    # the write step sits under the vector store: its arrow goes right, then up into the store's bottom
+    assert mid(wr) > bot(vec) + 24, "the RAG write step does not sit under the vector store"
+    link([(wr.x + wr.w, mid(wr)), (895, mid(wr)), (895, bot(vec))], "chunks + vectors", f="B", lx=790, ly=mid(wr) - 7,
+         anchor="middle")
     link([(895, vec.y), (895, bot(mcp))], "policy chunks")
-    link([(1130, L + 140), (1094, L + 140), (1094, mcp.y + 66), (1050, mcp.y + 66)], "fraud score", lx=1102,
-         ly=bot(scoring) + 32, halo=H2)   # in the gap under the Scoring API, where no box sits beside the lane
+    # fraud-score's tool score_payment calls the Scoring API (POST /v1/score) and gets the score back
+    link([(1050, mcp.y + 66), (1094, mcp.y + 66), (1094, L + 140), (1130, L + 140)], "score_payment calls\nPOST /v1/score",
+         lx=1118, ly=bot(scoring) + 32, halo=H2)   # inside Layer 2, in the gap under the Scoring API
 
     # ================================================================ between the layers
     HP = PAGE
@@ -1481,46 +1569,19 @@ def overview():
     link([(1840, bot(online)), (1840, L + 30), (1440, L + 30), (1440, scoring.y)], "online features", f="S", lx=1848,
          ly=(bot(online) + L) / 2, anchor="start", halo=KIND_PANEL)
 
+    # the models behind the aliases reach KServe as images, released by Jenkins (drawn on the CI/CD diagram)
+    F[0] = "T"
+    link([(1920, mlflow.y + 76), (1880, mlflow.y + 76), (1880, L + 102), (1840, L + 102)],
+         "the models behind\nthe aliases, released\nby Jenkins", lx=1890, ly=L + 58, anchor="start", halo=H2)
+    F[0] = "A"
     LB = max(bot(drift, mlflow, train, log, notebook), bot(rag, vec)) + 25 - L     # height of the layer 2 and 3 panels
     body.insert(1, panel(1110, L, W - 1130, LB, "LAYER 2 · ML PLATFORM", KIND_PANEL, "#b5c0d6"))
     body.insert(1, panel(20, L, 1040, LB, "LAYER 3 · LLM AND AGENT PLATFORM", PANEL, LINE,
                          note="agents answer support questions about a card"))
 
-    # ================================================================ CI/CD: from a commit to a checked release
-    cy = L + LB + 30
-    cbox = []
-    for i, (title, tech, bullets, kind, ico, nov) in enumerate([
-            ("GitHub", "the code", ["Jenkins polls main every 5 minutes"], "out", "github", ""),
-            ("Jenkins", "5 pipelines", ["MCP servers, data agents, coordinator, RAG pipeline, push jobs",
-                                        "Tests and builds each image; signs the tool servers' (cosign)",
-                                        "A new production prompt also starts a release"], "job", "jenkins", ""),
-            ("Docker registry", "local registry", ["images and their signatures"], "store", "docker", ""),
-            ("Deploy", "Helm, Airflow or compose", ["agents and tool servers: Helm", "RAG steps: a new image for Airflow",
-                                                    "push jobs: recreated containers"], "job", "helm", ""),
-            ("Signed images only", "Kyverno + cosign", ["A tool server pod starts only if CI signed its image"], "gate",
-             "kyverno", "NOVEL IDEA"),
-            ("Eval gate", "Jenkins + a Langfuse dataset", ["After each risk-agent release: 20 test questions",
-                                                          "Under 0.6 accuracy: rolled back"], "gate", "langfuse",
-             "NOVEL IDEA")]):
-        cbox.append(box(190 + i * 405, cy + 44, 350, title, tech, bullets, kind, ico, nov))
-    jen = cbox[1]
-    lf = box(jen.x, bot(*cbox) + 60, 350, "Langfuse Cloud EU", "SaaS", [
-        "Agent prompts, with one marked production", "Eval datasets and their scores"], "out", "langfuse")
-    body.append(actor(40, cy + 60, "Developer", "person", w=110))
-    CA = cy + 44 + 40
-    F[0] = "T"
-    link([(150, CA), (190, CA)], "git\npush", lx=170, ly=CA - 22, anchor="middle")
-    for a, b, lab in zip(cbox, cbox[1:], ("new\ncommits", "built\nimages", "images", "new\npods", "live\nrelease")):
-        link([(a.x + a.w, CA), (b.x, CA)], lab)
-    link([(jen.x + 90, lf.y), (jen.x + 90, bot(jen))], "production\nprompts")
-    link([(jen.x + 260, bot(jen)), (jen.x + 260, lf.y)], "answers +\nscores")
-    ch = bot(lf) + 20 - cy
-    body.insert(1, panel(20, cy, W - 40, ch, "CI/CD · JENKINS", PANEL, LINE,
-                         note="a commit or a new production prompt is tested, built, signed, deployed and checked"))
-
     # ================================================================ platform services, with the tools each one uses
-    sy = cy + ch + 24
-    SW, SX = 410, 430
+    sy = L + LB + 30
+    SW, SX = 340, 362
 
     def chip_rows(items, w):
         """Lay the tool logos out in rows that fit the box: [(x offset, row, logo, name)]."""
@@ -1548,7 +1609,10 @@ def overview():
          [("vault", "Vault"), ("nginx", "NGINX Ingress"), ("letsencrypt", "Let's Encrypt")]),
         ("Cloud", "built by Terraform + Ansible", ["The model server on a VM and on AKS",
                                                    "Built for the IaC test, then destroyed"],
-         [("azure", "Azure"), ("terraform", "Terraform"), ("ansible", "Ansible")])]
+         [("azure", "Azure"), ("terraform", "Terraform"), ("ansible", "Ansible")]),
+        ("CI/CD", "11 pipelines, one per unit", ["Test, version, deploy and check every unit",
+                                                  "Drawn on the CI/CD diagram"],
+         [("jenkins", "Jenkins"), ("github", "GHCR")])]
     rows = max(r for *_, items in services for _, r, _, _ in chip_rows(items, SW)) + 1
     sbox = []
     for i, (title, tech, bullets, items) in enumerate(services):
@@ -1558,7 +1622,7 @@ def overview():
             body += [icon(ico, b.x + 16 + dx, cy0, 20), t(b.x + 16 + dx + 26, cy0 + 15, name, 11.5, INK2, "start")]
         sbox.append(b)
     SH = bot(*sbox) + 20 - sy
-    body.insert(1, panel(20, sy, W - 40, SH, "PLATFORM SERVICES", PANEL, LINE, note="used by every layer, with the tools"))
+    body.insert(1, panel(20, sy, W - 40, SH, "SHARED SERVICES", PANEL, LINE, note="used by every layer, with the tools"))
 
     # ================================================================ the flows: what the colour of an arrow means
     ly = sy + SH + 24
@@ -1590,7 +1654,7 @@ def overview():
     head += [novel_tag(kx + 82, 142), t(kx + 90, 155, "novel idea", 12, INK2, "start")]
     kx += 90 + text_w("novel idea", 12, False) + 28
     head += [f'<path d="M{kx},150 h30" stroke="{ALL_FLOWS["S"][2]}" stroke-width="2" marker-end="url(#ah-S)"/>',
-             t(kx + 40, 155, "data or a call, from sender to receiver: the words say what moves, the colour which flow", 12,
+             t(kx + 40, 155, "from sender to receiver: the words say what moves, the colour which flow", 12,
                INK2, "start")]
     feat, _ = info(1740, 24, 860, "What the platform does", "", [
         "Scores every card payment for fraud while the customer waits: approve, step up or decline.",
@@ -1606,6 +1670,230 @@ def overview():
                    "decides each payment with the KServe model and logs the decision; KServe's logger feeds the Drift API "
                    "through a Knative broker; the training pipeline registers every model in MLflow. Layer 3: the support "
                    "chat, the agents, the MCP tool servers and the model servers all meet at agentgateway.")
+
+
+# ---------------------------------------------------------------- CI/CD
+def cicd():
+    """CI/CD on its own page, so the overview keeps to the data. Top: the path every release shares. Then the two
+    releases a reviewer asks about first, as flows: the model release (KServe) and the agent release (system prompts).
+    Last: one row per other pipeline, grouped by layer."""
+    W = 2400
+    body, arrows = [], []
+    T = ALL_FLOWS["T"][2]
+
+    def box(x, y, w, title, tech="", bullets=(), kind="svc", ico="", novel=""):
+        svg, b = info(x, y, w, title, tech, bullets, kind, ico, novel)
+        body.append(svg)
+        return b
+
+    def link(pts, label="", lx=None, ly=None, anchor="middle", halo=PANEL):
+        """A release arrow; without lx/ly the label sits on the longest segment."""
+        if label and lx is None:
+            a, b = max(zip(pts, pts[1:]), key=lambda g: abs(g[1][0] - g[0][0]) + abs(g[1][1] - g[0][1]))
+            n = label.count("\n")
+            if a[1] == b[1]:
+                lx, ly, anchor = (a[0] + b[0]) / 2, a[1] - 7 - 14 * n, "middle"
+            else:
+                lx, ly, anchor = a[0] + 8, (a[1] + b[1]) / 2 + 4 - 7 * n, "start"
+        d = path_d(pts)
+        arrows.append("\n".join([
+            f'<path d="{d}" fill="none" stroke="{halo}" stroke-width="7"/>',
+            f'<path d="{d}" fill="none" stroke="{T}" stroke-width="2"{DASH["T"]} marker-end="url(#ah-T)"/>',
+            *[t(lx, ly + 14 * i, ln, 11.5, INK, anchor, halo=halo) for i, ln in enumerate(label.split("\n")) if ln]]))
+
+    def bot(*bs):
+        return max(b.y + b.h for b in bs)
+
+    def mid(b):
+        return b.y + b.h / 2
+
+    def step(x, y, w, h, text, check=False):
+        """One step of a release: a green box, or a check (white, pointed ends)."""
+        if check:
+            pts = [(x + 14, y), (x + w - 14, y), (x + w, y + h / 2), (x + w - 14, y + h), (x + 14, y + h), (x, y + h / 2)]
+            body.append(f'<polygon points="{" ".join(f"{a},{b}" for a, b in pts)}" fill="#ffffff" stroke="{INK2}" '
+                        f'stroke-width="1.3"/>')
+        else:
+            fill, stroke = KINDS["job"]
+            body.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="7" fill="{fill}" stroke="{stroke}" '
+                        f'stroke-width="1.2"/>')
+        ls = wrap(text, w - (44 if check else 20), 12.5)
+        body.extend(t(x + w / 2, y + h / 2 - 8 * (len(ls) - 1) + 4.5 + 16 * j, ln, 12.5, INK) for j, ln in enumerate(ls))
+        return Box(x, y, w, h, text)
+
+    def release(y, title, note, texts, check, no, novel="", after=""):
+        """One release as its steps, left to right, in a panel: texts[check] is the check; 'yes' goes on to the
+        right, 'no' down to the box under it. `after` is one line under the steps. Returns the panel's bottom."""
+        x0, w, gap = 40, W - 80, 46
+        sy = y + 58 + (22 if novel else 0)
+        sw = (w - (len(texts) - 1) * gap) / len(texts)
+        sh = 16 + 16 * max(len(wrap(x, sw - (44 if i == check else 20), 12.5)) for i, x in enumerate(texts))
+        st = [step(x0 + i * (sw + gap), sy, sw, sh, x, i == check) for i, x in enumerate(texts)]
+        for a, b in zip(st, st[1:]):
+            link([(a.x + a.w, mid(a)), (b.x, mid(b))], "yes" if a is st[check] else "")
+        c = st[check]
+        if novel:
+            body.append(novel_tag(c.x + c.w - 4, sy - 22, novel))
+        nh = 16 + 16 * len(wrap(no, sw - 20, 12.5))
+        nb = step(c.x, bot(c) + 34, sw, nh, no)
+        link([(c.x + sw / 2, bot(c)), (c.x + sw / 2, nb.y)], "no", lx=c.x + sw / 2 + 8, ly=bot(c) + 21, anchor="start")
+        yb = bot(nb)
+        if after:
+            body.append(t(x0, yb - 6, after, 12.5, INK2, "start"))
+        body.insert(0, panel(20, y, W - 40, yb + 22 - y, title, PANEL, LINE, note=note))
+        return yb + 22
+
+    # ---- title and key
+    head = [t(40, 60, "Card fraud platform: CI/CD", 28, INK, "start", 700),
+            t(40, 94, "Jenkins runs 11 pipelines, one per deployable unit. Each one tests a change, gives it a version, "
+                      "deploys it, checks the running unit, and brings back the version", 15, INK2, "start"),
+            t(40, 116, "before when the check fails. The overview shows what each unit does; this page shows how a new "
+                       "version of it reaches the platform.", 15, INK2, "start")]
+    kx = 40
+    for kind, label in (("out", "outside system"), ("job", "pipeline or step"), ("svc", "service"),
+                        ("store", "registry"), ("gate", "check after the deploy")):
+        fill, stroke = KINDS[kind]
+        head += [f'<rect x="{kx}" y="142" width="24" height="16" rx="4" fill="{fill}" stroke="{stroke}" stroke-width="1.4"/>',
+                 t(kx + 32, 155, label, 12, INK2, "start")]
+        kx += 32 + text_w(label, 12, False) + 28
+    head += [f'<polygon points="{kx + 6},142 {kx + 26},142 {kx + 32},150 {kx + 26},158 {kx + 6},158 {kx},150" fill="#ffffff" '
+             f'stroke="{INK2}" stroke-width="1.3"/>', t(kx + 40, 155, "check in a release", 12, INK2, "start")]
+    kx += 40 + text_w("check in a release", 12, False) + 28
+    head += [novel_tag(kx + 82, 142), t(kx + 90, 155, "novel idea", 12, INK2, "start")]
+    kx += 90 + text_w("novel idea", 12, False) + 28
+    head += [f'<path d="M{kx},150 h30" stroke="{T}" stroke-width="2"{DASH["T"]} marker-end="url(#ah-T)"/>',
+             t(kx + 40, 155, "from one step of a release to the next", 12, INK2, "start")]
+
+    # ---- 1. the path every release shares
+    P1 = 190
+    TY = P1 + 50
+    chain = []
+    for i, (title, tech, bullets, kind, ico) in enumerate([
+            ("GitHub", "the code · branch main", ["Jenkins polls main every 5 minutes"], "out", "github"),
+            ("Jenkins", "11 pipelines, one per unit", [
+                "Runs only the pipelines whose files changed",
+                "Tests the change and builds it with a version",
+                "Signs the tool server and model images (cosign)"], "job", "jenkins"),
+            ("GHCR", "GitHub Container Registry, ghcr.io", [
+                "Every image, tagged with its version", "The signatures next to the images",
+                "Code images public; the model image private"], "store", "github"),
+            ("Deploy", "the tool each unit needs", [
+                "kind: Helm and kubectl, for the agents, the tool servers and the model server",
+                "compose: the APIs and the push jobs", "Airflow, Kubeflow, Flink: data, training and streaming"],
+             "job", "helm"),
+            ("Check", "after every deploy", [
+                "A smoke test, a data check or the eval gate",
+                "If it fails, the version before comes back"], "gate", "jenkins"),
+            ("Live, with its version", "versioning and rollback", [
+                "The running unit shows its version: image tag, annotation, Airflow Variable or job name",
+                "MLflow, Langfuse, GHCR and Helm keep every version"], "svc", "kubernetes")]):
+        chain.append(box(170 + i * 370, TY, 300, title, tech, bullets, kind, ico))
+    jen = chain[1]
+    body.append(actor(30, TY + 16, "Developer", "person", w=110))
+    CA = TY + 40
+    link([(140, CA), (170, CA)], "git\npush", lx=155, ly=CA - 22)
+    for a, b, lab in zip(chain, chain[1:], ("new\ncommits", "images", "the\nimage", "new\nrelease", "passed")):
+        link([(a.x + a.w, CA), (b.x, CA)], lab)
+    TR = bot(*chain) + 60                          # the two other things that start a release, under Jenkins
+    lf = box(330, TR, 300, "Langfuse Cloud EU", "SaaS · prompts and eval datasets", [
+        "One prompt per agent, named after it; one version is labelled production",
+        "Eval datasets and the score of each run"], "out", "langfuse")
+    ml = box(700, TR, 300, "MLflow", "model registry", [
+        "Aliases production and challenger point at model versions"], "svc", "mlflow")
+    link([(590, TR), (590, bot(jen))], "new production prompt\n(checked every 15 minutes)", lx=582,
+         ly=(TR + bot(jen)) / 2 - 3, anchor="end")
+    link([(790, TR), (790, bot(jen))], "moved model alias\n(checked every 15 minutes)", lx=798, ly=(TR + bot(jen)) / 2 - 3,
+         anchor="start")
+    y = bot(lf, ml) + 24
+    body.insert(0, panel(20, P1, W - 40, y - P1, "THE PATH EVERY RELEASE SHARES", PANEL, LINE,
+                         note="a commit, a new production prompt or a moved model alias starts it"))
+
+    # ---- 2. and 3. the model release and the agent release
+    y = release(y + 24, "MODEL RELEASE · Jenkins pipeline fraud-predictor",
+                "Layer 2 · starts when an MLflow alias moves, or on a commit to the model server", [
+                    "Fetch the model behind the alias; test that it loads, scores and is that version",
+                    "Build the image, tagged with the model version, and sign it",
+                    "Apply the InferenceService: card-fraud for production, card-fraud-challenger for challenger",
+                    "Does it answer with that version?",
+                    "Live. A challenger gets no traffic yet",
+                    "A person approves the A/B test in Jenkins: 10% of the cards go to the challenger"],
+                3, "Re-apply the image it ran before",
+                after="Promote or roll back a model: move the alias production in MLflow; the next check releases that "
+                      "version.")
+    y = release(y + 24, "AGENT RELEASE · Jenkins pipelines card-support-data-agents, then card-support-coordinator",
+                "Layer 3 · starts on a new production prompt in Langfuse, a commit, or a tool server release", [
+                    "Read each agent's production prompt from Langfuse",
+                    "Helm writes the prompt and its version into the Agent, in one write",
+                    "Smoke test: one question to each agent, through the gateway",
+                    "Eval gate (data agents): is risk-agent right on 0.6 of 20 questions?",
+                    "Live. The coordinator release runs next"],
+                3, "helm rollback to the version before", novel="NOVEL IDEA: EVAL GATE",
+                after="The coordinator pipeline has the same steps without the eval gate.")
+
+    # ---- 4. the other pipelines: one row each, by layer
+    P4 = y + 24
+    x0, px, gap = 40, 250, 26
+    cw = (W - 80 - px - 3 * gap) / 4
+    for i, h in enumerate(("STARTS ON", "VERSION", "IF THE CHECK FAILS", "VERSION SHOWN ON")):
+        body.append(t(x0 + px + i * (cw + gap), P4 + 56, h, 9.5, INK2, "start", 700, mono=True, spacing=0.06))
+    cy = P4 + 70
+    for layer, rows in (
+            ("LAYER 1 · DATA PLATFORM", [
+                ("batch-pipelines", ["A commit in the DAGs, Spark jobs or dbt", "The commit id",
+                                     "Test run of DP2 silver fails: back to the old code",
+                                     "An Airflow Variable and a tag on every DAG"]),
+                ("flink-jobs", ["A commit in the always-on Flink jobs", "The commit id",
+                                "No checkpoint in 3 minutes: the old code restarts from the savepoint",
+                                "The job's name in the Flink UI"]),
+                ("stream-feature-jobs", ["A commit in the push jobs or the ML library", "Image tagged with the commit id",
+                                         "Test message does not arrive: the old image is back",
+                                         "The image tag of the two containers"])]),
+            ("LAYER 2 · ML PLATFORM", [
+                ("training-pipeline", ["A commit in the training code", "Image and Kubeflow pipeline version: the commit id",
+                                       "A step runs another image: the old release stays",
+                                       "An Airflow Variable and a tag on each MLflow run"]),
+                ("fraud-scoring-api", ["A commit in the Fraud Scoring API", "Image tagged with the commit id",
+                                       "Test payment gets no score: the old image is back", "The image tag of the container"]),
+                ("fraud-drift-api", ["A commit in the Drift API", "Image tagged with the commit id",
+                                     "API not ready: the old image is back", "The image tag of the container"])]),
+            ("LAYER 3 · LLM AND AGENT PLATFORM", [
+                ("card-support-mcp", ["A commit in the tool servers; then the data agents' release runs",
+                                      "Signed image tagged with the commit id",
+                                      "Unsigned image or failed smoke test: helm rollback",
+                                      "The image tag of each server's pods"], "NOVEL IDEA: SIGNED IMAGES ONLY"),
+                ("rag-pipeline", ["A commit in the RAG steps or the documents", "Image tagged with the commit id",
+                                  "Chunk checks fail: back to the old image", "An Airflow Variable"])])):
+        body.append(t(x0, cy + 12, layer, 10, INK, "start", 700, mono=True, spacing=0.06))
+        cy += 24
+        for name, cells, *novel in rows:
+            wrapped = [wrap(c, cw - 4, 12) for c in cells]
+            h = 14 + 15 * max(len(ls) for ls in wrapped)
+            label = f"CI/CD · {name}"
+            pw = text_w(label, 9.5, True) + 30
+            py = cy + h / 2 - (20 if novel else 9)
+            body += [f'<rect x="{x0}" y="{py}" width="{pw}" height="18" rx="9" fill="#ffffff" stroke="{T}" stroke-width="1"/>',
+                     icon("jenkins", x0 + 6, py + 2, 14), t(x0 + 24, py + 12.5, label, 9.5, T, "start", 600, mono=True)]
+            if novel:
+                body.append(novel_tag(x0 + text_w(novel[0], 8.5, True, 0.06) + 14, cy + h / 2 + 3, novel[0]))
+            for i, ls in enumerate(wrapped):
+                cx = x0 + px + i * (cw + gap)
+                fill, stroke = KINDS["store" if i in (1, 3) else "job"]   # the two version cells look like stores
+                body.append(f'<rect x="{cx}" y="{cy}" width="{cw}" height="{h}" rx="7" fill="{fill}" stroke="{stroke}" '
+                            f'stroke-width="1.2"/>')
+                y0 = cy + h / 2 - 7.5 * (len(ls) - 1) + 4.5
+                body.extend(t(cx + cw / 2, y0 + 15 * j, ln, 12, INK) for j, ln in enumerate(ls))
+                if i:
+                    link([(cx - gap, cy + h / 2), (cx, cy + h / 2)])
+            cy += h + 10
+        cy += 6
+    body.insert(0, panel(20, P4, W - 40, cy + 10 - P4, "THE OTHER 8 PIPELINES", PANEL, LINE,
+                         note="one row each, grouped by layer"))
+    H = cy + 40
+    return svg_doc(W, H, "\n".join(head + body + arrows), "Card fraud platform: CI/CD",
+                   "Jenkins runs 11 pipelines, one per deployable unit. A commit, a new production prompt in Langfuse or a "
+                   "moved alias in MLflow starts a release: GitHub, Jenkins, GitHub Container Registry, deploy, check, "
+                   "live with its version; a failed check brings back the version before. The model release and the "
+                   "agent release are drawn step by step; the other eight pipelines are one row each.")
 
 
 # ---------------------------------------------------------------- output
@@ -1635,9 +1923,9 @@ def table(arrows) -> str:
 
 
 if __name__ == "__main__":
-    only = set(sys.argv[1:]) or {"system-layers-1-2", "system-layer-3", "deployment", "overview"}
+    only = set(sys.argv[1:]) or {"system-layers-1-2", "system-layer-3", "deployment", "overview", "cicd"}
     tables = []
-    for name in ("system-layers-1-2", "system-layer-3", "deployment", "overview"):   # one Chrome at a time
+    for name in ("system-layers-1-2", "system-layer-3", "deployment", "overview", "cicd"):   # one Chrome at a time
         if name in only:
             out = globals()[name.replace("-", "_")]()
             svg, arrows = out if isinstance(out, tuple) else (out, None)
