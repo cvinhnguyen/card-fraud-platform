@@ -76,6 +76,9 @@ pipeline {
     }
   }
   post {
+    // the compose file's default image becomes the release too, so a `docker compose up` by hand keeps it
+    // (docker ps then shows :latest; the commit is the image label org.opencontainers.image.revision)
+    success { sh '[ -n "${TAG:-}" ] && docker image inspect $IMAGE:$TAG >/dev/null 2>&1 && docker tag $IMAGE:$TAG fraud/ml-train:latest || true' }
     always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true; docker logout ghcr.io >/dev/null 2>&1 || true' }
     failure {
       sh 'docker logs --tail 30 push-online 2>&1 || true; docker logs --tail 30 push-offline 2>&1 || true'

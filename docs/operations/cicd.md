@@ -491,8 +491,7 @@ In the stage view of `stream-feature-jobs`, build #2 ran every stage and the lat
 - The trust boundary is the host's Docker socket. A Jenkinsfile can run any container, also one on the kind node
   with its admin kubeconfig, so whoever can change a Jenkinsfile on `main` is as strong as a cluster admin.
 - `docker-proxy` still allows creating a container, so a DAG could start a privileged one.
-- Jenkins passes the released image of a compose service only while it runs compose (`PUSH_JOBS_IMAGE`,
-  `SCORING_API_IMAGE`, `DRIFT_API_IMAGE`); nothing stores it. A `docker compose up` by hand therefore recreates
-  `push-online`, `push-offline`, `scoring-api` and `drift-api` on the default image of the compose file, an older local
-  build. After such a run, check the image column of `docker ps` or run the pipeline again. A Docker restart keeps the
-  released containers.
+- After a green release of a compose service (`scoring-api`, `drift-api`, the push jobs), Jenkins also tags the
+  released image as the compose file's default (`fraud/scoring-api:latest`, `fraud/drift-api:latest`,
+  `fraud/ml-train:latest`). A `docker compose up` by hand then recreates the container on the same released
+  code. `docker ps` shows `:latest`; the commit is in the image label `org.opencontainers.image.revision`.

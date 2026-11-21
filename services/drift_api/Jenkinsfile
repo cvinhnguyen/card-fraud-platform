@@ -88,6 +88,9 @@ pipeline {
     }
   }
   post {
+    // the compose file's default image becomes the release too, so a `docker compose up` by hand keeps it
+    // (docker ps then shows :latest; the commit is the image label org.opencontainers.image.revision)
+    success { sh '[ -n "${TAG:-}" ] && docker image inspect $IMAGE:$TAG >/dev/null 2>&1 && docker tag $IMAGE:$TAG fraud/drift-api:latest || true' }
     failure {
       withCredentials([string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
         sh '''
