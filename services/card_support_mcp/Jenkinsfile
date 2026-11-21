@@ -75,6 +75,10 @@ pipeline {
               sh '''
                 rm -f deployed.txt
                 for s in $SERVERS; do
+                  # a release an aborted build left pending-* blocks every upgrade; helm rollback clears it
+                  case "$(helm status $s-mcp -n card-support -o json 2>/dev/null | jq -r .info.status)" in
+                    pending-*) helm rollback $s-mcp -n card-support --wait --timeout 4m;;
+                  esac
                   helm upgrade --install $s-mcp $SVC/chart -f $SVC/chart/values-$s.yaml -n card-support \
                     --atomic --timeout 4m --set image.tag=$TAG
                   echo $s >> deployed.txt

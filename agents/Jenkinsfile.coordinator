@@ -41,6 +41,9 @@ pipeline {
       when { environment name: 'DEPLOY', value: 'true' }
       steps {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          // an abort that cut a helm upgrade or rollback off leaves the release pending-*, and every upgrade fails
+          // ("another operation is in progress"); helm rollback still works then and puts back the last revision
+          sh 'case "$(helm status $RELEASE -n kagent -o json 2>/dev/null | jq -r .info.status)" in pending-*) helm rollback $RELEASE -n kagent --wait --timeout 5m;; esac'
           sh 'helm lint agents/chart -f agents/chart/values-coordinator.yaml'
           // Helm's own server-side dry run: its three-way merge also drops fields an older release set
           sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS --dry-run=server >/dev/null'
