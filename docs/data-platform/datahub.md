@@ -17,7 +17,7 @@ the result of every validation run, in one place.
 ## Where it fits
 
 DataHub is one of the shared services under the three layers of the
-[overview](../architecture.md#what-starts-the-pipelines-and-the-platform-services). Four things feed it. Every Spark
+[overview](../architecture.md#what-starts-the-pipelines-and-the-shared-services). Four things feed it. Every Spark
 job of Layer 1 (the data platform), dbt included, posts the tables it read and wrote through OpenLineage
 ([openlineage.md](openlineage.md)). Airflow's DataHub listener adds the DAGs (pipelines of tasks), their tasks and
 their runs. The validate stage of every Airflow pipeline ([airflow.md](airflow.md)) posts its Great Expectations

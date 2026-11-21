@@ -28,7 +28,7 @@ Two design choices run through all of them, and DP1 adds a third:
 ## Where it fits
 
 These are Layer 1's batch pipelines;
-[architecture.md](../architecture.md#what-starts-the-pipelines-and-the-platform-services) shows what starts each one.
+[architecture.md](../architecture.md#what-starts-the-pipelines-and-the-shared-services) shows what starts each one.
 The pipelines read and write the zones of the lakehouse and never hand data to each other directly: DP1 writes bronze,
 DP2 reads bronze and writes silver and gold, DP3 reads gold and writes the feature table that Layer 2's feature store
 serves.
