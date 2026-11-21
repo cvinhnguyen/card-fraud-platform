@@ -475,7 +475,11 @@ What the Jenkins job does:
 | Run + checks | runs `dp2_bronze_to_silver` and prints its Great Expectations results. Its publish starts the gold, features and materialize pipelines on the new release, as any run does |
 
 If a stage after the switch fails, the job moves `current` back to the release before it and resets
-`batch_release`.
+`batch_release`. The check run wrote silver for real, so the data goes back too: before the run the job keeps the
+Delta version of `silver.stg_transactions` and `silver.stg_customers`, and on a failure it restores them
+(`RESTORE TABLE ... TO VERSION AS OF`, [`pipelines/spark/table_versions.py`](../../pipelines/spark/table_versions.py)).
+It also deletes the failed check run: the DAGs use `depends_on_past`, so a failed run would hold back every later
+run of the DAG, the nightly ones included. The run stays in the Jenkins log.
 
 Where to see which version runs:
 

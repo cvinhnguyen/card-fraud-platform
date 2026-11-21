@@ -1826,7 +1826,7 @@ def cicd():
                  "Move one link to that folder: Airflow and Spark switch to it together",
                  "Airflow parses it, and a DP2 silver run passes its checks?",
                  "Live. The Airflow Variable batch_release and a tag on every DAG name the commit"],
-             "Move the link back to the folder before"),
+             "Move the link back to the folder before; restore the silver tables to their versions before the run"),
             ("LAYER 1 · FLINK JOBS · Jenkins pipeline flink-jobs",
              "starts on a commit in the Flink jobs; the jobs run by hand only get the first step", [
                  "Lint; every job imports in the Flink image",

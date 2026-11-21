@@ -27,6 +27,7 @@ pipeline {
     RELEASES = 'fraud_batch_release'
     DAGS = 'dp1_source_to_bronze dp2_bronze_to_silver dp2_silver_to_gold dp3_gold_to_features feast_materialize drift_monitoring datahub_metadata'
     SMOKE = 'dp2_bronze_to_silver'   // reads the last committed bronze version; a rerun adds nothing twice
+    SILVER = 'silver.stg_transactions silver.stg_customers'   // what the check run writes; restored if it fails
     CODE = 'pipelines/airflow/dags pipelines/spark pipelines/dbt ml/fraud_ml ml/jobs ml/tools ml/feature_repo ml/pipelines'
   }
   stages {
@@ -133,6 +134,12 @@ pipeline {
               sh '''
                 api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
                 api -X PATCH "$AIRFLOW/dags/$SMOKE" -d '{"is_paused": false}' >/dev/null
+                # the check run writes silver for real: keep the Delta version of each table, so post can restore them
+                git show HEAD:pipelines/spark/table_versions.py | docker exec -i spark-master sh -c 'cat > /tmp/table_versions.py'
+                docker exec spark-master /opt/spark/bin/spark-submit /tmp/table_versions.py save $SILVER 2>/dev/null \
+                  | sed -n 's/^VERSIONS //p' > silver-versions.json
+                [ -s silver-versions.json ] || { echo "could not read the versions of $SILVER" >&2; exit 1; }
+                echo "silver before the check run: $(cat silver-versions.json)"
                 run="ci-$TAG-$(date +%s)"
                 echo "$run" > ci-run.txt   # post deletes it if it fails: the DAGs use depends_on_past
                 api -X POST "$AIRFLOW/dags/$SMOKE/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG, release $TAG\\"}" >/dev/null
@@ -158,11 +165,18 @@ pipeline {
   }
   post {
     failure {
-      // a failed check after the switch: back to the release that ran before, and the Variable with it. The failed
+      // a failed check after the switch: back to the release that ran before, and the Variable with it; the silver
+      // tables the check run wrote go back to their versions before it (Delta RESTORE). The failed
       // check run is deleted too: the DAGs use depends_on_past, so a failed run would hold back every later run of
       // the DAG, the nightly ones included, until someone cleared it (Jenkins' log keeps what it did)
       withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
         sh '''
+          if [ -s silver-versions.json ]; then   # the data too: silver back to its versions before the check run
+            git show HEAD:pipelines/spark/table_versions.py | docker exec -i spark-master sh -c 'cat > /tmp/table_versions.py'
+            docker exec spark-master /opt/spark/bin/spark-submit /tmp/table_versions.py restore "$(cat silver-versions.json)" \
+              2>/dev/null | grep -E 'restored|still at' \
+              || echo "SILVER RESTORE FAILED: run pipelines/spark/table_versions.py restore '$(cat silver-versions.json)' by hand" >&2
+          fi
           if [ -f ci-run.txt ]; then
             printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -X DELETE "$AIRFLOW/dags/$SMOKE/dagRuns/$(cat ci-run.txt)" \
               && echo "deleted the failed check run $(cat ci-run.txt), so it does not hold back later runs" || true
@@ -178,6 +192,6 @@ pipeline {
       }
     }
     always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
-    cleanup { sh 'rm -f switched ci-run.txt' }
+    cleanup { sh 'rm -f switched ci-run.txt silver-versions.json' }
   }
 }
