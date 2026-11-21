@@ -58,7 +58,7 @@ pipeline {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-data-agents.yaml $PROMPT_FLAGS --atomic --timeout 5m'
           script { env.DEPLOYED = 'true' }   // from here on a failure rolls the release back (post)
-          sh 'for a in $AGENTS; do kubectl -n kagent wait --for=condition=Ready agent/$a --timeout=300s; done'
+          sh 'sh agents/wait_ready.sh $AGENTS'
         }
       }
     }
