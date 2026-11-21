@@ -81,9 +81,11 @@ def build(spark: SparkSession, as_of: dt.date) -> None:
                             set={c: f"s.{c}" for c in ("is_fraud", "fraud_reported_ts", "label_as_of")})
          .whenNotMatchedInsertAll(condition="s.event_timestamp IS NOT NULL")
          .execute())
-    m = spark.sql(f"DESCRIBE HISTORY {TABLE} LIMIT 1").first()["operationMetrics"]
-    print(f"{TABLE} as of {as_of}: +{int(m.get('numTargetRowsInserted', m.get('numOutputRows'))):,} new rows, "
-          f"{int(m.get('numTargetRowsUpdated', 0)):,} labels flipped")
+    # a MERGE that changes nothing (no new transactions, no flipped label) writes no commit: the newest history entry
+    # is then another operation, without these metrics
+    m = spark.sql(f"DESCRIBE HISTORY {TABLE} LIMIT 1").first()["operationMetrics"] or {}
+    print(f"{TABLE} as of {as_of}: +{int(m.get('numTargetRowsInserted', m.get('numOutputRows')) or 0):,} new rows, "
+          f"{int(m.get('numTargetRowsUpdated') or 0):,} labels flipped")
 
 
 def report(spark: SparkSession) -> None:
