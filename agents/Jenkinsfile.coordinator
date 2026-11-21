@@ -42,7 +42,8 @@ pipeline {
       steps {
         withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
           sh 'helm lint agents/chart -f agents/chart/values-coordinator.yaml'
-          sh 'helm template $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS | kubectl apply --dry-run=server -f - >/dev/null'
+          // Helm's own server-side dry run: its three-way merge also drops fields an older release set
+          sh 'helm upgrade --install $RELEASE agents/chart -n kagent -f agents/chart/values-coordinator.yaml $PROMPT_FLAGS --dry-run=server >/dev/null'
         }
       }
     }
