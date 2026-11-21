@@ -80,7 +80,8 @@ Flink's default job name) are left alone:
 3. submits the new code from that savepoint, with `--release <sha>`: the job is named `rt_features <sha>`
 4. waits up to 3 minutes for the new job to run, restore the savepoint and complete a checkpoint
 
-If step 4 fails, Jenkins cancels the new job and resubmits the old code from the same savepoint, keeping the state (the dedup and 1-hour
+If step 4 fails, or the build fails or is aborted while a job is stopped, Jenkins cancels the new job and resubmits
+the old code from the same savepoint, keeping the state (the dedup and 1-hour
 windows of `rt_features`, the Kafka offsets and open files of `raw_landing`). The version shows in
 the job name (Flink UI, `flink list`); a job started by hand without `--release` keeps the plain name.
 

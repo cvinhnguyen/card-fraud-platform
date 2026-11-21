@@ -38,7 +38,8 @@ before, so a green build means the new version answers.
 3. The deploy uses each unit's own tool: `helm upgrade --atomic`, `kubectl apply`, a recreated compose container, a
    release folder, an Airflow Variable or a savepoint restart ([Pipelines](#pipelines)).
 4. A check against the running platform follows (a smoke test, for agents over A2A, the agent-to-agent protocol;
-   the eval gate; a DP2 silver run; a Flink checkpoint). If it fails, the failure handler puts back the previous version.
+   the eval gate; a DP2 silver run; a Flink checkpoint). If it fails, or the build is aborted after the deploy, the
+   failure handler puts back the previous version.
 5. Tool servers, data agents and coordinator chain, each starting the next on success; a new challenger model waits
    for a person to approve its A/B test ([Agents](#agents)).
 6. Secrets come from `infra/.env` as Docker secrets and become Jenkins credentials, masked in the logs
@@ -350,7 +351,10 @@ The eval gate stage and the failure handler
 ```
 
 These builds ran the earlier Jenkinsfile: the gate stage ran `helm rollback` itself, and a failed smoke test left the
-release in place. Since 2026-11-12 the failure handler covers every step after the upgrade (not yet run in Jenkins).
+release in place. Since 2026-11-12 the failure handler covers every step after the upgrade, and it has rolled back four releases:
+coordinator #42 (2026-11-13, failed smoke test), and data-agents #51 and #53 and coordinator #45 (2026-11-21,
+failed readiness wait, fixed in `e4bc9e3`). Each log ends with `Rollback was a success`, and `helm history` shows
+the rollback revisions (coordinator 17 "Rollback to 15", data-agents 23 "Rollback to 21" and 26 "Rollback to 24").
 #20 and #23 asked the 12-question dataset once; the gate now asks 20 questions twice.
 
 | Build | Started by | Result |
@@ -452,6 +456,7 @@ The bugs it found:
 | `card-support-mcp` | the rollback stopped at the first failed server | `c935dd1`: every server is tried, the failed ones named |
 | agent pipelines | Validate: `helm template` piped to a kubectl server-side dry run kept the `systemMessageFrom` an older release set next to the new inline `systemMessage`, which kagent rejects | `f0341fe`: `helm upgrade --dry-run=server`, whose three-way merge drops the old field |
 | agent pipelines | the readiness wait never ended after a spec change that left the pod as it was | `e4bc9e3`: `agents/wait_ready.sh` |
+| every pipeline with a rollback | an aborted build skipped it: data-agents #55, aborted after its upgrade, left revision 27 live without its smoke test | `87706aa`: the rollback runs on failure and on abort; Flink lists each job before its stop |
 | compose services | a `docker compose up` by hand put the old local build back | `1fbccdd`: a green release becomes the compose default image |
 
 The silver restore (`9811592`) was tested by hand: `silver.stg_customers` restored from version 25 to 24.
