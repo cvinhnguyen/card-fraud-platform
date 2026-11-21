@@ -213,7 +213,8 @@ pipeline {
             withCredentials([string(credentialsId: 'ml-db-password', variable: 'ML_DB_PASSWORD'),
                              string(credentialsId: 'redis-password', variable: 'REDIS_PASSWORD')]) {
               sh '''
-                if ! docker inspect scoring-api >/dev/null 2>&1; then
+                # running, not only present: a stopped container would be started here without Redis and Kafka
+                if [ "$(docker inspect -f '{{.State.Running}}' scoring-api 2>/dev/null)" != true ]; then
                   echo "scoring-api is not running: start it with AB_PERCENT=$AB_WANTED in the environment"; exit 0
                 fi
                 now=$(docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^AB_PERCENT=//p')
@@ -318,7 +319,8 @@ pipeline {
             [ "$live" = "$CHAL" ] || { echo "the challenger now runs v${live:-none}, not v$CHAL: not started"; exit 0; }
             kubectl -n serving annotate isvc card-fraud-challenger --overwrite \
               fraud.platform/ab-approved-version="$CHAL" fraud.platform/ab-approved-by="$AB_APPROVER"
-            docker inspect scoring-api >/dev/null 2>&1 || { echo "scoring-api is not running: the next build sets the split"; exit 0; }
+            [ "$(docker inspect -f '{{.State.Running}}' scoring-api 2>/dev/null)" = true ] \
+              || { echo "scoring-api is not running: the next build sets the split"; exit 0; }
             docker inspect scoring-api --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^AB_PERCENT=//p' > ab-prev.txt
             SCORING_API_IMAGE=$(docker inspect scoring-api --format '{{.Config.Image}}') AB_PERCENT=$AB_SHARE \
               $COMPOSE --profile ml up -d --no-deps --no-build --wait scoring-api
