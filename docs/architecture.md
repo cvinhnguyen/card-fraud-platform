@@ -1,26 +1,25 @@
 # Architecture
 
-The platform is drawn in five pictures, from the most general to the most detailed. The overview shows every part
-and how data moves between them, with each pipeline as a frame that holds its tasks in the order they run. The two
-system diagrams show which container sends which data to which, arrow by arrow. The deployment diagram shows where
-each unit runs, and the CI/CD diagram how a new version of a unit reaches the platform. In the two system diagrams a box shows a name and, under it, what that part does in plain words; in
-the deployment diagram it shows the container's image and port. A new reader should start with the overview.
+Five pictures describe the platform, from the most general to the most detailed. Start with the overview.
 
 | View | Question it answers | Boxes are |
 |---|---|---|
-| [Overview](#overview) | What does the platform do, and how do the parts hand data to each other? | the jobs (green) and services (white), the stores between them (blue), each pipeline framed with its tasks |
-| [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) | Which unit sends which data to which unit? | deployable units: compose containers and Kubernetes workloads |
-| [System diagram, Layer 3](#system-diagram-layer-3) | The same question for the agents, the gateway and the model servers | deployable units |
-| [Deployment](#deployment) | Where does each unit run, on which port? | containers, Kubernetes workloads, host processes |
-| [CI/CD](#cicd) | How does a new version of a unit reach the platform, and what happens when it is bad? | the steps of a release; one row per Jenkins pipeline |
+| [Overview](#overview) | What does the platform do, and how do the parts hand data to each other? | jobs, services and stores; each pipeline framed with its tasks in run order |
+| [System diagram, Layers 1 and 2](#system-diagram-layers-1-and-2) | Which unit sends which data to which unit? | deployable units (compose containers, Kubernetes workloads), each with what it does |
+| [System diagram, Layer 3](#system-diagram-layer-3) | The same for the agents, the gateway and the model servers | deployable units |
+| [Deployment](#deployment) | Where does each unit run, on which port? | containers, Kubernetes workloads, host processes, with image and port |
+| [CI/CD](#cicd) | How does a new version reach the platform, and what happens when it is bad? | the steps of a release; one row per Jenkins pipeline |
 
 ## Overview
 
-In the overview, each box says three things: its name, the technology under the name, and what it does as short bullets.
-A pipeline is drawn as a dashed frame with its steps from top to bottom. A white step with pointed ends is a check, and
-its two outcomes (no, yes) sit under it, so the picture says what happens when a check fails. An arrow goes from the
-part that sends data (or a call) to the part that receives it, and the words on it say what moves. The colour of a box
-says what kind of part it is:
+The overview puts the whole platform on one page. The box at the top right lists what it does. Layer 1 fills the top
+band (nightly batch first, streaming second), Layer 2 (right) and Layer 3 (left) sit under it, and the shared services
+row is at the bottom. Brackets below (S1, A3) name arrows of the system diagrams.
+
+![Platform overview: Layer 1 on top, Layer 3 bottom left, Layer 2 bottom right](images/platform-overview.png)
+
+Each box gives its name, technology and job. A pipeline is a dashed frame of steps, top to bottom; a white step with
+pointed ends is a check, its outcomes (no, yes) under it. Arrows run from sender to receiver, labelled with what moves:
 
 | Colour | Kind of part |
 |---|---|
@@ -32,27 +31,17 @@ says what kind of part it is:
 | purple | an entry point or gateway |
 | dashed | a note for the reader, not a component |
 
-The colour of an arrow says which flow it belongs to, with the same colours as the system diagrams: orange
-payment scoring, blue streaming, green batch data (also the policy documents), purple training and release
-(dashed, so it stays apart from blue for colour-blind readers), brown monitoring and wine for an agent question.
-The key is at the bottom of the picture. The novel ideas carry a raspberry `NOVEL IDEA` pill, a colour no flow
-uses: lakeFS and the account takeover alerts here, the signed images and the eval gate on the CI/CD picture.
-
-The box at the top right lists what the platform does. Layer 1 fills the top band, with the nightly batch on the
-first row and the streaming side on the second. Layer 2 (right) and Layer 3 (left) are under it. Under them, the
-services row shows the tools every layer uses with their logos; CI/CD is one of them and has its own picture
-([CI/CD](#cicd)). The numbers in brackets in the text below (S1, A3) are the arrows of the two system
-diagrams, which show the same paths step by step.
-
-![Platform overview: the bank's sources on the left; in Layer 1, DP1, the DP2 silver and gold pipelines and DP3 each read one zone and write the next, Flink jobs turn Kafka events into live features and alerts, and Feast keeps the features offline and online; in Layer 2, the Scoring API decides each payment with the KServe model, KServe's logger feeds the Drift API through a Knative broker and the training pipeline registers every model; in Layer 3, the support chat, the agents, the MCP tool servers and the model servers meet at agentgateway; each pipeline is drawn as its steps and checks; the shared services are in the bottom row](images/platform-overview.png)
+Arrow colours match the system diagrams: orange payment scoring, blue streaming, green batch data (also the policy
+documents), purple training and release (dashed, to stay apart from blue for colour-blind readers), brown monitoring,
+wine an agent question; the key is at the bottom. A raspberry `NOVEL IDEA` pill, a colour no flow uses, marks the
+novel ideas: lakeFS and the account takeover alerts here, the signed images and the eval gate on the CI/CD picture.
 
 ### Layer 1: the data platform (top band)
 
-The bank's data lives with other departments, and the left column shows each source as its own box: the core
-banking database (PostgreSQL, six tables), the nightly export job that writes the day's settled card transactions
-as Parquet files into its own bucket, the authorization switch and the mobile banking app. In this project
-`generator/load_source.py`, `generator/producer.py` and `ml/tools/replay_scoring.py` play those systems. Layer 1 brings the data together in
-four batch pipelines. The course names three (DP1, DP2, DP3); DP2 is two pipelines here, one per zone it writes:
+The left column holds the sources other departments own: the core banking database (PostgreSQL, six tables), the
+nightly export job (the day's settled card transactions as Parquet files in its own bucket), the authorization switch
+and the mobile banking app, played here by `generator/load_source.py`, `generator/producer.py` and
+`ml/tools/replay_scoring.py`. The course's three batch pipelines are four here, because DP2 is one per zone it writes:
 
 | Pipeline | Reads | What it does | Writes |
 |---|---|---|---|
@@ -61,174 +50,163 @@ four batch pipelines. The course names three (DP1, DP2, DP3); DP2 is two pipelin
 | DP2, gold pipeline | `silver.stg_*`, and bronze's reference tables (`raw_cards`, `raw_accounts`, `raw_merchants`, `raw_disputes`) | dbt builds the star schema, Spark writes the fraud labels | `gold` (dims, `fact_transaction`, `label_transaction`) |
 | DP3, feature pipeline | `gold.fact_transaction`, `bronze.raw_disputes` | per-card spending statistics over 30, 90 and 180 days | `gold.feat_card_txn_stats_daily`, in the Feast offline store |
 
-Every check task (`validate_*`) runs the Great Expectations checks, records the results and stops the pipeline
-when one fails, so no later task reads bad data.
+Every check task (`validate_*`) runs Great Expectations, records the results and stops the pipeline on a failure.
 
-No pipeline starts another one. DP1 runs every night
-([`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/dp1_source_to_bronze.py)).
-Each pipeline ends with a task that announces a new checked version of the zone it wrote (an Airflow dataset event that
-carries the business day), and the pipeline that reads that zone is scheduled on the dataset
-([`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py)).
-So the DP2 silver pipeline depends on the bronze tables, never on DP1: anything that publishes bronze starts it, and it
-can be started by hand at any time, also while DP1 is writing, because a reader of a Delta table always gets the last
-committed version ([airflow.md](data-platform/airflow.md)).
+#### What starts each batch pipeline
 
-On the overview, Airflow sits on top of the band. A dotted arrow means Airflow starts that pipeline and no data
-moves. Each arrow says what starts it: every night for DP1, a new bronze version for the DP2 silver pipeline, a new
-silver version for the DP2 gold pipeline. DP3 sits under gold and starts the same way, on a new gold version; its
-frame says so. The drift, RAG and DataHub metadata pipelines are listed in the Airflow box.
+No pipeline starts another. DP1 runs every night
+([`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/dp1_source_to_bronze.py)).
+Each pipeline ends by announcing a new checked version of its zone (an Airflow dataset event carrying the business
+day), which schedules the pipeline that reads that zone
+([`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/common.py)).
+So the DP2 silver pipeline depends on the bronze tables, not on DP1, and can also be started by hand at any time,
+even while DP1 writes: a Delta reader always gets the last committed version ([airflow.md](data-platform/airflow.md)).
+On the overview, Airflow's dotted arrows start pipelines and move no data; DP3's frame says it starts on a new gold
+version.
 
-DP1 shows why the nightly export goes through lakeFS. lakeFS keeps Git-style branches of data files. The run creates
-the branch `dp1_<D>`, appends the export to `raw_transactions` on that branch only,
-commits it, and the checks read that commit. Readers (silver, Trino) see the branch `main`, so they cannot see the
-new export yet. When every check passes, the last step merges the branch into `main`, and the export becomes
-visible in one step. When a check fails there is no merge: `main` stays as it was yesterday and the bad export
-stays on its branch to be inspected ([novel_lakefs_wap.md](data-platform/novel_lakefs_wap.md)).
-The six core banking snapshot tables and the raw payment files skip the branch and are written straight to
-`s3a://lakehouse/bronze/`. For them the gate is the announcement described above, and a failed run never makes it.
+#### The nightly export goes through lakeFS
 
-Only the export waits on a branch. The DP2 silver, DP2 gold and DP3 pipelines write their tables first and check
-them afterwards, which is why their frames show a "Write" or "build" step before the check. A failed check stops
-the announcement, so the next pipeline does not start and Redis keeps the old features. A reader that goes to the
-tables directly (an analyst in Trino, a training run, a run started by hand) can still see the unchecked rows
-until the next good run. Putting silver and gold on lakeFS branches as well would close that gap; it is not done.
+DP1 appends the export to `raw_transactions` on a lakeFS branch `dp1_<D>` (Git-style branches of data files), commits
+it, and checks that commit while readers (silver, Trino) still see `main`. If every check passes, it merges the
+branch into `main` and the export appears in one step; if not, `main` stays as yesterday and the bad export waits on
+its branch ([novel_lakefs_wap.md](data-platform/novel_lakefs_wap.md)). The six core banking snapshot tables and the
+raw payment files go straight to `s3a://lakehouse/bronze/`; their gate is the bronze announcement, which a failed run
+never makes.
 
-Trino (under silver) takes no arrow from a pipeline: it asks the Hive Metastore where a table lives and reads the
-Delta files of every zone itself, so analysts can query any zone. Its three arrows come up from bronze, silver and
-gold; the gold one hops over the bronze branch into the gold pipeline, so the two do not join. The Hive Metastore
-is drawn with Trino and not among the stores, which hold the zones: it is a service that keeps its own metadata in
-PostgreSQL.
+The DP2 silver, DP2 gold and DP3 pipelines write first and check after (their frames show a "Write" or "build" step
+before the check). A failed check stops the announcement, so the next pipeline does not start and Redis keeps the old
+features, but a direct reader (an analyst in Trino, a training run, a run started by hand) can see the unchecked rows
+until the next good run. lakeFS branches for silver and gold would close that gap; it is not done.
 
-The second row of the band is the streaming side. The Kafka box lists the topics that come in and the topics the
-jobs write. The four streaming jobs are all Flink jobs written in PyFlink, on the same Flink cluster, so they are
-one box; each bullet names the Flink API that job uses. Two use the DataStream API with keyed state: the card
-features of each payment
-([`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/flink/rt_features.py))
-and the first device of each card. Two use Flink SQL through the Table API: the raw payments written as JSON files into
-`landing/` for DP1, and the account takeover alerts (novel idea 1), which use SQL `MATCH_RECOGNIZE` to find three
-patterns in the app's events. Two push jobs, containers that Jenkins deploys, carry the feature topics on: `push-online`
-writes them into Redis for scoring, `push-offline` appends them to Delta for training. The two feature jobs, the raw
-landing job and the push jobs run all the time, and Jenkins releases them. The takeover alerts have so far run on a
-replay of the app events.
+#### Trino and the Hive Metastore
+
+Trino (under silver) takes no arrow from a pipeline: it asks the Hive Metastore where a table lives and reads any
+zone's Delta files itself. Its gold arrow hops over the bronze branch so the two do not join. The Hive Metastore sits
+with Trino, not among the stores, because it is a service with its own PostgreSQL metadata.
+
+#### Streaming
+
+The four streaming jobs share one box because they are PyFlink jobs on one Flink cluster (the Kafka box lists the
+topics in and out); each bullet names its Flink API:
+
+| Job | Flink API | What it does |
+|---|---|---|
+| Card features ([`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/rt_features.py)) | DataStream API with keyed state | the card features of each payment |
+| First device | DataStream API with keyed state | the first device of each card |
+| Raw landing | Flink SQL through the Table API | writes the raw payments as JSON files into `landing/` for DP1 |
+| Account takeover alerts (novel idea 1) | Flink SQL through the Table API | uses SQL `MATCH_RECOGNIZE` to find three patterns in the app's events; so far run on a replay of the app events |
+
+Two push jobs carry the feature topics on: `push-online` into Redis for scoring, `push-offline` appended to Delta for
+training. The feature jobs, the raw landing job and the push jobs run all the time, and Jenkins releases them.
 
 ### The hand-over: Feast
 
-Feast (the two blue stores at the end of the streaming row) is the hand-over between Layers 1 and 2. Layer 1
-writes into it, Layer 2 reads from it, so training and serving see the same 20 features (`fraud_model_v1`,
-[`ml/feature_repo/fraud_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py)).
-Its offline store is the `feat_*` Delta tables, read with point-in-time joins for training; its online store is Redis,
-read by the Scoring API in milliseconds. DP3 and `push-offline` write the offline store, `push-online` writes the online
-store, and the arrow between the two stores is the materialize pipeline (DAG `feast_materialize`, started by DP3's new
-feature version): it copies the newest daily row of each card from the offline store into Redis and checks that it
-arrived.
+Feast (the two blue stores ending the streaming row) is the hand-over between Layers 1 and 2, so training and serving
+see the same 20 features (`fraud_model_v1`,
+[`ml/feature_repo/fraud_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py)).
+
+| Store | What it is | Written by | Read by |
+|---|---|---|---|
+| Offline | the `feat_*` Delta tables | DP3, `push-offline` | training, with point-in-time joins |
+| Online | Redis | `push-online`, the materialize pipeline | the Scoring API, in milliseconds |
+
+The arrow between the stores is the materialize pipeline (DAG `feast_materialize`, started by DP3's new feature
+version): it copies each card's newest daily row into Redis and checks that it arrived.
 
 ### Layer 2: the ML platform (right panel)
 
-The left side of the panel is serving, under the online store it reads; the right side is training, under the
-offline store and the labels.
+Serving is on the left, under the online store; training on the right, under the offline store and the labels.
 
-Serving. A card payment reaches the bank through the card network; the bank's authorization switch sends it to the
-Scoring API and waits for the decision (S1,
-[`services/scoring_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/scoring_api/app/main.py)),
-which reads the payment's online features (S2), sends them to KServe for the score (S3, S4) and answers approve, step_up
-or decline (S5). It writes every decision to the Kafka topic `fraud_predictions`, the decision log (S6). The log holds
-what the model server never sees: the payment, the decision and the reason for a fallback when the model was down. The
-per-day drift report (`ml/tools/drift_by_day.py`) reads it; the live drift path below does not.
+#### Serving
 
-Live drift follows the standard KServe pattern. The model server's logger copies every request and its response
-as CloudEvents to a Knative Eventing broker, and a Trigger delivers them to the Drift API, which is the drift
-detector. An outlier or an adversarial detector would be one more Trigger on the same broker. The Drift API keeps
-per-minute counts in Redis and returns the PSI of each feature and of the score over the last 15 minutes, against
-the profile of the model's training data (no labels needed, [drift.md](ml-platform/drift.md)).
+The authorization switch sends each payment to the Scoring API and waits (S1 to S5,
+[`services/scoring_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/scoring_api/app/main.py)).
+The Kafka topic `fraud_predictions` (S6) logs what the model server never sees: the payment, the decision and the
+reason for a fallback. The per-day drift report (`ml/tools/drift_by_day.py`) reads it; the live drift path does not.
 
-Training. The training pipeline on Kubeflow Pipelines
-([`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/pipelines/train_fraud_model.py))
-runs seven steps as pods: load the labels, build the training set, check the data, split by time, train, evaluate,
-register. The overview draws them as six steps (the check and the split share one) and then the check "Better than
-production?". The training set is not a box of its own, because it is an artifact one step hands to the next. The words
-on each arrow inside the frame name what is passed on: label rows, the training set (a Delta version), the train,
-validation and test files, the model files, and the result of the evaluation (passed: true or false).
+#### Live drift
 
-The training set is saved as a new Delta version in
-`lakehouse/ml/` and the later steps read that version, so any model in the registry can be traced back to the
-exact rows it learned from. The labels come from `gold.label_transaction` and the features from the Feast offline
-store. The last step registers every trained model as a new MLflow version, even one that is not better than
-production, so it can still be inspected or compared later; only a better one gets the alias `challenger`
-([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/registry.py)).
+Live drift is the standard KServe detector pattern (M1 to M3). The Drift API returns the PSI (population stability
+index) of each feature and of the score over the last 15 minutes against the training profile, with no labels
+([drift.md](ml-platform/drift.md)).
 
-The Jenkins pipeline `fraud-predictor` builds the model behind the alias `production` into the KServe predictor
-image, tagged with the model version, and deploys it. The model behind `challenger` gets its own InferenceService and
-takes traffic only after a person approves the A/B test
-([serving.md](ml-platform/serving.md#model-release-pipeline)); its steps are on the [CI/CD](#cicd) picture. The first model was trained by hand in the JupyterLab notebook, the
-compose service `notebook` on the same training image as the pipeline steps
-([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/notebooks/fraud_model.ipynb)).
-It calls the same seven functions, reads the same Feast features and logs its runs and model to the same MLflow, so it
-is part of the platform and the overview draws it under the Drift API.
+#### Training
 
-The drift pipeline makes the retraining decision (DAG `drift_monitoring`,
-[`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/drift_monitoring.py)).
-It runs every day, scores the last 7 days with their labels and point-in-time features using the production model, and
-saves the drift report as an MLflow run whatever the result. The labels of those 7 days come from the simulation's
-ground truth (`s3://lakehouse/ml/ground_truth/labels.parquet`): a real bank learns about fraud from disputes over about
-60 days, so there the PR-AUC check would lag by that much and only the PSI check would be immediate. When a PSI is above
-0.25 or the PR-AUC fell more than 0.05, the pipeline also starts a training pipeline run with the newest labels;
-otherwise the production model stays. The overview draws the save before the check, so both outcomes keep the report.
+The training pipeline
+([`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/pipelines/train_fraud_model.py))
+runs seven steps as pods; the overview draws six (the check and the split share one), then the check "Better than
+production?". The training set has no box: it is an artifact passed between steps. The arrows inside the frame name
+what passes: label rows, the training set (a Delta version), the train, validation and test files, the model files,
+the evaluation result (passed: true or false).
+
+Labels come from `gold.label_transaction`, features from the Feast offline store. The training set is a new Delta
+version in `lakehouse/ml/`, so any registered model traces back to its exact rows. Every trained model becomes an
+MLflow version, even one no better than production, for later comparison; only a better one gets the alias
+`challenger`
+([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/fraud_ml/registry.py)).
+The `production` and `challenger` models reach KServe through the [model release](#model-release)
+([serving.md](ml-platform/serving.md#model-release-pipeline)).
+
+The first model was trained by hand in the JupyterLab notebook
+([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/notebooks/fraud_model.ipynb)),
+the compose service `notebook` on the training image. It uses the same seven functions, Feast features and MLflow;
+the overview draws it under the Drift API.
+
+#### Retraining on drift
+
+The drift pipeline (DAG `drift_monitoring`,
+[`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/drift_monitoring.py))
+scores the last 7 days daily with the production model and saves the report as an MLflow run whatever the result,
+which is why the overview draws the save before the check. When a PSI is above 0.25 or the PR-AUC fell more than
+0.05, it starts a training pipeline run with the newest labels. Those labels come from the simulation's ground truth
+(`s3://lakehouse/ml/ground_truth/labels.parquet`); a real bank learns of fraud from disputes over about 60 days, so
+its PR-AUC check would lag by that much and only PSI would be immediate.
 
 ### Layer 3: the LLM and agent platform (left panel)
 
-agentgateway is the wide purple bar in the middle of the panel, because every call passes it. The support chat
-and the model servers are above it; the agents and the MCP tool servers are under it.
-
-Support staff open the support chat (`https://support.<domain>`). NGINX checks the login over HTTPS (A1, A2). The chat
-page sends the question to the gateway and adds its API key on the server side, so the key never reaches the browser
-(A3,
-[`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/support-chat.yaml)).
-The gateway is the first hop of the question after NGINX and the chat page, before any agent. It checks that key,
-applies the rate limit and only then passes the question to the coordinator (A4). The coordinator splits the question;
-its sub-tasks go back through the gateway to the card-data and risk agents (A5 to A7), and the agents' tool calls and
-prompts go through it again (A8 to A10). The gateway decides which routes and tools a key may use, limits rate and
-tokens and masks personal data. A NetworkPolicy lets only the gateway (and the controller of kagent, which runs the
-agents) reach the coordinator, so nothing can call an agent past it. The kagent UI stays as the admin console for the
-agents and is not on the support path.
-
-published from `agents/registry/catalog.yaml` ([agents.md](llm-platform/agents.md#agent-registry)).
+agentgateway is the wide purple bar across the panel, because every call passes it: the support chat and the model
+servers sit above it, the agents and MCP tool servers below. A question goes from the support chat
+(`https://support.<domain>`, login checked by NGINX) to the gateway; the chat page adds its API key server side, so
+the key never reaches the browser
+([`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/support-chat.yaml)).
+The gateway checks that key and passes the question to the coordinator, whose sub-tasks, tool calls and prompts all
+pass the gateway again (A1 to A10). A NetworkPolicy lets only the gateway (and the controller of kagent, which runs
+the agents) reach the coordinator, so nothing calls an agent past it. The kagent UI is an admin console off the
+support path. agentregistry is not drawn: it is a catalog for people, off the call path, listing which agents exist,
+their version and image, and which MCP server each uses, published from `agents/registry/catalog.yaml`
+([agents.md](llm-platform/agents.md#agent-registry)).
 
 ### What starts the pipelines, and the shared services
 
-The dashed note at the top of Layer 1 says what starts the pipelines, as described under Layer 1 above. The drift
-and DataHub metadata pipelines run on their own daily schedule, and the RAG data pipeline when its Jenkins pipeline
-or a person starts it ([airflow.md](data-platform/airflow.md) lists all eight DAGs).
+The Airflow box at the top of Layer 1 says what starts each pipeline
+([batch pipelines](#what-starts-each-batch-pipeline)). The drift and DataHub metadata pipelines run daily on their own
+schedule, the RAG data pipeline when its Jenkins pipeline or a person starts it ([airflow.md](data-platform/airflow.md) lists all eight DAGs).
 
-The shared services row names the tools every layer uses, each with its
-logo: the runtime (Docker Compose and kind), observability, the data catalog, storage, secrets and the edge,
-the Azure resources an IaC run creates and destroys again ([iac.md](operations/iac.md)), and CI/CD: Jenkins with
-its 11 pipelines and GitHub Container Registry, drawn on the [CI/CD](#cicd) picture.
+The shared services row shows, with logos, the tools every layer uses: the runtime (Docker Compose and kind),
+observability, the data catalog, storage, secrets and the edge, the Azure resources an IaC run creates and destroys
+([iac.md](operations/iac.md)), and CI/CD (Jenkins with its 11 pipelines and GitHub Container Registry, on the
+[CI/CD](#cicd) picture).
 
 ## System diagram, Layers 1 and 2
 
-The deployable units of Layers 1 and 2 and the data between them. The three boxes outside are the sources that
-other departments own: the authorization switch (payments, R1) and the mobile banking app (app events, R2), both replayed
-from the generated data by `generator/producer.py`, and core banking's nightly export job (Parquet files into
-`s3://core-banking-export`, B1), played by `generator/load_source.py --part exports`. The core banking database itself
-runs as the compose service PostgreSQL. The arrows are numbered per flow: S payment scoring, R streaming features, B
-batch data, T training and deploy, M monitoring and retraining:
+The deployable units of Layers 1 and 2 and the data between them, numbered per flow: S payment scoring, R streaming
+features, B batch data, T training and deploy, M monitoring and retraining. The three outside boxes are the sources:
+the authorization switch (R1) and the mobile banking app (R2), replayed by `generator/producer.py`, and core banking's
+nightly export job (B1, Parquet files into `s3://core-banking-export`), played by
+`generator/load_source.py --part exports`. The core banking database runs as the compose service PostgreSQL.
 
-![System diagram, Layers 1 and 2: deployable units with numbered arrows in five flows, S, R, B, T and M, one colour each](images/platform-system-layers-1-2.png)
-
-The rules the picture follows:
+![System diagram, Layers 1 and 2: the flows S, R, B, T and M](images/platform-system-layers-1-2.png)
 
 | Rule | In the picture |
 |---|---|
-| Every box is a deployable unit | each box is one compose service or one Kubernetes workload, with what it does under its name; the tag top left says where (compose profile or namespace). Feast is a library inside the Scoring API, the push jobs, Airflow, Jupyter and the training pipeline's pods, so it has no box; its stores (Redis, SeaweedFS) and registry (ml-db) do |
-| Arrows follow the data, the data on the arrow | the arrow runs from Redis to the Scoring API (S2), not the other way, because features flow to the API; a call without data (B2 starts the Spark jobs, M7 starts a training run) points from caller to callee |
+| Every box is a deployable unit | one compose service or Kubernetes workload, with what it does under its name; the tag top left says where (compose profile or namespace). Feast is a library inside the Scoring API, the push jobs, Airflow, Jupyter and the training pipeline's pods, so it has no box; its stores (Redis, SeaweedFS) and registry (ml-db) do |
+| Arrows follow the data, the data on the arrow | Redis to the Scoring API (S2), because features flow to the API; a call without data (B2 starts the Spark jobs, M7 a training run) points from caller to callee |
 | Numbered, one numbering per flow | five flows, each with its own colour, letter and 1..n: S for the end user's payment, T for the ML engineer, R, B and M for the system's own flows |
-| Few dashed lines, only off the main path | no dashed arrows; the dashed boxes are support services used by many units (Hive Metastore, lakeFS, ml-db, DataHub), whose arrows would cross every flow |
+| Few dashed lines, only off the main path | no dashed arrows; the dashed boxes are support services many units use (Hive Metastore, lakeFS, ml-db, DataHub), whose arrows would cross every flow |
 
-The training pipeline's box lists its seven tasks bottom to top, because its input (labels and features, T3)
-arrives at the bottom and its output (the model, T5) leaves at the top.
-
-Colours: the five flow colours are at least 17 apart (OKLab x 100) for normal vision; for colour-blind readers the
-letter in each badge carries the flow. Two crossings are left (M7 over T2, M2 over B8), drawn with a gap.
+The training pipeline's box lists its seven tasks bottom to top: input (labels and features, T3) enters at the bottom,
+the model (T5) leaves at the top. The five flow colours are at least 17 apart (OKLab x 100) for normal vision, and the
+badge letter carries the flow for colour-blind readers. Two crossings remain (M7 over T2, M2 over B8), drawn with a gap.
 
 ### Numbered arrows
 
@@ -273,26 +251,24 @@ letter in each badge carries the flow. Two crossings are left (M7 over T2, M2 ov
 
 ## System diagram, Layer 3
 
-The Layer 3 diagram follows the same rules as the Layers 1 and 2 diagram, with four flows of their own. A is the support
-staff's question, the only flow that starts with a person at a screen. K is the RAG data pipeline that Airflow runs
-after each release of its image. C is the developer's push through Jenkins, and O is the platform's monitoring and the
-agents' autoscaling. The picture is built around the gateway: it is the bar across the middle of the cluster. What calls
-it sits above it (the chat page and the three agents), what it calls sits below it (the llm-d router and the three
-MCP servers), and what those read sits under the cluster (the two llama.cpp servers on the host, the stores in
-compose). Observability and the support services are the columns on the right, CI/CD the band at the top:
+The diagram is built around the gateway bar across the cluster: callers above (the chat page and the three agents),
+callees below (the llm-d router and the three MCP servers), and what those read under the cluster (the two llama.cpp
+servers on the host, the stores in compose). Observability and support services are on the right, CI/CD on top. Its
+flows: A, the support staff's question (the only flow a person at a screen starts); K, the RAG data pipeline Airflow
+runs after each image release; C, the developer's push through Jenkins; O, monitoring and agent autoscaling.
 
-![System diagram, Layer 3: agents, gateway, model servers, MCP servers, RAG data pipeline, CI/CD and observability, with the numbered flows A, K, C and O](images/platform-system-layer-3.png)
+![System diagram, Layer 3: the flows A, K, C and O](images/platform-system-layer-3.png)
 
 | Rule | In the picture |
 |---|---|
-| Every box is a deployable unit | a pod set in the kind cluster (tag = namespace), a compose service (tag = profile), a process on the host, or a service on the internet. The dotted frames group the three agents (A6-A9, C5, O5 and O6 apply to each) and the three MCP servers (A10, C4 and O2 apply to each). Every arrow between support-chat, an agent, a tool and the model ends in or starts from the gateway bar, so the gateway is visibly the first hop of every call |
-| Arrows follow the data, the data on the arrow | the arrow from Redis to the card-data MCP server (A11) carries the card's features; an A2A, MCP or LLM request is drawn in the direction of the request, and its reply travels back on the same call without a second arrow |
+| Every box is a deployable unit | a pod set in the kind cluster (tag = namespace), a compose service (tag = profile), a host process, or an internet service. Dotted frames group the three agents (A6-A9, C5, O5 and O6 apply to each) and the three MCP servers (A10, C4 and O2 apply to each). Every arrow between support-chat, an agent, a tool and the model starts or ends at the gateway bar, the first hop of every call |
+| Arrows follow the data, the data on the arrow | Redis to the card-data MCP server (A11) carries the card's features; an A2A, MCP or LLM request points the way of the request, and its reply returns on the same call without a second arrow |
 | Numbered, one numbering per flow | A, K, C and O, each with its own colour and 1..n; K, C and O take the colours of B, T and M, so the validated pairs carry over, and A has its own (wine), at least 16 apart (OKLab x 100) from every other flow |
-| Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow of their own: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), kagent (runs the agents; admin chat UI), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
+| Few dashed lines | no dashed arrows; the dashed boxes are support units without a flow: Vault + External Secrets (every Secret of the platform), Agent Substrate (sandboxed agents from warm snapshots), agentregistry (the catalog), kagent (runs the agents; admin chat UI), Let's Encrypt and the Groq B side of the LLM A/B test, now at weight 0 |
 
-No two arrows cross, and no line runs through a badge or a label: the layout check in
-[`docs/diagrams/platform.py`](diagrams/platform.py) warns on each before the picture is drawn. The CI lanes under the
-CI/CD band (C3, C5, C6, C8) and the lane under the MCP servers (C4) are there for that reason.
+No two arrows cross and no line runs through a badge or label: the layout check in
+[`docs/diagrams/platform.py`](diagrams/platform.py) warns before drawing, hence the CI lanes under the CI/CD band (C3,
+C5, C6, C8) and under the MCP servers (C4).
 
 ### Numbered arrows, Layer 3
 
@@ -337,82 +313,83 @@ CI/CD band (C3, C5, C6, C8) and the lane under the MCP servers (C4) are there fo
 
 ## Deployment
 
-Inside the Docker Desktop VM, compose is on the left and the kind node on the right. A box is one compose profile or
-one namespace, not one container: its logos and version on top, then what runs in it and on which port. The colour
-says what the box does: stores data, runs pipelines, serves an API, lets traffic in, or runs the platform (CI,
-scaling, security, monitoring). The host row on top runs the CLIs and the llama.cpp servers, each over the frame it
-calls, so its arrow goes straight down. terraform sits last in the row, next to the Azure resources an IaC run
-creates; the SaaS the platform talks to is under Azure. Each network path is a numbered arrow with a short label,
-and the list under the picture says what goes over it:
+The host row on top holds the CLIs, the llama.cpp servers and terraform, next to Azure and the SaaS. In the Docker
+Desktop VM, compose is left and the kind node right; a box is one compose profile or namespace (its version, what runs
+and on which port), coloured by what it does: stores data, runs pipelines, serves an API, lets traffic in, or runs the
+platform (CI, scaling, security, monitoring). The list under the picture explains each numbered network path.
 
-![Deployment: the host with the CLIs and the llama.cpp servers, the Docker Desktop VM (8 GB RAM) with one box per compose profile on the left and one box per kind namespace on the right, the Azure resources and the SaaS on the right](images/platform-deployment.png)
+![Deployment: the host, the Docker Desktop VM (8 GB RAM), Azure and the SaaS](images/platform-deployment.png)
 
 | Decision | Why |
 |---|---|
 | One Docker Desktop VM, eight compose profiles | each phase starts only what it needs; the 8 GB VM cannot hold every profile at once (run `stream` alone, keep `trino` and `dbt` off while `orch` + `gov` run). Layer 3 runs with `core` + `ml` + `cicd` and the kind cluster; `orch` comes up for a RAG run |
 | Kubernetes for Kubeflow Pipelines, KServe and all of Layer 3 | Kubeflow Pipelines and KServe need it; Knative Eventing (the broker between KServe's logger and the Drift API) and the Layer 3 tools (agentgateway, llm-d, kagent, KEDA, Substrate, agentregistry, Vault + External Secrets, NGINX Ingress) are Kubernetes operators. APIs, push jobs, MLflow, Redis, pgvector, Airflow and Jenkins stay in compose |
-| Model servers on the host | the GTX 1070 (Pascal) cannot run vLLM, and the GPU is not visible inside the VM; llama.cpp serves chat on :8085 (GPU) and embeddings on :8086, and the llm-d InferencePool selects thin bridge pods that forward to the host. On a GPU node the same pool would select real model server pods |
+| Model servers on the host | the GTX 1070 (Pascal) cannot run vLLM, and the GPU is not visible inside the VM; llama.cpp serves chat on :8085 (GPU) and embeddings on :8086, and the llm-d InferencePool selects thin bridge pods that forward to the host (on a GPU node, real model server pods) |
 | kind node joined to `fraud_default` | pods reach the compose services by name (`lakehouse-s3:8333`, `kafka:19092`, `ml-db`, `redis`, `mlflow:5000`, `vector-db`, `scoring-api:8000`, `drift-api:8000`), and compose reaches the cluster through NodePorts (31080 KServe, 31888 Kubeflow Pipelines API, 31508 agentgateway for the eval gate) |
 | NGINX Ingress on the node's ports 80/443 | the only way in from a browser: `support`, `agents`, `registry`, `grafana`, `logs`, `traces` and `api` under `*.cvinhnguyen.duckdns.org`, all pointing at 127.0.0.1, with a Let's Encrypt wildcard certificate kept in Vault and basic auth on every UI except Grafana (own login) |
-| GitHub Container Registry (`ghcr.io/cvinhnguyen`) | Jenkins pushes every image there, tagged with its version, and cosign stores the image's signature with it; the kind node and compose pull over HTTPS (path 9). The fraud-predictor image holds the model |
+| GitHub Container Registry (`ghcr.io/cvinhnguyen`) | Jenkins pushes every image there, tagged with its version, with its cosign signature; the kind node and compose pull over HTTPS (path 9). The fraud-predictor image holds the model |
 | Alias `lakehouse-s3` for SeaweedFS | Kubeflow Pipelines installs its own `seaweedfs` Service, which shadows the short name inside the cluster |
 | Ports published on 127.0.0.1 only | nothing is reachable from the network; local secrets stay in `infra/.env` (gitignored), the cluster's come from Vault through External Secrets |
-| Azure only for the IaC run | Terraform builds the VNet, VM, AKS cluster and container registry; Ansible deploys the model server to the VM and AKS runs the same image from the registry; `terraform destroy` follows. The rest stays on the PC because of the subscription: 6 vCPU and 3 public IPs per region, a GPU quota of 0, $100 of credit ([iac.md](operations/iac.md#why-not-all-of-it-on-azure)) |
+| Azure only for the IaC run | Terraform builds the VNet, VM, AKS cluster and container registry; Ansible deploys the model server to the VM and AKS runs the same image; `terraform destroy` follows. The subscription keeps the rest on the PC: 6 vCPU and 3 public IPs per region, a GPU quota of 0, $100 of credit ([iac.md](operations/iac.md#why-not-all-of-it-on-azure)) |
 
 ## CI/CD
 
-Jenkins runs 11 pipelines, one per deployable unit ([cicd.md](operations/cicd.md)). Each one tests a change, gives it a
-version, deploys it, checks the running unit, and brings back the version before when the check fails. The picture
-shows the path every release shares on top, then each of the 11 pipelines as its own flow, in layer order: its
-steps left to right, the check, "yes" on to the live version and "no" down to the rollback.
+Jenkins runs 11 pipelines, one per deployable unit ([cicd.md](operations/cicd.md)): each tests a change, versions it,
+deploys it, checks the running unit and brings back the version before when the check fails. One pipeline per unit
+lets each unit release and roll back on its own, keeps each credential in the pipeline that needs it, and gives each
+unit its own build history. The picture shows the shared path, then one flow per pipeline in layer order.
 
-The path every release shares, left to right. A developer pushes to GitHub. Jenkins polls main every 5 minutes and
-runs only the pipelines whose files changed. It tests the change, builds an image tagged with its version, signs the
-tool server and model images with cosign, and pushes them to GitHub Container Registry (ghcr.io). The deploy step
-uses the tool each unit needs: Helm or kubectl in kind, a recreated container in compose, or a new release in
-Airflow, Kubeflow or Flink. A check follows every deploy, and the running unit shows its version (image tag,
-annotation, Airflow Variable or job name). Two more things start a release, both checked every 15 minutes: a new
-production prompt in Langfuse and a model alias that moved in MLflow.
+![CI/CD: the shared release path, then each of the 11 pipelines with its check and rollback](images/platform-cicd.png)
 
-The model release, Jenkins pipeline `fraud-predictor`. A moved MLflow alias starts it. It fetches the model, tests
-that it loads, scores and is that version, builds the image tagged with the model version and signs it, and applies
-the InferenceService (`card-fraud` for production, `card-fraud-challenger` for challenger). Then it asks the model for
-its version, and a wrong answer puts the image before back. A challenger gets no traffic until a person approves the
-A/B test in Jenkins; then 10% of the cards go to it ([serving.md](ml-platform/serving.md#model-release-pipeline)).
-Promoting or rolling back a model is moving the alias `production` in MLflow.
+#### The path every release shares
 
-The agent release, Jenkins pipelines `card-support-data-agents` and then `card-support-coordinator`. Each agent has
-one Langfuse prompt named after it. Jenkins reads the version labelled production, and Helm writes the prompt text and
-its version into the Agent with the same name, in one write: the text inline in the Agent's spec, the version as the
-annotation `card-support/prompt`. So `kubectl get agent` tells which prompt runs. A smoke test asks each agent one
-question. For the data agents the eval gate follows (a novel idea): risk-agent answers 20 questions, and below 0.6
-accuracy the release goes back with `helm rollback` ([novel_eval_gate.md](llm-platform/novel_eval_gate.md)).
+1. Jenkins polls GitHub main every 5 minutes and runs only the pipelines whose files changed; a new production prompt
+   in Langfuse or a moved model alias in MLflow, both checked every 15 minutes, also start a release.
+2. It tests, builds an image tagged with its version, signs the tool server and model images with cosign, and pushes
+   to GitHub Container Registry (ghcr.io).
+3. The deploy uses each unit's tool: Helm or kubectl in kind, a recreated container in compose, or a new release in
+   Airflow, Kubeflow or Flink.
+4. A check follows; the running unit shows its version (image tag, annotation, Airflow Variable or job name).
 
-The other pipelines follow the same pattern: tests, an image (or a release folder for the batch code, a savepoint
-restart for Flink) tagged with the commit id, the deploy, a check against the running unit, and the rollback when the
-check fails. The tool server flow carries the other novel idea:
-Kyverno starts a tool server pod only if Jenkins signed its image
-([novel_supply_chain.md](operations/novel_supply_chain.md)). One pipeline per unit lets each unit release and roll
-back on its own, keeps each credential in the pipeline that needs it, and gives each unit its own build history.
+#### Model release
 
-![CI/CD: the path every release shares from GitHub through Jenkins and GitHub Container Registry to the deploy, the check and the running unit with its version; then each of the 11 pipelines by layer, step by step, with its check and its rollback](images/platform-cicd.png)
+`fraud-predictor` starts when an MLflow alias moves. It tests that the model loads, scores and is that version,
+builds and signs the image tagged with the model version, and applies the InferenceService (`card-fraud` for
+production, `card-fraud-challenger` for challenger). If the model reports another version, the image before comes
+back. A challenger
+gets traffic, 10% of the cards, only after a person approves the A/B test in Jenkins
+([serving.md](ml-platform/serving.md#model-release-pipeline)). To promote or roll back a model, move the alias
+`production` in MLflow.
+
+#### Agent release
+
+`card-support-data-agents`, then `card-support-coordinator`, release the agents. Jenkins reads each agent's Langfuse
+prompt labelled production; Helm writes its text inline into the Agent of the same name and its version as the
+annotation `card-support/prompt` in one write, so `kubectl get agent` shows which prompt runs. A smoke test asks each agent one question. For
+the data agents the eval gate follows (a novel idea): risk-agent answers 20 questions, and below 0.6 accuracy
+`helm rollback` restores the release ([novel_eval_gate.md](llm-platform/novel_eval_gate.md)).
+
+#### The other pipelines
+
+The others follow the same pattern: tests, an image tagged with the commit id (a release folder for the batch code, a
+savepoint restart for Flink), deploy, check, rollback. In the tool server flow, the other novel idea: Kyverno starts a
+tool server pod only if Jenkins signed its image ([novel_supply_chain.md](operations/novel_supply_chain.md)).
 
 ## Run it
 
 | | |
 |---|---|
-| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/docs/diagrams/platform.py) |
+| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/docs/diagrams/platform.py) |
 | Runs on | host process (Python stdlib; headless Chrome or Edge renders the PNGs) |
 | Writes | `docs/images/platform-*.svg` and the PNGs next to them; prints the arrow tables above |
 | Related | [airflow.md](data-platform/airflow.md), [schema_design.md](data-platform/schema_design.md), [agents.md](llm-platform/agents.md), [cicd.md](operations/cicd.md), [iac.md](operations/iac.md) |
 
-All five pictures are drawn from the tables in one script, so the pictures and the arrow tables on this page cannot
-drift apart. Redraw them from the repo root (Python stdlib only; Chrome or Edge renders the PNGs):
+One script draws all five pictures and the arrow tables, so they cannot drift apart. Run it from the repo root:
 
 ```bash
 python docs/diagrams/platform.py            # every view
-python docs/diagrams/platform.py system-layer-3    # only the named views (overview, system-layers-1-2, system-layer-3, deployment)
+python docs/diagrams/platform.py system-layer-3    # only the named views (overview, system-layers-1-2, system-layer-3, deployment, cicd)
 ```
 
-It writes `docs/images/platform-*.svg`, renders the PNGs with headless Chrome or Edge one at a time, prints the arrow
-tables above, and warns when an arrow crosses a box, a label overlaps one, or two arrows of the Layer 3 diagram cross.
+It renders the PNGs one at a time and warns when an arrow crosses a box, a label overlaps one, or two Layer 3 arrows
+cross.

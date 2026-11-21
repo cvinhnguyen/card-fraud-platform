@@ -1,17 +1,15 @@
 # RAG data pipeline
 
-An agent that answers from memory makes up fees and rules. The risk agent instead answers policy questions from the
-bank's own card documents and quotes the clause it used. The documents are the terms and conditions, the fee
-schedule, the dispute policy, the authentication rules and the FAQ. The RAG (retrieval-augmented generation) data
-pipeline, the Layer 3 Airflow DAG `rag_ingest`, prepares them for the agent. It cuts each document into chunks (one
-clause, section or FAQ question each), turns every chunk into a 1024-number vector of its meaning, and stores chunks
-and vectors in a Feast feature view. Two MCP (Model Context Protocol) tool servers read that view: policy-rag's
-`search_policy` finds the chunks closest to a question, and card-data's `get_policy_chunk` returns one chunk by id.
-The CI/CD pipeline that releases it is in [cicd.md](../operations/cicd.md#rag-data-pipeline).
+The RAG (retrieval-augmented generation) data pipeline, the Layer 3 Airflow DAG `rag_ingest`, prepares the bank's
+card documents (terms and conditions, fee schedule, dispute policy, authentication rules, FAQ) so the risk agent
+answers policy questions from them, quoting the clause, instead of making up fees and rules. It cuts the documents
+into chunks, turns each into a 1024-number vector of its meaning, and stores both in a Feast feature view, where
+policy-rag's `search_policy` finds the chunks closest to a question and card-data's `get_policy_chunk` reads one by id.
+CI/CD: [cicd.md](../operations/cicd.md#rag-data-pipeline).
 
 | | |
 |---|---|
-| Code | [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py), [`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py), [`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo_kb) |
+| Code | [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py), [`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py), [`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb) |
 | Runs on | compose profile `orch` (Airflow); each task is a container of the ml image `ghcr.io/cvinhnguyen/fraud-ml-train:<commit>`, started through `docker-proxy`; the embedding server (Qwen3-Embedding-0.6B on llama.cpp) on the host |
 | Reads | `s3://bank-documents/*.md` (5 markdown files) |
 | Writes | Feast project `card_support_kb`: offline history `s3://lakehouse/kb/policy_chunks.parquet`, online store pgvector (`vector-db`); validation reports `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json`; assertions and lineage in DataHub |
@@ -19,17 +17,12 @@ The CI/CD pipeline that releases it is in [cicd.md](../operations/cicd.md#rag-da
 
 ## Where it fits
 
-The pipeline is the K flow of the Layer 3 picture ([architecture.md](../architecture.md#system-diagram-layer-3)).
-It reads the five bank documents from the bucket `bank-documents` and calls the embedding server on the host
-([llm_platform.md](llm_platform.md)). It writes the chunks and their vectors to the Feast project
-`card_support_kb`: the history to the lakehouse, the latest version to pgvector, which the policy-rag and card-data
-tool servers read ([agents.md](agents.md)). Its checks and lineage go to DataHub
-([datahub.md](../data-platform/datahub.md)). The Jenkins pipeline `rag-pipeline` releases a new image of the steps
-and starts the DAG ([cicd.md](../operations/cicd.md#rag-data-pipeline)).
+- The K flow of the Layer 3 picture ([architecture.md](../architecture.md#system-diagram-layer-3)).
+- Fed by the five documents in bucket `bank-documents` and the host's embedding server ([llm_platform.md](llm_platform.md)); started by the Jenkins pipeline `rag-pipeline` ([cicd.md](../operations/cicd.md#rag-data-pipeline)).
+- Writes Feast project `card_support_kb` (history to the lakehouse, latest to pgvector), read by the policy-rag and card-data tool servers ([agents.md](agents.md)).
+- Sends its checks and lineage to DataHub ([datahub.md](../data-platform/datahub.md)).
 
 ## How it works
-
-The DAG `rag_ingest`, from the documents to the stores and DataHub:
 
 ```mermaid
 flowchart LR
@@ -43,26 +36,21 @@ flowchart LR
     v -->|"assertions + lineage"| dh["DataHub"]
 ```
 
-1. Someone changes a document or the code. The CI pipeline builds a new image, sets the Airflow Variable
-   `rag_image` and starts the DAG. The DAG has no schedule of its own.
-2. `chunk_documents` cuts each document into chunks: one per numbered clause, one per section without clauses (the
-   fee tables), one per FAQ question. The document title and the section heading stay in the text, so a chunk makes
-   sense on its own.
-3. `embed_chunks` sends every chunk to the embedding server and gets a 1024-number vector back. Chunks with a
-   similar meaning get similar vectors, which is how a question finds its chunks later.
-4. `write_feature_store` appends the chunks to the offline history and writes them to the online store (pgvector),
-   both through Feast.
-5. `validate_rag` runs 7 checks on what was written and sends the results to DataHub. One failed check fails the
-   run, so a broken knowledge base shows in Airflow, although the agents can already read its chunks
-   ([Gotchas](#gotchas)).
-6. Each task runs as a container of the ml image, and the tasks hand each other S3 paths, never data
-   ([Steps](#steps)).
+1. A document or code change makes CI build a new image, set the Airflow Variable `rag_image` and start the DAG,
+   which has no schedule of its own.
+2. `chunk_documents` makes one chunk per numbered clause, per section without clauses (the fee tables) and per FAQ
+   question, keeping the document title and section heading in the text so a chunk stands alone ([Chunking](#chunking)).
+3. `embed_chunks` gets a 1024-number vector per chunk from the embedding server; similar meanings get similar vectors,
+   which is how a question finds its chunks.
+4. `write_feature_store` appends the chunks to the offline history and writes them to pgvector, both through Feast.
+5. `validate_rag` runs 7 checks on what was written and sends them to DataHub; one failure fails the run, though the
+   chunks are already readable ([Gotchas](#gotchas)).
+6. Each task is a container of the ml image, and tasks hand each other S3 paths, never data ([Steps](#steps)).
 
 ## Run it
 
 Start the embedding server on the host first ([llm_platform.md](llm_platform.md#start-the-model-servers)). On this
-machine the kind cluster stays stopped while Airflow and
-DataHub run, because the Docker VM has 8 GB:
+machine the kind cluster stays stopped while Airflow and DataHub run, because the Docker VM has 8 GB:
 
 ```bash
 # Airflow (orch) + DataHub (gov) + the stores; Kafka for DataHub
@@ -71,32 +59,28 @@ docker compose -f infra/docker-compose.yaml --profile core --profile ml --profil
 docker exec airflow-scheduler airflow dags trigger rag_ingest       # or the CI pipeline, which also sets rag_image
 ```
 
-Without DataHub (`DATAHUB_ENABLED=false`, as in the CI run) the checks still gate the run; only the publication to
-DataHub is skipped.
+Without DataHub (`DATAHUB_ENABLED=false`, as in CI) the checks still gate the run; only their publication is skipped.
 
 ## Steps
 
-The DAG
-([`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py))
-has no schedule: it runs when the documents or the code change, started by CI. Each task runs one step of
-[`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py)
-as a container of the ml image ([`pipelines/airflow/dags/rag_ingest.py`
-L55-L73](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py#L55-L73)),
-and the steps hand each other S3 paths, never data.
+Each task of the DAG
+([`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py))
+runs one step of
+[`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py)
+in a container of the ml image ([rag_ingest.py L56-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L56-L74)).
 
 | Task | What it does |
 |---|---|
-| `chunk_documents` | reads `s3://bank-documents/*.md` (uploaded by `generator/load_source.py --part documents` from [`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/generator/knowledge)); chunks it as in step 2 of [How it works](#how-it-works), with chunk ids such as `card_terms#4.2` |
-| `embed_chunks` | sends every chunk to the embedding server (OpenAI-compatible `/v1/embeddings`, Qwen3-Embedding-0.6B on the host, connection `llm_embeddings`), 1024-number vectors ([`ml/jobs/rag_ingest.py` L79-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L79-L89)) |
-| `write_feature_store` | Feast project `card_support_kb` ([`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo_kb)): appends the chunks to the offline history (the Parquet FileSource) and writes them to the online store, Postgres with pgvector (`vector-db`) ([`ml/jobs/rag_ingest.py` L108-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L108-L123)) |
-| `validate_rag.run_checks` | 7 checks on what was written, in the same report format as the Layer 1 validate stages |
-| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, and fails the run if one failed ([`pipelines/airflow/dags/common.py` L125-L145](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/common.py#L125-L145)) |
+| `chunk_documents` | reads `s3://bank-documents/*.md` (uploaded by `generator/load_source.py --part documents` from [`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/knowledge)) and chunks it as in [How it works](#how-it-works), with ids such as `card_terms#4.2` |
+| `embed_chunks` | OpenAI-compatible `/v1/embeddings` on the host (Qwen3-Embedding-0.6B, connection `llm_embeddings`), 1024-number vectors ([`ml/jobs/rag_ingest.py` L79-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L79-L89)) |
+| `write_feature_store` | Feast project `card_support_kb` ([`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb)): offline history (the Parquet FileSource) and online store, Postgres with pgvector (`vector-db`) ([rag_ingest.py L108-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L108-L123)) |
+| `validate_rag.run_checks` | 7 checks, in the report format of the Layer 1 validate stages |
+| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, fails the run if one failed ([`pipelines/airflow/dags/common.py` L150-L170](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/common.py#L150-L170)) |
 
 ### Chunking
 
-How `chunk_documents` cuts one document
-([`ml/jobs/rag_ingest.py`
-L46-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L46-L63)):
+`chunk_documents` on one document
+([rag_ingest.py L46-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L46-L63)):
 
 ```python
 def split_document(doc: str, text: str) -> list[dict]:
@@ -122,39 +106,37 @@ def split_document(doc: str, text: str) -> list[dict]:
 ### Run on 2026-10-21
 
 Run `docs-1792579215` on 2026-10-21, started through the Airflow REST API: `chunk_documents` 3.1 s, `embed_chunks`
-4.9 s, `write_feature_store` 7.1 s, `validate_rag.run_checks` 6.1 s, `validate_rag.publish_results` 1.1 s. The CI
-release of the same DAG (rag-pipeline #2) is in [cicd.md](../operations/cicd.md#rag-data-pipeline). The graph of that
-run in Airflow, every task green:
+4.9 s, `write_feature_store` 7.1 s, `validate_rag.run_checks` 6.1 s, `validate_rag.publish_results` 1.1 s. Its CI
+release (rag-pipeline #2) is in [cicd.md](../operations/cicd.md#rag-data-pipeline):
 
 ![Airflow graph of rag_ingest run docs-1792579215: chunk_documents, embed_chunks, write_feature_store and validate_rag all success](../images/rag_airflow_graph.png)
 
 ## Feature view and retrieval
 
-The feature view `policy_chunks` (entity `chunk_id`) holds `document`, `section`, `text` and `embedding` (a
-1024-number vector, cosine distance, vector index on;
+The feature view `policy_chunks` (entity `chunk_id`) holds `document`, `section`, `text` and `embedding` (1024
+numbers, cosine distance, vector index on;
 [`ml/feature_repo_kb/kb_features.py`
-L26-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo_kb/kb_features.py#L26-L41)).
-The policy-rag MCP server embeds a question with Qwen3-Embedding's query instruction, asks the online store for the
-nearest candidates, reads them by id and ranks them by its own cosine similarity
+L26-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb/kb_features.py#L26-L41)).
+policy-rag embeds a question with Qwen3-Embedding's query instruction, asks the online store for the nearest
+candidates, reads them by id and ranks them by its own cosine similarity
 ([`services/card_support_mcp/app/service.py`
-L68-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/service.py#L68-L75)).
+L68-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/service.py#L68-L75)).
 
 ## Data governance
 
-The pipeline follows the same rules as the Layer 1 pipelines ([airflow.md](../data-platform/airflow.md),
-[datahub.md](../data-platform/datahub.md)).
+Same rules as the Layer 1 pipelines ([airflow.md](../data-platform/airflow.md),
+[datahub.md](../data-platform/datahub.md)):
 
 | Rule | How |
 |---|---|
-| Quality gate | 7 checks after every write: at least 20 chunks (57), unique `chunk_id`, no empty text, text length at least 20, embedding dimension 1024, every document has chunks, online store identical to the offline history (57/57). One failure fails the run, so a broken knowledge base is visible in Airflow; its chunks are already online by then ([Gotchas](#gotchas)) |
-| Validation history | every report is kept at `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json` and sent to DataHub as assertion results on `card_support_kb.policy_chunks` |
-| Lineage | each task declares inlets and outlets; the DataHub Airflow plugin turns them into lineage: the 5 documents, `chunk_documents`, the staging chunks, `embed_chunks`, `write_feature_store`, the offline history and the feature view, then the validate task |
-| Secrets | the DAG holds none: store passwords and the embedding key come from Airflow connections (`feast_registry`, `feast_kb_online`, `llm_embeddings`, `lakehouse_s3`), which Airflow masks in logs and rendered templates ([`pipelines/airflow/dags/rag_ingest.py` L30-L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py#L30-L36)) |
-| Code provenance | the image a task runs is the Airflow Variable `rag_image`, set only by the CI release; the DAG refuses anything that is not the ml code image (the GHCR release, or the local build `fraud/ml-train`) ([`pipelines/airflow/dags/rag_ingest.py` L40-L45](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/rag_ingest.py#L40-L45)), and Airflow starts containers through `docker-proxy`, which allows the container API and denies exec, build and volumes (Airflow has no Docker socket) |
+| Quality gate | 7 checks after every write: at least 20 chunks (57), unique `chunk_id`, no empty text, text length at least 20, embedding dimension 1024, every document has chunks, online store identical to the offline history (57/57); one failure fails the run ([Gotchas](#gotchas)) |
+| Validation history | each report at `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json`, and as assertion results on `card_support_kb.policy_chunks` in DataHub |
+| Lineage | the tasks' inlets and outlets, turned into lineage by the DataHub Airflow plugin: the 5 documents, `chunk_documents`, the staging chunks, `embed_chunks`, `write_feature_store`, the offline history and the feature view, then the validate task |
+| Secrets | none in the DAG: store passwords and the embedding key come from Airflow connections (`feast_registry`, `feast_kb_online`, `llm_embeddings`, `lakehouse_s3`), masked in logs and rendered templates ([`pipelines/airflow/dags/rag_ingest.py` L31-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L31-L37)) |
+| Code provenance | tasks run the image in Airflow Variable `rag_image`, set only by the CI release; the DAG refuses anything but the ml code image (the GHCR release, or the local build `fraud/ml-train`) ([rag_ingest.py L41-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L41-L46)); Airflow starts containers through `docker-proxy`, which allows the container API and denies exec, build and volumes (Airflow has no Docker socket) |
 
-The 7 checks of `validate_rag.run_checks`, the last one reading every chunk back from the online store
-([`ml/jobs/rag_ingest.py`
-L141-L158](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/rag_ingest.py#L141-L158)):
+The 7 checks of `validate_rag.run_checks`, the last reading every chunk back from the online store
+([rag_ingest.py L141-L158](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L141-L158)):
 
 ```python
     online = FeatureStore(repo_path=os.environ["FEAST_KB_REPO"]).get_online_features(
@@ -177,33 +159,31 @@ L141-L158](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac5
     ]
 ```
 
-The validate task's log of run `docs-1792579215` shows the 7 checks, all `ok` (57 rows, 57/57 chunks identical
-online), and the 7 assertion results sent to DataHub:
+In run `docs-1792579215` all 7 checks were `ok` (57 rows, 57/57 chunks identical online), and 7 assertion results
+went to DataHub:
 
 ![Airflow log of validate_rag.publish_results: 7 checks ok, 57 rows, 57/57 chunks identical online, 7 assertion results sent to DataHub](../images/rag_airflow_checks.png)
 
-In DataHub, the lineage of the feature view: the five documents, the three tasks, the feature view and the validate
-task:
+The feature view's lineage in DataHub:
 
 ![DataHub lineage of card_support_kb.policy_chunks: the five documents, the three tasks, the feature view and the validate task](../images/rag_datahub_lineage.png)
 
-The assertions on `card_support_kb.policy_chunks` in DataHub, all 7 passing in the last run:
+Its assertions, all 7 passing in the last run:
 
 ![DataHub Quality tab of card_support_kb.policy_chunks: the 7 assertions, all passing in the last run](../images/rag_datahub_assertions.png)
 
 ## Gotchas
 
-- The checks run after the write, so the chunks of a run that fails its checks are already in the online store that
-  policy-rag reads. The run fails in Airflow and its checks show in DataHub, but the agents read those chunks until a
-  good run replaces them. Writing to a staging view first and switching after the checks would close that gap.
-- Feast 0.66's `retrieve_online_documents_v2(...).to_df()` can put the wrong text and vector next to a `chunk_id`
-  (the id column keeps the database's rank order, the feature columns another order). The policy-rag server uses it
-  only for candidate ids
+- The agents can read chunks from a run that failed its checks: the checks run after the write, so the chunks are
+  already in the online store, until a good run replaces them. Writing to a staging view and switching after the
+  checks would close that gap.
+- Feast 0.66's `retrieve_online_documents_v2(...).to_df()` can pair the wrong text and vector with a `chunk_id` (the
+  id column keeps the database's rank order, the feature columns another). policy-rag uses it only for candidate ids
   ([`services/card_support_mcp/app/clients.py`
-  L63-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/clients.py#L63-L72)),
-  reads the features by id and ranks them itself ([`services/card_support_mcp/app/logic.py`
-  L45-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/services/card_support_mcp/app/logic.py#L45-L50)).
-- The embedding model is the one the policy-rag server uses for questions; changing it means re-running the pipeline,
-  or the question vectors and the stored vectors stop matching.
+  L68-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/clients.py#L68-L77)),
+  then reads the features by id and ranks them itself ([`services/card_support_mcp/app/logic.py`
+  L45-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/logic.py#L45-L50)).
+- After a change of the embedding model, question vectors and stored vectors stop matching: the pipeline and
+  policy-rag must use the same model, so re-run the pipeline.
 
 Coursework rubric: A9 (C9, C10).

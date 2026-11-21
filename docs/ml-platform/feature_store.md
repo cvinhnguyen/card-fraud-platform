@@ -1,14 +1,13 @@
 # Feature store (Feast)
 
-If training computes "spend over the last 30 days" one way and the Scoring API another, the model sees numbers in
-production that it never learned from. The feature store removes that risk: the 20 features are defined once in one
-Feast repository, and that one definition is read two ways, from the offline store (the Delta tables of the
-lakehouse, read with Spark) to build training sets, and from the online store (Redis) when the Scoring API scores a
-payment in milliseconds. The platform runs Feast 0.66 with a SQL registry in Postgres (`ml-db`, database `feast`).
+The feature store defines the model's 20 features once, in one Feast repository, and serves them two ways: the
+offline store (the lakehouse's Delta tables, read with Spark) builds training sets, and the online store (Redis)
+answers the Scoring API in milliseconds. One definition means production never computes "spend over the last 30
+days" differently from training. It runs Feast 0.66 with a SQL registry in Postgres (`ml-db`, database `feast`).
 
 | | |
 |---|---|
-| Code | [`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo), [`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py), [`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/feast_materialize.py) |
+| Code | [`ml/feature_repo/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo), [`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/push_job.py), [`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/feast_materialize.py) |
 | Runs on | a library inside the Scoring API, the push jobs, Airflow, Jupyter and the training pipeline's pods; push jobs `push-online` / `push-offline`: always-on containers in compose profile `ml`, deployed by Jenkins; materialization: Airflow DAG `feast_materialize` |
 | Reads | `gold.feat_card_txn_stats_daily`, `gold.dim_card`, Kafka `card_features_rt` and `card_device_seen` |
 | Writes | Redis online store; `gold.feat_card_auth_rt` and `gold.feat_card_device` (`push-offline`) |
@@ -16,19 +15,18 @@ payment in milliseconds. The platform runs Feast 0.66 with a SQL registry in Pos
 
 ## Where it fits
 
-Feast is the hand-over between Layers 1 and 2 in the
-[overview](../architecture.md#the-hand-over-feast): Layer 1 (data platform) writes the features into it and Layer 2
-(ML platform) reads them. Features come in from three places and go out to two:
+Feast is the hand-over between Layers 1 and 2 in the [overview](../architecture.md#the-hand-over-feast): Layer 1
+(data platform) writes the features, Layer 2 (ML platform) reads them.
 
-| In or out | What | Through |
-|---|---|---|
-| in, daily | per-card statistics over 30, 90 and 180 days (`gold.feat_card_txn_stats_daily`) | DP3, the feature pipeline ([spark_jobs.md](../data-platform/spark_jobs.md#dp3-features)), then the incremental materialize pipeline copies the newest row per card into Redis |
-| in, realtime | counts and sums over the last 10 minutes and hour, and the first use of a device | Flink ([flink_jobs.md](../data-platform/flink_jobs.md)) writes them to Kafka; two push jobs write them on into Redis and Delta |
-| in, static | the card's profile (`gold.dim_card`: issue date, type, network) | dbt, in DP2 |
-| out, training | point-in-time correct training rows | the training pipeline and the notebook ([ml_training.md](ml_training.md)) |
-| out, serving | the 20 features of one card, now | the Scoring API ([serving.md](serving.md)) and Layer 3's card-data MCP server ([agents.md](../llm-platform/agents.md)) |
+- In, daily: per-card statistics over 30, 90 and 180 days (`gold.feat_card_txn_stats_daily`) from DP3
+  ([spark_jobs.md](../data-platform/spark_jobs.md#dp3-features)).
+- In, realtime: counts and sums over the last 10 minutes and hour, and a device's first use, from Flink
+  ([flink_jobs.md](../data-platform/flink_jobs.md)) via Kafka and two push jobs.
+- In, static: the card's profile (`gold.dim_card`: issue date, type, network) from dbt, in DP2.
+- Out: point-in-time correct training rows ([ml_training.md](ml_training.md)), and one card's 20 features now for the
+  Scoring API ([serving.md](serving.md)) and Layer 3's card-data MCP server ([agents.md](../llm-platform/agents.md)).
 
-How the features flow into Feast and out to training and serving:
+How the features flow:
 
 ```mermaid
 flowchart LR
@@ -45,26 +43,23 @@ flowchart LR
 
 ## How it works
 
-1. Definitions. `ml/feature_repo/` declares the entities (card, device), the sources (Delta tables and push
-   sources), the feature views and the feature service `fraud_model_v1`, the exact list of 20 features the model
-   uses. `feast apply` stores them in the registry.
-2. Daily features. Each night DP3 writes one row per card for the day it was active. When DP3's checks pass, it
-   emits the Airflow dataset event `lakehouse://features`. The incremental materialize pipeline is scheduled on that
-   event: it loads the rows newer than its last run into Redis and reads a sample back to check them.
-3. Realtime features. Flink computes them for every payment within seconds and writes them to Kafka. `push-online`
-   reads the two topics and writes each batch into Redis through Feast push; `push-offline` appends the same rows
-   to Delta tables, the offline copy that training reads. Both commit their Kafka offsets only after the write, so a
-   crash repeats the last batch instead of losing it.
-4. Training reads the offline store with a point-in-time join: every labelled
-   payment gets the feature values as they were just before it.
-5. Serving reads the online store: the Scoring API asks Feast for the card's 20 features, and Feast computes the
-   on-demand features (ages, ratios) from the stored values and the request, the same code as in training.
+1. Definitions: `ml/feature_repo/` declares the entities (card, device), the sources (Delta tables and push
+   sources), the feature views and the feature service `fraud_model_v1` (the model's 20 features); `feast apply`
+   stores them in the registry ([Feature views](#feature-views)).
+2. Daily: each night DP3 writes one row per card active that day and, once its checks pass, emits the Airflow dataset
+   event `lakehouse://features`; the incremental materialize pipeline then loads the newer rows into Redis and checks
+   a sample ([Pipelines](#pipelines)).
+3. Realtime: Flink computes them per payment within seconds into Kafka; `push-online` writes each batch into Redis
+   through Feast push, and `push-offline` appends the same rows to Delta for training ([Pipelines](#pipelines)).
+4. Training reads the offline store with a point-in-time join: each labelled payment gets the feature values as they
+   were just before it ([Train / serve consistency](#train--serve-consistency)).
+5. Serving reads the online store, and Feast computes the on-demand features (ages, ratios) from the stored values
+   and the request with the training code ([TTL](#ttl)).
 
 ## Run it
 
-First run DP2 (silver and gold) and DP3 (features), so the gold and feature tables exist. `feast apply` also needs
-the push-source Delta tables, which `push-offline` creates empty on its first run ([Gotchas](#gotchas)). Then, with
-the `ml` profile:
+Prerequisites: DP2 (silver and gold) and DP3 (features) have run, and `push-offline` has created its Delta tables
+([Gotchas](#gotchas)). With the `ml` profile:
 
 ```bash
 docker compose -f infra/docker-compose.yaml --profile core --profile ml up -d
@@ -74,18 +69,16 @@ docker compose -f infra/docker-compose.yaml exec notebook feast -c /opt/ml/featu
 docker compose -f infra/docker-compose.yaml --profile ml up -d push-online push-offline         # the two push jobs
 ```
 
-Replace `<ds+1>` with the day after the last feature date (`YYYY-MM-DD`).
-
-After the bootstrap, the daily materialization needs no command: DAG `feast_materialize` runs on DP3's dataset event
-([airflow.md](../data-platform/airflow.md)).
+Replace `<ds+1>` with the day after the last feature date (`YYYY-MM-DD`). After the bootstrap, DAG
+`feast_materialize` runs daily on DP3's dataset event ([airflow.md](../data-platform/airflow.md)).
 
 ## Feature views
 
-The views are defined in
+The views are in
 [`ml/feature_repo/fraud_features.py`
-L46-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py#L46-L72),
-the on-demand view in [`ml/feature_repo/fraud_features.py`
-L80-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py#L80-L120):
+L46-L72](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py#L46-L72),
+the on-demand view in [`fraud_features.py`
+L80-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py#L80-L120):
 
 | View | Source | Key | TTL (time to live) | Written by |
 |---|---|---|---|---|
@@ -96,28 +89,27 @@ L80-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac59
 | `fraud_request_features` | on demand: the request + the four views | | | computed per request (pandas) |
 
 Feature service `fraud_model_v1` = 7 daily stats + the 13 on-demand features
-([`ml/feature_repo/fraud_features.py`
-L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py#L123-L128)).
-The model is trained on exactly this list and the API asks for exactly this list, so the two cannot drift apart: a model
-with other inputs gets `fraud_model_v2`.
+([`fraud_features.py`
+L123-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py#L123-L128)).
+The model trains on and the API asks for exactly this list, so they cannot drift apart; a model with other inputs
+gets `fraud_model_v2`.
 
 ## TTL
 
-TTL is how old a stored value may be and still describe the card. It bounds the point-in-time join (training) and the
-materialization window. Online reads ignore it: the Redis lookup returns the stored value however old it is, and that
-one Feast behaviour drives every choice below. Anything the model must see "aged" is therefore computed in the
-on-demand view from the value's own timestamp, so training and serving age it the same way.
+TTL is how old a stored value may be and still describe the card. It bounds the point-in-time join and the
+materialization window, but online reads ignore it, so anything the model must see "aged" is computed in the
+on-demand view from the value's own timestamp, the same way in training and serving.
 
 | View | TTL | Why |
 |---|---|---|
-| daily stats | none (`timedelta(0)`) | the newest row is the card's history however old it is; a card idle for 5 months still has a 180-day dispute count. Its age is a feature (`days_since_last_active`, from `stats_ts`) instead of a cut-off |
+| daily stats | none (`timedelta(0)`) | the newest row is the card's history however old (a card idle for 5 months still has a 180-day dispute count); its age is a feature (`days_since_last_active`, from `stats_ts`) |
 | card profile | none | issue date, type, network never change |
-| realtime | 1 h, the longest window | the join drops older rows (NULL). Online the stored row stays, so the on-demand view turns a value older than its own window (10 min or 1 h, from `rt_ts`) into 0 and NULL into 0: "no authorization in the window". Both paths give the model the same number |
+| realtime | 1 h, the longest window | the join drops older rows (NULL); online the row stays, so the on-demand view turns NULL and a value older than its window (10 min or 1 h, from `rt_ts`) into 0, "no authorization in the window", in both paths |
 | card device | none | "this card has used this device before" never expires |
 
-The ageing in the on-demand view, from each value's own timestamp
-([`ml/feature_repo/fraud_features.py`
-L103-L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py#L103-L111)):
+The ageing in the on-demand view
+([`fraud_features.py`
+L103-L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py#L103-L111)):
 
 ```python
     # Realtime values were computed at the card's previous authorization: "now" they still hold only within their
@@ -135,37 +127,34 @@ L103-L111](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac5
 
 Three decisions keep the training rows identical to what the API sees:
 
-1. Entity timestamp = payment time - 1 ms. When the API scores a payment, Flink has not processed it yet: the
-   online store holds features of the *previous* authorizations. Training joins at `txn_ts - 1 ms`
+1. Entity timestamp = payment time - 1 ms. When the API scores a payment Flink has not processed it, so the online
+   store holds the *previous* authorizations' features; training joins at `txn_ts - 1 ms`
    ([`ml/fraud_ml/data.py`
-   L105-L108](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/fraud_ml/data.py#L105-L108)),
-   so the point-in-time join also excludes the payment itself.
-2. DP3 rows land the night after the activity. A row for day L has `event_timestamp = L + 1` and windows that
-   end at L
-   ([`pipelines/spark/build_features.py`
-   L69-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/spark/build_features.py#L69-L70)).
-   A payment on day L+1 sees the stats up to L, which is what Redis holds that day (materialized after DP3 of L). An
-   earlier layout of Layer 1 wrote one row on each day D the card *paid*, with windows ending at D-1, so that row
-   existed only because of the payment being scored. Training and serving would then have disagreed: for a card that
-   last paid 20 days ago, training would have seen windows ending yesterday, while serving had the row of 20 days ago,
-   whose 30-day window covers other days.
-3. Streaming features for history come from replaying history (Kappa). The full authorization history is
-   replayed through the same Flink jobs and `push-offline`, so the offline rows were produced by the code that produces
-   the online ones, and there is no second implementation in Spark to keep equal.
+   L107-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/fraud_ml/data.py#L107-L110)),
+   which also keeps the payment itself out of the join.
+2. DP3 rows land the night after the activity: a row for day L has `event_timestamp = L + 1` and windows that end at
+   L ([`pipelines/spark/build_features.py`
+   L69-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/build_features.py#L69-L70)).
+   A payment on day L+1 sees the stats up to L, as Redis does that day (materialized after DP3 of L). An earlier
+   Layer 1 layout wrote a row only on each day D the card *paid* (windows ending at D-1), so for a card that last paid
+   20 days ago training saw windows ending yesterday, while serving had the 20-day-old row, whose 30-day window
+   covers other days.
+3. History's streaming features come from replaying history (Kappa) through the same Flink jobs and `push-offline`:
+   one code path for offline and online rows, no second Spark implementation to keep equal.
 
 ## Pipelines
 
 | What | How | When |
 |---|---|---|
-| Daily stats to Redis | incremental materialize pipeline, DAG `feast_materialize` ([`pipelines/airflow/dags/feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/pipelines/airflow/dags/feast_materialize.py), [run of 2026-11-12](#materialize-run-on-2026-11-12)): `feast materialize-incremental <day+1>` then `ml/tools/check_online.py` (sample of cards active on the business day read back from Redis, values compared with Delta); the day comes from the dataset event | dataset event `lakehouse://features`, emitted by DP3 |
-| Streaming to Redis | `push-online` (`ml/jobs/push_job.py --to online`), consumer group per job, offsets committed after the write | continuous |
-| Streaming to Delta | `push-offline` (`--to offline`), `deltalake` append (Feast's Spark offline push appends plain Parquet next to the Delta log, which Delta readers ignore) | continuous; `--until-idle` for the backfill |
+| Daily stats to Redis | DAG `feast_materialize` ([`feast_materialize.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/feast_materialize.py), [run of 2026-11-12](#materialize-run-on-2026-11-12)): `feast materialize-incremental <day+1>` (day from the dataset event), then `ml/tools/check_online.py` compares a sample of the day's active cards in Redis with Delta | dataset event `lakehouse://features` from DP3 |
+| Streaming to Redis | `push-online` (`ml/jobs/push_job.py --to online`), one consumer group per job, offsets committed after the write | continuous |
+| Streaming to Delta | `push-offline` (`--to offline`), `deltalake` append (Feast's Spark offline push writes plain Parquet next to the Delta log, which Delta readers ignore) | continuous; `--until-idle` for the backfill |
 | Definitions | `feast apply` from `ml/feature_repo/` | after a change |
-| Bootstrap | `feast materialize 2000-01-01T00:00:00 <ds+1>T00:00:00` once: the first `materialize-incremental` of a view without TTL only looks back a limited window, which would skip `card_profile` rows (stamped at the card's issue date) and cards idle for a long time | once, before the first daily run |
+| Bootstrap | `feast materialize 2000-01-01T00:00:00 <ds+1>T00:00:00`: a first `materialize-incremental` of a view without TTL looks back a limited window and would skip `card_profile` rows (stamped at the issue date) and long-idle cards | once, before the first daily run |
 
-The write-then-commit loop of the push jobs, which makes delivery at-least-once
-([`ml/jobs/push_job.py`
-L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py#L113-L122)):
+The push jobs' write-then-commit loop makes delivery at-least-once: a crash repeats the last batch instead of losing
+it ([`push_job.py`
+L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/push_job.py#L113-L122)):
 
 ```python
         if full or (now - last_flush >= max_wait_s and any(pending.values())):
@@ -180,29 +169,28 @@ L113-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac5
             last_flush = now
 ```
 
-The two push jobs are always-on containers `push-online` and `push-offline` in compose profile `ml`, both running
-[`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/push_job.py)
-from the ml code image (`ghcr.io/cvinhnguyen/fraud-ml-train:<commit>` after a release). Their own CI pipeline, the Jenkins pipeline `stream-feature-jobs`
-([`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/jobs/Jenkinsfile.stream),
-[cicd.md](../operations/cicd.md#stream-feature-jobs)), deploys them: unit tests, the ml image, `push-online` and
-`push-offline` recreated on it, then a smoke test that sends one marked message to Kafka and waits for it in both
-stores. Build #2: `ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s (s3://lakehouse/gold/feat_card_auth_rt)`. The Jenkins
-stage view of that build:
+Both push jobs run
+[`ml/jobs/push_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/push_job.py)
+from the ml code image (`ghcr.io/cvinhnguyen/fraud-ml-train:<commit>` after a release). Jenkins pipeline
+`stream-feature-jobs`
+([`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/Jenkinsfile.stream),
+[cicd.md](../operations/cicd.md#stream-feature-jobs)) tests, builds and pushes the image, recreates both jobs on it,
+and sends one marked message to Kafka that must reach both stores. Build #2 printed
+`ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s (s3://lakehouse/gold/feat_card_auth_rt)`:
 
 ![Jenkins stage view of stream-feature-jobs: build #2 ran tests, image, deploy and the online + offline smoke test](../images/cicd_stream-feature-jobs.png)
 
 ### Materialize run on 2026-11-12
 
-DP3's `lakehouse://features` dataset event (Airflow shows it as `lakehouse://features/`) started this run for
-business day 2026-11-08. It ran `materialize-incremental` to 2026-11-09, then `check_online` over 200 cards active
-that day: 0 missing online, 0 stale. The long red bar in the grid is a run left over from October, stopped by hand:
+DP3's dataset event `lakehouse://features` (Airflow shows `lakehouse://features/`) started this run for business
+day 2026-11-08: `materialize-incremental` to 2026-11-09, then `check_online` over 200 cards active that day, 0
+missing online, 0 stale. The long red bar is an October run, stopped by hand:
 
 ![Airflow feast_materialize, run of 2026-11-12 13:11, started by the dataset lakehouse://features/: materialize_incremental, then check_online, both success](../images/airflow_feast_materialize.png)
 
 ## Kappa backfill (history of the streaming features)
 
-The streaming features of the whole history are rebuilt from the start of the topic, Flink first and the push jobs
-after it:
+History's streaming features are rebuilt from the start of the topic, Flink first, the push jobs after:
 
 ```bash
 # empty topics card_authorizations / card_features_rt / card_device_seen, landing, bronze.raw_card_authorizations,
@@ -214,9 +202,8 @@ docker exec flink-jobmanager flink run -d -py /opt/flink/jobs/raw_landing.py --t
 docker compose -f infra/docker-compose.yaml --profile ml up -d push-online push-offline   # after Flink: catch up
 ```
 
-The 8,119,499 authorizations gave 7,999,526 feature rows and 214,808 first (card, device) pairs. The dedup dropped
-the other 119,973 (1.48%), which are network retries. The producer needs 111 s. Flink is the slow part, and it took
-three runs to reach a steady rate:
+The 8,119,499 authorizations gave 7,999,526 feature rows and 214,808 first (card, device) pairs; the dedup dropped
+the other 119,973 (1.48%), network retries. The producer needs 111 s; Flink took three runs to reach a steady rate:
 
 | Run | Setting | Rate of `rt_features` |
 |---|---|---|
@@ -224,38 +211,36 @@ three runs to reach a steady rate:
 | 2 | 8 slots (4 GB TaskManager), parallelism 5, state cache 200k keys | 1,020 events/s for 2 minutes, then the 8 GB Docker VM swapped (91 MB free, 2.2 GB swap) and it nearly stopped |
 | 3 | 6 slots (3.5 GB), parallelism 4, state cache 30k keys, push jobs started only after Flink | ~870 events/s, steady (~2.5 h) |
 
-Each element of a PyFlink function crosses to a Python worker, and one worker uses one core, so the job scales with
-parallelism (state is keyed by card) until memory runs out: every slot adds a Python process (~0.3 GB). The state
-cache only needs to hold the keys of one worker (130k cards / 4).
+Each PyFlink element crosses to a one-core Python worker, so the job scales with parallelism (state is keyed by
+card) until memory runs out, each slot adding a Python process (~0.3 GB). The state cache needs only one worker's
+keys (130k cards / 4).
 
 ## Gotchas
 
-- Live Flink jobs need checkpoint storage. Bounded backfill runs never checkpoint; the live `rt_features`
-  checkpoints every 10 s (offsets are committed on checkpoints), and by default into JobManager memory, capped at
-  5 MB. Its state (card histories + dedup ids) passed that during the replay of the live period
-  ([drift.md](drift.md#gotchas)):
-  `Size of the state is larger than the maximum permitted memory-backed state. Size=5380688, maxSize=5242880`,
-  25 failed checkpoints, then a restart loop
-  that looked like a slow job (lag 24k events). `execution.checkpointing.storage: filesystem` with
-  `execution.checkpointing.dir: s3://lakehouse/flink/checkpoints` in the cluster config
+- `Size of the state is larger than the maximum permitted memory-backed state. Size=5380688, maxSize=5242880`, 25
+  failed checkpoints and a restart loop that looked like a slow job (lag 24k events), on the live `rt_features`
+  during the live-period replay ([drift.md](drift.md#gotchas)). Bounded backfills never checkpoint; the live job
+  checkpoints every 10 s (offsets commit on checkpoints), by default into JobManager memory capped at 5 MB, which its
+  state (card histories + dedup ids) passed. The fix is checkpoint storage:
+  `execution.checkpointing.storage: filesystem` with `execution.checkpointing.dir: s3://lakehouse/flink/checkpoints`
+  in the cluster config
   ([`infra/docker-compose.yaml`
-  L313-L316](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/docker-compose.yaml#L313-L316))
-  fixed it: checkpoints of ~2 MB on S3, ~270 events/s.
-- `raw_landing.py` always started at the earliest offset, so landing the live period would have landed the 8.1M
-  history events again; `--from-ms` starts at a Kafka timestamp instead (the producers stamp event time). The
-  always-on `--live` mode resumes from the committed offsets of group `raw_landing`, so a restart does not land the
-  history again.
-- `SparkSource(file_format=...)` accepts only csv / json / parquet / avro: a Delta table is
+  L341-L344](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L341-L344)):
+  checkpoints of ~2 MB on S3, ~270 events/s.
+- Landing the live period would have relanded the 8.1M history events: `raw_landing.py` always started at the
+  earliest offset. `--from-ms` starts at a Kafka timestamp (producers stamp event time), and the always-on `--live`
+  mode resumes from group `raw_landing`'s committed offsets, so a restart does not reland history.
+- `SparkSource(file_format=...)` accepts only csv / json / parquet / avro; a Delta table is
   `file_format="parquet", table_format=DeltaFormat()`
-  ([`ml/feature_repo/fraud_features.py`
-  L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/ml/feature_repo/fraud_features.py#L39-L43)).
-- The on-demand view runs from the source text stored in the registry: module-level helpers and imports are not
-  there at run time (`NameError`). The function is self-contained.
-- `feast apply` infers schemas by reading the sources: the push-source Delta tables must exist first (`push-offline`
-  creates them empty on its first run).
+  ([`fraud_features.py`
+  L39-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py#L39-L43)).
+- `NameError` in the on-demand view: it runs from the source text in the registry, without module-level helpers and
+  imports, so the function is self-contained.
+- `feast apply` fails without the push-source Delta tables, since it infers schemas by reading the sources. Start
+  `push-offline` first: it creates them empty.
 - `${VAR:-default}` is not expanded in `feature_store.yaml`, only `${VAR}`.
-- Feast 0.66's local materialization engine pulls every row of the window and keeps the latest per key in
-  pandas unless `materialization: pull_latest_features: true`: the 7.6M daily-stats rows took the Python process to
-  5.7 GB and the kernel killed it. With the flag Spark returns one row per card; the bootstrap took 52 s.
-- Bounded runs do not commit Kafka offsets: before any `--live` run, move the `rt_features` and `device_seen` groups
-  to the end of the topic, or live mode replays the history again.
+- The kernel killed the bootstrap materialization at 5.7 GB: Feast 0.66's local engine pulls every row of the window
+  (7.6M daily-stats rows) and keeps the latest per key in pandas, unless `materialization: pull_latest_features: true`.
+  With the flag Spark returns one row per card; the bootstrap took 52 s.
+- Live mode replays the history after a backfill, since bounded runs do not commit Kafka offsets: before any `--live`
+  run, move the `rt_features` and `device_seen` groups to the end of the topic.

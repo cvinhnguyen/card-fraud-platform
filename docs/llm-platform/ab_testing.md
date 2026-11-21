@@ -1,14 +1,14 @@
 # A/B testing (agents and LLM versions)
 
-Switching all agents to a new model at once risks every conversation if the new model is worse. An A/B test avoids
-that: a new model config or a new LLM version starts with a share of the traffic, next to the current one. The "A/B
-tests" Grafana dashboard compares both sides on live traffic, and an evaluation run measures the quality of each side on
-the same questions. The weights then move to the winner, or the variant is removed. Two tests ran in the agent layer:
-the risk agent's model config, and the LLM version behind the gateway's route `llm`.
+An A/B test gives a new model config or LLM version a share of live traffic next to the current one, so a worse model
+cannot spoil every conversation. Two tests ran at agentgateway, on the risk agent's model config and on the LLM behind
+route `llm` (B: Qwen3.8-27B on Groq); a Grafana dashboard and an evaluation run compared the sides, and both kept A.
+The fraud model's A/B test, a challenger model in the Scoring API, is a separate test
+([serving.md](../ml-platform/serving.md#ab-test-of-the-fraud-model)).
 
 | | |
 |---|---|
-| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml), [`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/dashboards/ab-tests.json), [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval) |
+| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml), [`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/ab-tests.json), [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval) |
 | Runs on | kind: agentgateway in namespace `agentgateway-system`, the agents in namespace `kagent`; the evaluation in a `python:3.13-slim` container on the `kind` network |
 | Reads | `agents/eval/dataset.jsonl` and the bank documents in `generator/knowledge` (evaluation); the gateway's metrics (dashboard) |
 | Writes | `agents/eval/results/*.json` (per-question answers) |
@@ -16,17 +16,12 @@ the risk agent's model config, and the LLM version behind the gateway's route `l
 
 ## Where it fits
 
-Both tests live in Layer 3 (LLM and agent platform), at the agentgateway, the one entry point every agent call
-passes ([architecture.md](../architecture.md#system-diagram-layer-3), arrow A7, and the A/B dashboard, marked O3 in that
-picture; [agents.md](agents.md), [llm_platform.md](llm_platform.md)). The gateway takes the coordinator's A2A
-(agent-to-agent) calls to the risk agent and every agent's LLM calls on route `llm`, and splits each by weight between
-two backends. Its per-backend metrics feed the Grafana dashboard ([observability.md](../operations/observability.md)),
-and the evaluation writes per-question results. The eval gate of the CD (continuous delivery) pipeline
-([novel_eval_gate.md](novel_eval_gate.md)) uses the same questions and the same scoring.
+- Layer 3 (LLM and agent platform), at agentgateway ([architecture.md](../architecture.md#system-diagram-layer-3): arrow A7, dashboard O3).
+- Fed by the coordinator's A2A (agent-to-agent) calls to the risk agent and every agent's LLM calls ([agents.md](agents.md), [llm_platform.md](llm_platform.md)).
+- Read by the Grafana dashboard ([observability.md](../operations/observability.md)) and the per-question results.
+- The eval gate of the CD (continuous delivery) pipeline uses the same questions and scoring ([novel_eval_gate.md](novel_eval_gate.md)).
 
 ## How it works
-
-How the two tests split the traffic at the gateway:
 
 ```mermaid
 flowchart LR
@@ -38,27 +33,21 @@ flowchart LR
     llm -->|"20 % (0 %, header x-llm-variant: b)"| b["Qwen3.8-27B<br/>Groq"]
 ```
 
-1. A variant is a second backend behind the same route: `risk-agent-b`, a copy of the risk agent with another model
-   config (temperature 0.2, at most 512 output tokens), or the 27B model on Groq behind route `llm`. Callers change
-   nothing: the coordinator still calls `risk-agent`, and the agents still send model `qwen3-8b`.
-2. The gateway splits the traffic by weight (50/50 for the agent test, 80/20 for the LLM test), and a header
-   (`x-agent-variant`, `x-llm-variant`) pins a call to one side, so an evaluation can measure each side on the same
-   questions.
-3. The gateway's metrics carry the backend as a label, so the dashboard compares the two sides on live traffic:
-   calls per minute, latency p50 (the median), error share, tokens per call
-   ([Monitoring](#monitoring-dashboard-card-support---ab-tests)).
-4. `run_eval.py` sends the eval questions through the gateway, pinned to A and then to B, and counts an answer as
-   correct when it states every expected fact ([Evaluation](#evaluation)).
-5. The weights then move to the winner or the variant is removed. For both tests the decision was to keep A
-   ([Decisions](#decisions)); B stays reachable by header for later evaluations.
+1. A variant is a second backend behind the same route: `risk-agent-b`, or the 27B model on Groq. Callers change
+   nothing: the coordinator still calls `risk-agent`, the agents still send model `qwen3-8b`.
+2. The gateway splits by weight (50/50 for the agent test, 80/20 for the LLM test); a header (`x-agent-variant`,
+   `x-llm-variant`) pins a call to one side.
+3. The dashboard compares the sides on live traffic: calls per minute, latency p50 (the median), error share, tokens
+   per call ([Monitoring](#monitoring-dashboard-card-support---ab-tests)).
+4. `run_eval.py` sends the eval questions pinned to A, then to B, and counts an answer correct when it states every
+   expected fact ([Evaluation](#evaluation)).
+5. The weights then move to the winner or the variant is removed; B stays reachable by header ([Decisions](#decisions)).
 
 ## Run it
 
-The evaluation sends the dataset through the gateway. `--mode agent` asks the risk agent over A2A, `--mode llm` asks
-route `/v1`, and `--variant a|b` pins one side.
-
-The two keys come from `infra/.env`: `A2A_KEY` is the coordinator's key for the sub-agents (`A2A_KEY_COORDINATOR`,
-the key the Jenkins eval stage uses too) and `AGW_KEY` is the agents' gateway key (`AGW_API_KEY`):
+`A2A_KEY` is the coordinator's key for the sub-agents (`A2A_KEY_COORDINATOR` in `infra/.env`, also used by the Jenkins
+eval stage); `AGW_KEY` is the agents' gateway key (`AGW_API_KEY`). `--mode agent` asks the risk agent over A2A,
+`--mode llm` asks route `/v1`, `--variant a|b` pins a side:
 
 ```bash
 export A2A_KEY=$(grep '^A2A_KEY_COORDINATOR=' infra/.env | cut -d= -f2-) AGW_KEY=$(grep '^AGW_API_KEY=' infra/.env | cut -d= -f2-)
@@ -71,9 +60,8 @@ Add `--out agents/eval/results/<name>.json` to keep the per-question answers.
 
 ## Agent model config (risk-agent A vs B)
 
-The test is configured by `abTests` in
-[`agents/chart/values-data-agents.yaml`
-L30-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/values-data-agents.yaml#L30-L35):
+`abTests` in [`agents/chart/values-data-agents.yaml`
+L30-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values-data-agents.yaml#L30-L37):
 
 ```yaml
 # A/B test of the risk agent's model config: B samples near-greedily and caps its answers (the global config leaves
@@ -86,25 +74,20 @@ modelConfigs:
   qwen3-8b-precise: {temperature: "0.2", maxTokens: 512}
 ```
 
-The chart makes `risk-agent-b`
-([`agents/chart/templates/_helpers.tpl`
-L1-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/_helpers.tpl#L1-L9)),
-a copy of `risk-agent` with the same prompt from Langfuse and the same MCP (Model Context Protocol) tools. It gets its
-own KEDA ScaledObject (autoscaling) and SandboxAgent, and the release's NetworkPolicy covers it. Its only difference is
-the ModelConfig `qwen3-8b-precise` ([`agents/chart/templates/modelconfigs.yaml`
-L1-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/modelconfigs.yaml#L1-L19)):
-temperature 0.2 and at most 512 output tokens, where the global config leaves llama.cpp's defaults (temperature 0.8, no
-cap).
+The chart makes `risk-agent-b` ([`agents/chart/templates/_helpers.tpl`
+L1-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/_helpers.tpl#L1-L9)),
+a copy of `risk-agent` with the same Langfuse prompt and MCP (Model Context Protocol) tools, its own KEDA ScaledObject
+(autoscaling) and SandboxAgent, under the release's NetworkPolicy. It differs only in the ModelConfig
+`qwen3-8b-precise` ([`agents/chart/templates/modelconfigs.yaml`
+L1-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/modelconfigs.yaml#L1-L19)):
+temperature 0.2 and at most 512 output tokens, against llama.cpp's defaults (temperature 0.8, no cap).
 
-The coordinator still calls `risk-agent`; the A2A route of the release
-([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/a2a-gateway.yaml))
-sent 50 % of those calls to each side during the test (since then B gets 0 %; see [Decisions](#decisions)). Header
-`x-agent-variant: a|b` pins a call to one side, for evaluations. The gateway's metrics (label `backend`) give the online
-comparison: calls, latency p50 and error share per variant.
-
-For an agent listed in `abTests` the template writes three rules: pinned to A, pinned to B, and the weighted split
-([`agents/chart/templates/a2a-gateway.yaml`
-L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
+The release's A2A route
+([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml))
+sent 50 % of the coordinator's `risk-agent` calls to each side during the test, and B gets 0 % since. Header
+`x-agent-variant: a|b` pins a side; the gateway's metrics (label `backend`) give calls, latency p50 and error share. For
+an agent in `abTests` the template writes three rules, pinned to A, pinned to B and the weighted split
+([a2a-gateway.yaml L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
 
 ```yaml
     {{- range $name, $a := .Values.agents }}
@@ -131,19 +114,18 @@ L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597
 
 ## LLM version (route `llm`: Qwen3-8B vs Qwen3.8-27B)
 
-The test is configured in
-[`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml).
-Version A is the platform's model, Qwen3-8B Q4_K_M on llama.cpp behind the llm-d InferencePool
-([`infra/k8s/agentgateway.yaml`
-L18-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L18-L31)).
-Version B is Qwen3.8-27B on Groq, an OpenAI-compatible `AgentgatewayBackend` with the key `llm-groq` from Vault
-([`infra/k8s/agentgateway.yaml`
-L36-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L36-L57)).
-The route sent 80 % of all model calls to A and 20 % to B, until the canary was stopped ([Decisions](#decisions)).
-Callers keep sending model `qwen3-8b`, and the backend rewrites it. Header `x-llm-variant: a|b` pins a call, and the B
-backend sets its own User-Agent (see [Gotchas](#gotchas)). The rules of route `llm` as they are now
-([`infra/k8s/agentgateway.yaml`
-L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L70-L84)):
+Configured in
+[`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml):
+
+| Version | Model | Backend |
+|---|---|---|
+| A | the platform's model, Qwen3-8B Q4_K_M on llama.cpp | the llm-d InferencePool ([agentgateway.yaml L18-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L18-L31)) |
+| B | Qwen3.8-27B on Groq | an OpenAI-compatible `AgentgatewayBackend` with the key `llm-groq` from Vault ([agentgateway.yaml L36-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L36-L57)) |
+
+The route sent 80 % of model calls to A and 20 % to B until the canary stopped ([Decisions](#decisions)). The B backend
+rewrites model `qwen3-8b` and sets its own User-Agent ([Gotchas](#gotchas)); header `x-llm-variant: a|b` pins a side.
+The rules now
+([agentgateway.yaml L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L70-L84)):
 
 ```yaml
   rules:
@@ -163,44 +145,42 @@ L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597
       timeouts: {request: 300s}
 ```
 
-The route's policy applies to both versions: API key, rate limits and masking of personal data (PII)
-([`infra/k8s/agentgateway.yaml`
-L86-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L86-L113)).
-A phone number in a prompt reaches Groq as `<masked>` (checked: "Repeat exactly: my phone is 0912345678" came back as
-"my phone is <masked>"). The gateway's metrics (labels `backend` and `gen_ai_response_model`) give calls, round trip
-p50, error share, and input and output tokens per call.
+The route's policy (API key, rate limits, masking of personal data (PII),
+[agentgateway.yaml L86-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L86-L123))
+covers both versions: a phone number reaches Groq as `<masked>` ("Repeat exactly: my phone is 0912345678" came back as
+"my phone is <masked>"). The
+metrics (labels `backend` and `gen_ai_response_model`) give calls, round trip p50, error share, and input and output
+tokens per call.
 
 ## Monitoring: dashboard "Card Support - A/B tests"
 
-The dashboard is
-[`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/dashboards/ab-tests.json),
+[`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/ab-tests.json),
 loaded by
-[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/observability.sh).
-A is blue and B orange in every panel. The top row compares risk-agent A and B (A2A calls per minute, latency p50, error
-share); the lower rows compare the two LLM versions (calls per minute, round trip p50, error share, output and input
-tokens per call). Over the 2 hours of the runs, calls in range were 25.2 (A) and 18.2 (B) for the agent and 108 and 30.2
-for the LLM:
+[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh).
+A is blue and B orange. The top row compares risk-agent A and B (A2A calls per minute, latency p50, error share), the
+lower rows the LLM versions (also output and input tokens per call). Over the 2 hours of the runs, calls in range were
+25.2 (A) and 18.2 (B) for the agent, 108 and 30.2 for the LLM:
 
 ![A/B tests dashboard: risk-agent A vs B and Qwen3-8B vs Qwen3.8-27B, calls in range 25.2 / 18.2 (agent) and 108 / 30.2 (LLM)](../images/ab_tests_dashboard.png)
 
 ## Evaluation
 
-The evaluation lives in
-[`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval).
-[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/dataset.jsonl)
-held 12 card-policy questions at the time of these runs (fees, disputes, authentication; 20 now, for the eval gate) with
-the facts a correct answer must state, taken from the bank documents
-([`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/generator/knowledge)).
-`run_eval.py` sends them through the gateway and scores each answer. An answer is correct when it states every expected
-fact as a whole term and not negated: "3%" does not match "1.3%", and "not free" does not match "free"
+[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/dataset.jsonl)
+(in [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval))
+held 12 card-policy questions for these runs (fees, disputes, authentication; 20 now, for the eval gate), each with the
+facts a correct answer must state, from the bank documents
+([`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/knowledge)).
+`run_eval.py` sends each to the risk agent over A2A (`agent` mode, as the coordinator does) or straight to `/v1` with
+the policy document as context (`llm` mode)
 ([`agents/eval/run_eval.py`
-L31-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/run_eval.py#L31-L34)).
-Every stored answer and every eval-gate answer in Langfuse was re-scored with this rule on 2026-11-12, with the same
-results. In `agent` mode the question goes to the risk agent over A2A (as the coordinator does), in `llm` mode straight
-to `/v1` with the policy document as context ([`agents/eval/run_eval.py`
-L45-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/run_eval.py#L45-L70)).
-The command is in [Run it](#run-it). One experiment ran at a time: the agent runs were made with the LLM route at 100/0,
-so the only difference between A and B was the agent's model config.
+L65-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/run_eval.py#L65-L90)).
+An answer is correct when it states every expected fact as a whole term and not negated: "3%" does not match "1.3%",
+"not free" does not match "free"
+([run_eval.py L51-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/run_eval.py#L51-L54)).
+Re-scoring every stored answer and every eval-gate answer in Langfuse with this rule on 2026-11-12 gave the same
+results. Command: [Run it](#run-it).
+
+One experiment ran at a time; the agent runs had the LLM route at 100/0, so A and B differed only in model config.
 
 | experiment | side | correct | latency p50 | latency max |
 |---|---|---:|---:|---:|
@@ -209,37 +189,34 @@ so the only difference between A and B was the agent's model config.
 | LLM version | A: Qwen3-8B (llama.cpp) | 12 / 12 | 1.93 s | 3.7 s |
 | LLM version | B: Qwen3.8-27B (Groq) | 12 / 12 | 0.47 s | 1.5 s |
 
-The per-question answers are in
-[`agents/eval/results/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/822721cab1ac597d118f100f1c49949f137f8a7d/agents/eval/results)
-(`*.json`). With the split on (no pinning), two agent passes got 8 / 12 each and the LLM pass 12 / 12, and the dashboard
-shows the route's share (about 78 / 22 of the LLM calls in the run).
+Per-question answers:
+[`agents/eval/results/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/results)
+(`*.json`). Unpinned, with the split on, two agent passes got 8 / 12 each and the LLM pass 12 / 12, with about 78 / 22
+of the LLM calls per side on the dashboard.
 
 ## Decisions
 
-Agent model config: keep A. Near-greedy sampling with a cap improved neither accuracy (7 vs 8 of 12) nor latency
-(both ~7.5 s); the latency comes from the GPU. B's weight is 0, so every coordinator call goes to A and B stays
-reachable with the header for later evaluations, as on route `llm`. Deleting the `abTests` entry removes
-`risk-agent-b` at the next deploy.
+| Test | Decision | Reason |
+|---|---|---|
+| Agent model config | keep A; B at weight 0 | near-greedy sampling with a cap improved neither accuracy (7 vs 8 of 12) nor latency (both ~7.5 s, set by the GPU) |
+| LLM version | stop the canary; A at 100 % | B was as accurate on the document questions and about 4x faster, but failed on live agent traffic |
 
-The evaluation did find where both sides fail. They lose the same questions the same way: the agent answers "the
-policy could not be checked" in 2 s without calling `search_policy`, or after hits that did not include the fee table
-row. The prompt causes that, and the eval gate of the CD pipeline now measures it
-([novel idea: eval gate](novel_eval_gate.md)).
+Both B variants stay reachable by header for evaluations; deleting the `abTests` entry removes `risk-agent-b` at the
+next deploy. The evaluation also showed where both agent sides fail: they answer "the policy could not be checked" in
+2 s without calling `search_policy`, or after hits without the fee table row. The prompt causes that, and the eval gate
+now measures it ([novel idea: eval gate](novel_eval_gate.md)).
 
-LLM version: the canary is stopped and A keeps 100 %. On the evaluation B was as accurate on the document questions
-and about 4x faster. On live agent traffic it failed. The coordinator pipeline's smoke test (Jenkins
-`card-support-coordinator` #18) ended `failed` because its last model call landed on B and Groq answered
-`429 ... output tokens per minute (OTPM): Limit 1000, Requested 1619`. Agents send no `max_tokens`, and the free
-tier's 1,000 output tokens a minute (for the whole account) is less than two agent answers; the dashboard's "LLM error
-share" shows B's failures next to A's none. The default rule is now 100 / 0. B stays reachable with
-`x-llm-variant: b` for evaluations, with a gateway default of `max_tokens: 512`
-([`infra/k8s/agentgateway.yaml`
-L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/822721cab1ac597d118f100f1c49949f137f8a7d/infra/k8s/agentgateway.yaml#L54-L57)).
-Resuming the canary needs a paid Groq tier, and a decision on sending (masked) customer text outside the bank. Because B
-only ever had a share of the traffic, stopping it was a weight change.
+The LLM canary failed the coordinator pipeline's smoke test (Jenkins `card-support-coordinator` #18, `failed`): its
+last model call landed on B, and Groq answered `429 ... output tokens per minute (OTPM): Limit 1000, Requested 1619`.
+Agents send no `max_tokens`, and the free tier's 1,000 output tokens a minute per account is less than two agent
+answers; the dashboard's "LLM error share" shows B failing and A not. The default rule is now 100 / 0, and
+`x-llm-variant: b` gets a gateway default of `max_tokens: 512`
+([agentgateway.yaml L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L54-L57)).
+Since B only had a share of traffic, stopping it was a weight change. Resuming needs a paid Groq tier and a decision on
+sending (masked) customer text outside the bank.
 
 ## Gotchas
 
-- Groq's edge (Cloudflare, error 1010) refused Python's default User-Agent, so the gateway sets its own
-  (`User-Agent: agentgateway`, the `RequestHeaderModifier` filter on the `qwen3-8-27b-groq` backend refs in route
+- Groq's edge (Cloudflare) refuses calls with error 1010, because it rejects Python's default User-Agent. The gateway
+  sets `User-Agent: agentgateway` (the `RequestHeaderModifier` filter on the `qwen3-8-27b-groq` backend refs in route
   `llm`).
