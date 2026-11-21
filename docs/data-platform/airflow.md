@@ -472,7 +472,7 @@ What the Jenkins job does:
 | dbt parse | models, sources, refs and tests resolve with target `session`. `dbt build` and its tests need the lakehouse, so they run in DP2 itself |
 | Release | copies the commit into the volume, moves `current`, sets the Variable `batch_release` |
 | Scheduler parsed it | waits until every batch DAG has the tag `release:<sha>` and Airflow reports no import error |
-| Run + checks | runs `dp2_bronze_to_silver` and prints its Great Expectations results. Its publish starts the gold, features and materialize pipelines on the new release, as any run does |
+| Run + checks | runs `dp2_bronze_to_silver` with the conf `check_only` and prints its Great Expectations results. A check-only run skips its publish, so it starts no gold run: a rerun on bronze silver already has carries no new day, and gold's checks rightly expect one. Gold, features and materialize meet the release on the next real night |
 
 If a stage after the switch fails, the job moves `current` back to the release before it and resets
 `batch_release`. The check run wrote silver for real, so the data goes back too: before the run the job keeps the

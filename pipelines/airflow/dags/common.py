@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from airflow.datasets import Dataset as Published
 from airflow.decorators import task
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException
+from airflow.exceptions import AirflowException, AirflowSkipException
 from airflow.models import Variable
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
@@ -59,9 +59,13 @@ DAY = "{{ " + DAY_EXPR + " }}"
 def publish(zone: Published):
     """Last task of a pipeline: tell Airflow the zone has a new checked version; the business day travels on the event."""
     @task(task_id=f"publish_{zone.uri.rstrip('/').rsplit('/', 1)[-1]}", outlets=[zone])   # Airflow may add a final /
-    def announce(day: str, *, outlet_events=None) -> str:
+    def announce(day: str, *, outlet_events=None, dag_run=None) -> str:
         """Attach the business day and the code release to the dataset event the scheduler creates when this task
-        succeeds: each published version of a zone says which release wrote it."""
+        succeeds: each published version of a zone says which release wrote it. A run started with the conf
+        {"check_only": true} (the release check of pipelines/airflow/Jenkinsfile) skips this task: no event, so no
+        later pipeline starts on a rerun of data it already has. Skipped still counts for depends_on_past."""
+        if dag_run is not None and (dag_run.conf or {}).get("check_only"):
+            raise AirflowSkipException("release check run: the zone is not announced")
         outlet_events[zone].extra = {"ds": day, "release": RELEASE}
         return day
     return announce(DAY)

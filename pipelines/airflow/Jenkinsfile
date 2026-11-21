@@ -127,8 +127,10 @@ pipeline {
           }
         }
         stage('Run + checks') {
-          // one real run on the new release: DP2 silver (Spark job + Great Expectations). Its publish starts the
-          // gold -> features -> materialize chain on the same release, as any run does.
+          // one real run on the new release: DP2 silver (Spark job + Great Expectations). It runs with the conf
+          // check_only, so its publish is skipped: a rerun on bronze silver already has must not start gold, whose
+          // checks rightly expect a new day of rows. Gold, features and materialize meet the release on the next real
+          // night (common.py, publish).
           steps {
             withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
               sh '''
@@ -142,7 +144,7 @@ pipeline {
                 echo "silver before the check run: $(cat silver-versions.json)"
                 run="ci-$TAG-$(date +%s)"
                 echo "$run" > ci-run.txt   # post deletes it if it fails: the DAGs use depends_on_past
-                api -X POST "$AIRFLOW/dags/$SMOKE/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG, release $TAG\\"}" >/dev/null
+                api -X POST "$AIRFLOW/dags/$SMOKE/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"conf\\": {\\"check_only\\": true}, \\"note\\": \\"Jenkins $BUILD_TAG, release $TAG\\"}" >/dev/null
                 deadline=$(( $(date +%s) + 2700 ))
                 while :; do
                   state=$(api "$AIRFLOW/dags/$SMOKE/dagRuns/$run" | jq -r .state)
@@ -156,6 +158,8 @@ pipeline {
                   | grep -E -o "(ok  |FAIL) [a-z]+\\.[a-z_]+ .*" || true
                 echo "dag run $run: $state"
                 [ "$state" = success ]
+                pub=$(api "$AIRFLOW/dags/$SMOKE/dagRuns/$run/taskInstances/publish_silver" | jq -r .state)
+                [ "$pub" = skipped ] || { echo "publish_silver is $pub: a check run must not announce silver" >&2; exit 1; }
               '''
             }
           }
