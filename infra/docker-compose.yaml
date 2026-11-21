@@ -334,6 +334,9 @@ services:
         jobmanager.memory.process.size: 1024m
         taskmanager.memory.process.size: 3584m
         taskmanager.numberOfTaskSlots: 6
+        # direct memory for the Kafka fetchers of the three always-on jobs: with only the 128 MB framework off-heap, a
+        # job restored from a savepoint ran out while catching up ("OutOfMemoryError: Direct buffer memory")
+        taskmanager.memory.task.off-heap.size: 256m
         parallelism.default: 2
         # checkpoints on S3: the default keeps them in JobManager memory, capped at 5 MB; rt_features' live state
         # passed it, every checkpoint failed and the job looped through restarts (Layer 2 replay)

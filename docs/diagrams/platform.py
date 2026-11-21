@@ -1707,33 +1707,41 @@ def cicd():
     def mid(b):
         return b.y + b.h / 2
 
-    def step(x, y, w, h, text, check=False):
-        """One step of a release: a green box, or a check (white, pointed ends)."""
+    def step(x, y, w, h, text, check=False, ico=""):
+        """One step of a release: a green box, a check (white, pointed ends), or with ico a gate (purple, its tool's
+        logo on the left)."""
         if check:
             pts = [(x + 14, y), (x + w - 14, y), (x + w, y + h / 2), (x + w - 14, y + h), (x + 14, y + h), (x, y + h / 2)]
             body.append(f'<polygon points="{" ".join(f"{a},{b}" for a, b in pts)}" fill="#ffffff" stroke="{INK2}" '
                         f'stroke-width="1.3"/>')
         else:
-            fill, stroke = KINDS["job"]
+            fill, stroke = KINDS["gate" if ico else "job"]
             body.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="7" fill="{fill}" stroke="{stroke}" '
                         f'stroke-width="1.2"/>')
-        ls = wrap(text, w - (44 if check else 20), 12.5)
-        body.extend(t(x + w / 2, y + h / 2 - 8 * (len(ls) - 1) + 4.5 + 16 * j, ln, 12.5, INK) for j, ln in enumerate(ls))
+        pad = 34 if ico else 0                     # room for the logo
+        if ico:
+            body.append(icon(ico, x + 10, y + h / 2 - 11, 22))
+        ls = wrap(text, w - (44 if check else 20) - pad, 12.5)
+        body.extend(t(x + (w + pad) / 2, y + h / 2 - 8 * (len(ls) - 1) + 4.5 + 16 * j, ln, 12.5, INK)
+                    for j, ln in enumerate(ls))
         return Box(x, y, w, h, text)
 
-    def release(y, title, note, texts, check, no, novel="", after=""):
+    def release(y, title, note, texts, check, no, novel="", after="", novel_at=None, gate=None):
         """One release as its steps, left to right, in a panel: texts[check] is the check; 'yes' goes on to the
         right, 'no' down to the box under it. `after` is one line under the steps. Returns the panel's bottom."""
         x0, w, gap = 40, W - 80, 46
         sy = y + 58 + (22 if novel else 0)
         sw = (w - (len(texts) - 1) * gap) / len(texts)
-        sh = 16 + 16 * max(len(wrap(x, sw - (44 if i == check else 20), 12.5)) for i, x in enumerate(texts))
-        st = [step(x0 + i * (sw + gap), sy, sw, sh, x, i == check) for i, x in enumerate(texts)]
+        gi, gico = gate or (None, "")              # gate = (index, logo): a step drawn as a gate, with its tool
+        sh = 16 + 16 * max(len(wrap(x, sw - (44 if i == check else 20) - (34 if i == gi else 0), 12.5))
+                           for i, x in enumerate(texts))
+        st = [step(x0 + i * (sw + gap), sy, sw, sh, x, i == check, gico if i == gi else "") for i, x in enumerate(texts)]
         for a, b in zip(st, st[1:]):
             link([(a.x + a.w, mid(a)), (b.x, mid(b))], "yes" if a is st[check] else "")
         c = st[check]
         if novel:
-            body.append(novel_tag(c.x + c.w - 4, sy - 22, novel))
+            n = st[check if novel_at is None else novel_at]
+            body.append(novel_tag(n.x + n.w - 4, sy - 22, novel))
         nh = 16 + 16 * len(wrap(no, sw - 20, 12.5))
         nb = step(c.x, bot(c) + 34, sw, nh, no)
         link([(c.x + sw / 2, bot(c)), (c.x + sw / 2, nb.y)], "no", lx=c.x + sw / 2 + 8, ly=bot(c) + 21, anchor="start")
@@ -1808,92 +1816,99 @@ def cicd():
     body.insert(0, panel(20, P1, W - 40, y - P1, "THE PATH EVERY RELEASE SHARES", PANEL, LINE,
                          note="a commit, a new production prompt or a moved model alias starts it"))
 
-    # ---- 2. and 3. the model release and the agent release
-    y = release(y + 24, "MODEL RELEASE · Jenkins pipeline fraud-predictor",
-                "Layer 2 · starts when an MLflow alias moves, or on a commit to the model server", [
-                    "Fetch the model behind the alias; test that it loads, scores and is that version",
-                    "Build the image, tagged with the model version, and sign it",
-                    "Apply the InferenceService: card-fraud for production, card-fraud-challenger for challenger",
-                    "Does it answer with that version?",
-                    "Live. A challenger gets no traffic yet",
-                    "A person approves the A/B test in Jenkins: 10% of the cards go to the challenger"],
-                3, "Re-apply the image it ran before",
-                after="Promote or roll back a model: move the alias production in MLflow; the next check releases that "
-                      "version.")
-    y = release(y + 24, "AGENT RELEASE · Jenkins pipelines card-support-data-agents, then card-support-coordinator",
-                "Layer 3 · starts on a new production prompt in Langfuse, a commit, or a tool server release", [
-                    "Read each agent's production prompt from Langfuse",
-                    "Helm writes the prompt and its version into the Agent, in one write",
-                    "Smoke test: one question to each agent, through the gateway",
-                    "Eval gate (data agents): is risk-agent right on 0.6 of 20 questions?",
-                    "Live. The coordinator release runs next"],
-                3, "helm rollback to the version before", novel="NOVEL IDEA: EVAL GATE",
-                after="The coordinator pipeline has the same steps without the eval gate.")
-
-    # ---- 4. the other pipelines: one row each, by layer
-    P4 = y + 24
-    x0, px, gap = 40, 250, 26
-    cw = (W - 80 - px - 3 * gap) / 4
-    for i, h in enumerate(("STARTS ON", "VERSION", "IF THE CHECK FAILS", "VERSION SHOWN ON")):
-        body.append(t(x0 + px + i * (cw + gap), P4 + 56, h, 9.5, INK2, "start", 700, mono=True, spacing=0.06))
-    cy = P4 + 70
-    for layer, rows in (
-            ("LAYER 1 · DATA PLATFORM", [
-                ("batch-pipelines", ["A commit in the DAGs, Spark jobs or dbt", "The commit id",
-                                     "Test run of DP2 silver fails: back to the old code",
-                                     "An Airflow Variable and a tag on every DAG"]),
-                ("flink-jobs", ["A commit in the always-on Flink jobs", "The commit id",
-                                "No checkpoint in 3 minutes: the old code restarts from the savepoint",
-                                "The job's name in the Flink UI"]),
-                ("stream-feature-jobs", ["A commit in the push jobs or the ML library", "Image tagged with the commit id",
-                                         "Test message does not arrive: the old image is back",
-                                         "The image tag of the two containers"])]),
-            ("LAYER 2 · ML PLATFORM", [
-                ("training-pipeline", ["A commit in the training code", "Image and Kubeflow pipeline version: the commit id",
-                                       "A step runs another image: the old release stays",
-                                       "An Airflow Variable and a tag on each MLflow run"]),
-                ("fraud-scoring-api", ["A commit in the Fraud Scoring API", "Image tagged with the commit id",
-                                       "Test payment gets no score: the old image is back", "The image tag of the container"]),
-                ("fraud-drift-api", ["A commit in the Drift API", "Image tagged with the commit id",
-                                     "API not ready: the old image is back", "The image tag of the container"])]),
-            ("LAYER 3 · LLM AND AGENT PLATFORM", [
-                ("card-support-mcp", ["A commit in the tool servers; then the data agents' release runs",
-                                      "Signed image tagged with the commit id",
-                                      "Unsigned image or failed smoke test: helm rollback",
-                                      "The image tag of each server's pods"], "NOVEL IDEA: SIGNED IMAGES ONLY"),
-                ("rag-pipeline", ["A commit in the RAG steps or the documents", "Image tagged with the commit id",
-                                  "Chunk checks fail: back to the old image", "An Airflow Variable"])])):
-        body.append(t(x0, cy + 12, layer, 10, INK, "start", 700, mono=True, spacing=0.06))
-        cy += 24
-        for name, cells, *novel in rows:
-            wrapped = [wrap(c, cw - 4, 12) for c in cells]
-            h = 14 + 15 * max(len(ls) for ls in wrapped)
-            label = f"CI/CD · {name}"
-            pw = text_w(label, 9.5, True) + 30
-            py = cy + h / 2 - (20 if novel else 9)
-            body += [f'<rect x="{x0}" y="{py}" width="{pw}" height="18" rx="9" fill="#ffffff" stroke="{T}" stroke-width="1"/>',
-                     icon("jenkins", x0 + 6, py + 2, 14), t(x0 + 24, py + 12.5, label, 9.5, T, "start", 600, mono=True)]
-            if novel:
-                body.append(novel_tag(x0 + text_w(novel[0], 8.5, True, 0.06) + 14, cy + h / 2 + 3, novel[0]))
-            for i, ls in enumerate(wrapped):
-                cx = x0 + px + i * (cw + gap)
-                fill, stroke = KINDS["store" if i in (1, 3) else "job"]   # the two version cells look like stores
-                body.append(f'<rect x="{cx}" y="{cy}" width="{cw}" height="{h}" rx="7" fill="{fill}" stroke="{stroke}" '
-                            f'stroke-width="1.2"/>')
-                y0 = cy + h / 2 - 7.5 * (len(ls) - 1) + 4.5
-                body.extend(t(cx + cw / 2, y0 + 15 * j, ln, 12, INK) for j, ln in enumerate(ls))
-                if i:
-                    link([(cx - gap, cy + h / 2), (cx, cy + h / 2)])
-            cy += h + 10
-        cy += 6
-    body.insert(0, panel(20, P4, W - 40, cy + 10 - P4, "THE OTHER 8 PIPELINES", PANEL, LINE,
-                         note="one row each, grouped by layer"))
-    H = cy + 40
+    # ---- 2. every pipeline as its steps, by layer: test, build with a version, deploy, check; no = roll back
+    image = "Build the image, tagged with the commit id; push it to GHCR"
+    for title, note, texts, no, *extra in [
+            ("LAYER 1 · BATCH PIPELINES · Jenkins pipeline batch-pipelines",
+             "starts on a commit in the DAGs, the Spark jobs, dbt or the ml code they run", [
+                 "Lint, unit tests; every DAG imports in the Airflow image; dbt parse",
+                 "Copy the commit's DAGs, Spark jobs and dbt into a folder named after the commit id",
+                 "Move one link to that folder: Airflow and Spark switch to it together",
+                 "Airflow parses it, and a DP2 silver run passes its checks?",
+                 "Live. The Airflow Variable batch_release and a tag on every DAG name the commit"],
+             "Move the link back to the folder before"),
+            ("LAYER 1 · FLINK JOBS · Jenkins pipeline flink-jobs",
+             "starts on a commit in the Flink jobs; the jobs run by hand only get the first step", [
+                 "Lint; every job imports in the Flink image",
+                 "Copy the commit's job files into Flink",
+                 "Stop each always-on job with a savepoint; start the new code from it",
+                 "It restores the savepoint and finishes a checkpoint within 3 minutes?",
+                 "Live. The job's name in the Flink UI carries the commit id"],
+             "Cancel it; start the old code again from the same savepoint"),
+            ("LAYER 1 · PUSH JOBS · Jenkins pipeline stream-feature-jobs",
+             "starts on a commit in the push jobs, the ML library or the Feast repo", [
+                 "Unit tests in the ml image", image,
+                 "Recreate push-online and push-offline on the new image",
+                 "A test message reaches both feature stores?",
+                 "Live. The containers run the image tagged with the commit id"],
+             "Recreate both on the image they ran before"),
+            ("LAYER 2 · MODEL RELEASE · Jenkins pipeline fraud-predictor",
+             "starts when an MLflow alias moves (checked every 15 minutes), or on a commit to the model server", [
+                 "Fetch the model behind the alias; test that it loads, scores and is that version",
+                 "Build the image, tagged with the model version, and sign it",
+                 "Apply the InferenceService: card-fraud for production, card-fraud-challenger for challenger",
+                 "It answers with that version?",
+                 "Live. A challenger gets traffic (10% of the cards) only after a person approves the A/B test in Jenkins"],
+             "Re-apply the image it ran before",
+             "", "Promote or roll back a model: move the alias production in MLflow; the next check releases that "
+                 "version."),
+            ("LAYER 2 · TRAINING PIPELINE · Jenkins pipeline training-pipeline",
+             "starts on a commit in the training pipeline, the ML library or the Feast repo", [
+                 "Unit tests: the registry, the training, the image the pipeline is pinned to", image,
+                 "Compile the pipeline on that image; upload it to Kubeflow as a version named after the commit id",
+                 "Every step of the uploaded version runs that image?",
+                 "Live. The Airflow Variable train_release points the drift pipeline at the new version"],
+             "The Variable stays on the version before"),
+            ("LAYER 2 · FRAUD SCORING API · Jenkins pipeline fraud-scoring-api",
+             "starts on a commit in the Fraud Scoring API", [
+                 "Unit tests (90% coverage) and mutation tests", image,
+                 "Recreate the container on the new image; the A/B split stays as it was",
+                 "It is ready and scores a test payment with the model?",
+                 "Live. The container runs the image tagged with the commit id"],
+             "Recreate it on the image it ran before"),
+            ("LAYER 2 · DRIFT API · Jenkins pipeline fraud-drift-api",
+             "starts on a commit in the Drift API", [
+                 "Unit tests (90% coverage) and mutation tests", image,
+                 "Recreate the container on the new image",
+                 "It is ready and names the model version it compares with?",
+                 "Live. The container runs the image tagged with the commit id"],
+             "Recreate it on the image it ran before"),
+            ("LAYER 3 · AGENT RELEASE · Jenkins pipelines card-support-data-agents, then card-support-coordinator",
+             "starts on a new production prompt in Langfuse (checked every 15 minutes), a commit, or a tool server "
+             "release", [
+                 "Read each agent's production prompt from Langfuse",
+                 "Helm writes the prompt and its version into the Agent, in one write",
+                 "Smoke test: one question to each agent, through the gateway",
+                 "Eval gate (data agents): risk-agent right on 0.6 of 20 questions?",
+                 "Live. The Agent's annotation names its prompt version; the coordinator release runs next"],
+             "helm rollback to the version before",
+             "NOVEL IDEA: EVAL GATE", "The coordinator pipeline has the same steps without the eval gate."),
+            ("LAYER 3 · MCP TOOL SERVERS · Jenkins pipeline card-support-mcp",
+             "starts on a commit in the tool servers", [
+                 "Unit tests (90% coverage) and mutation tests",
+                 "Build the image, tagged with the commit id; push it to GHCR and sign it (cosign)",
+                 "Helm upgrades each tool server",
+                 "Kyverno: a pod starts only if Jenkins signed its image",
+                 "The card API answers, and kagent accepts each server's tools?",
+                 "Live. Then the data agents' release runs, so the agents meet the new tools"],
+             "helm rollback of every server it upgraded (also when Kyverno stopped a pod)",
+             {"check": 4, "gate": (3, "kyverno"), "novel": "NOVEL IDEA: SIGNED IMAGES ONLY", "novel_at": 3}),
+            ("LAYER 3 · RAG DATA PIPELINE · Jenkins pipeline rag-pipeline",
+             "starts on a commit in the RAG steps, the DAG or the policy documents", [
+                 "Unit tests of the steps; the DAG imports in the Airflow image", image,
+                 "Point the Airflow Variable rag_image at the new image; run the DAG",
+                 "The checks on the written chunks pass?",
+                 "Live. rag_image names the image tagged with the commit id"],
+             "Set rag_image back to the image before")]:
+        o = extra[0] if extra and isinstance(extra[0], dict) else dict(zip(("novel", "after"), extra))
+        y = release(y + 24, title, note, texts, o.get("check", 3), no, novel=o.get("novel", ""), after=o.get("after", ""),
+                    novel_at=o.get("novel_at"), gate=o.get("gate"))
+    H = y + 30
     return svg_doc(W, H, "\n".join(head + body + arrows), "Card fraud platform: CI/CD",
                    "Jenkins runs 11 pipelines, one per deployable unit. A commit, a new production prompt in Langfuse or a "
                    "moved alias in MLflow starts a release: GitHub, Jenkins, GitHub Container Registry, deploy, check, "
-                   "live with its version; a failed check brings back the version before. The model release and the "
-                   "agent release are drawn step by step; the other eight pipelines are one row each.")
+                   "live with its version; a failed check brings back the version before. Then each of the 11 "
+                   "pipelines, by layer, as its steps: test, build with a version, deploy, check, and the rollback.")
 
 
 # ---------------------------------------------------------------- output

@@ -363,7 +363,8 @@ and the list under the picture says what goes over it:
 
 Jenkins runs 11 pipelines, one per deployable unit ([cicd.md](operations/cicd.md)). Each one tests a change, gives it a
 version, deploys it, checks the running unit, and brings back the version before when the check fails. The picture
-has four parts, read from the top.
+shows the path every release shares on top, then each of the 11 pipelines as its own flow, in layer order: its
+steps left to right, the check, "yes" on to the live version and "no" down to the rollback.
 
 The path every release shares, left to right. A developer pushes to GitHub. Jenkins polls main every 5 minutes and
 runs only the pipelines whose files changed. It tests the change, builds an image tagged with its version, signs the
@@ -387,13 +388,14 @@ annotation `card-support/prompt`. So `kubectl get agent` tells which prompt runs
 question. For the data agents the eval gate follows (a novel idea): risk-agent answers 20 questions, and below 0.6
 accuracy the release goes back with `helm rollback` ([novel_eval_gate.md](llm-platform/novel_eval_gate.md)).
 
-The other 8 pipelines are one row each, grouped by layer: what starts it, the version it builds, what happens when
-its check fails, and where the running unit shows its version. The tool server row carries the other novel idea:
+The other pipelines follow the same pattern: tests, an image (or a release folder for the batch code, a savepoint
+restart for Flink) tagged with the commit id, the deploy, a check against the running unit, and the rollback when the
+check fails. The tool server flow carries the other novel idea:
 Kyverno starts a tool server pod only if Jenkins signed its image
 ([novel_supply_chain.md](operations/novel_supply_chain.md)). One pipeline per unit lets each unit release and roll
 back on its own, keeps each credential in the pipeline that needs it, and gives each unit its own build history.
 
-![CI/CD: the path every release shares from GitHub through Jenkins and GitHub Container Registry to the deploy, the check and the running unit with its version; the model release and the agent release step by step with their checks and rollbacks; one row for each of the other eight pipelines](images/platform-cicd.png)
+![CI/CD: the path every release shares from GitHub through Jenkins and GitHub Container Registry to the deploy, the check and the running unit with its version; then each of the 11 pipelines by layer, step by step, with its check and its rollback](images/platform-cicd.png)
 
 ## Run it
 

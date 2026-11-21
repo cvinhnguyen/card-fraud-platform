@@ -134,8 +134,9 @@ pipeline {
                 api() { printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -H 'Content-Type: application/json' "$@"; }
                 api -X PATCH "$AIRFLOW/dags/$SMOKE" -d '{"is_paused": false}' >/dev/null
                 run="ci-$TAG-$(date +%s)"
+                echo "$run" > ci-run.txt   # post deletes it if it fails: the DAGs use depends_on_past
                 api -X POST "$AIRFLOW/dags/$SMOKE/dagRuns" -d "{\\"dag_run_id\\": \\"$run\\", \\"note\\": \\"Jenkins $BUILD_TAG, release $TAG\\"}" >/dev/null
-                deadline=$(( $(date +%s) + 2700 ))   # a run blocked by depends_on_past (an older failed run) times out here
+                deadline=$(( $(date +%s) + 2700 ))
                 while :; do
                   state=$(api "$AIRFLOW/dags/$SMOKE/dagRuns/$run" | jq -r .state)
                   case "$state" in success|failed) break;; esac
@@ -157,9 +158,15 @@ pipeline {
   }
   post {
     failure {
-      // a failed check after the switch: back to the release that ran before, and the Variable with it
+      // a failed check after the switch: back to the release that ran before, and the Variable with it. The failed
+      // check run is deleted too: the DAGs use depends_on_past, so a failed run would hold back every later run of
+      // the DAG, the nightly ones included, until someone cleared it (Jenkins' log keeps what it did)
       withCredentials([usernamePassword(credentialsId: 'airflow-admin', usernameVariable: 'AF_USER', passwordVariable: 'AF_PW')]) {
         sh '''
+          if [ -f ci-run.txt ]; then
+            printf 'user = "%s:%s"\n' "$AF_USER" "$AF_PW" | curl -fsS -K - -X DELETE "$AIRFLOW/dags/$SMOKE/dagRuns/$(cat ci-run.txt)" \
+              && echo "deleted the failed check run $(cat ci-run.txt), so it does not hold back later runs" || true
+          fi
           if [ -f switched ]; then
             out=$(docker run -i --rm --user 0 --entrypoint sh -v $RELEASES:/opt/release $AF_IMAGE -c "$(cat pipelines/airflow/release.sh)" release switch previous)
             echo "rolled back: $out"
@@ -171,6 +178,6 @@ pipeline {
       }
     }
     always { sh 'docker image rm fraud/ml-train:test-$TAG >/dev/null 2>&1 || true' }
-    cleanup { sh 'rm -f switched' }
+    cleanup { sh 'rm -f switched ci-run.txt' }
   }
 }

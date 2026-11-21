@@ -230,11 +230,11 @@ numbers](docs/operations/iac.md#why-not-all-of-it-on-azure)).
 
 How a new version of a unit reaches the platform. Jenkins runs 11 pipelines, one per deployable unit: each tests a
 change, gives it a version, deploys it, checks the running unit and brings back the version before when the check
-fails. The model release (from the MLflow aliases to KServe) and the agent release (from the Langfuse prompts to the
-Agents) are drawn step by step; the other eight pipelines are one row each
+fails. Each pipeline is drawn step by step, by layer: the model release (from the MLflow aliases to KServe), the
+agent release (from the Langfuse prompts to the Agents) and the other nine
 ([docs/architecture.md](docs/architecture.md#cicd), [cicd.md](docs/operations/cicd.md)).
 
-![CI/CD: the path every release shares, the model release and the agent release step by step, one row for each other pipeline](docs/images/platform-cicd.png)
+![CI/CD: the path every release shares, then each of the 11 pipelines step by step with its check and rollback](docs/images/platform-cicd.png)
 
 ## Repo structure
 
