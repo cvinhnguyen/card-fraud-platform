@@ -9,7 +9,7 @@ CI/CD: [cicd.md](../operations/cicd.md#rag-data-pipeline).
 
 | | |
 |---|---|
-| Code | [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py), [`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py), [`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb) |
+| Code | [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py), [`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py), [`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/feature_repo_kb) |
 | Runs on | compose profile `orch` (Airflow); each task is a container of the ml image `ghcr.io/cvinhnguyen/fraud-ml-train:<commit>`, started through `docker-proxy`; the embedding server (Qwen3-Embedding-0.6B on llama.cpp) on the host |
 | Reads | `s3://bank-documents/*.md` (5 markdown files) |
 | Writes | Feast project `card_support_kb`: offline history `s3://lakehouse/kb/policy_chunks.parquet`, online store pgvector (`vector-db`); validation reports `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json`; assertions and lineage in DataHub |
@@ -64,23 +64,23 @@ Without DataHub (`DATAHUB_ENABLED=false`, as in CI) the checks still gate the ru
 ## Steps
 
 Each task of the DAG
-([`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py))
+([`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py))
 runs one step of
-[`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py)
-in a container of the ml image ([rag_ingest.py L56-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L56-L74)).
+[`ml/jobs/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py)
+in a container of the ml image ([rag_ingest.py L56-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py#L56-L74)).
 
 | Task | What it does |
 |---|---|
-| `chunk_documents` | reads `s3://bank-documents/*.md` (uploaded by `generator/load_source.py --part documents` from [`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/knowledge)) and chunks it as in [How it works](#how-it-works), with ids such as `card_terms#4.2` |
-| `embed_chunks` | OpenAI-compatible `/v1/embeddings` on the host (Qwen3-Embedding-0.6B, connection `llm_embeddings`), 1024-number vectors ([`ml/jobs/rag_ingest.py` L79-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L79-L89)) |
-| `write_feature_store` | Feast project `card_support_kb` ([`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb)): offline history (the Parquet FileSource) and online store, Postgres with pgvector (`vector-db`) ([rag_ingest.py L108-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L108-L123)) |
+| `chunk_documents` | reads `s3://bank-documents/*.md` (uploaded by `generator/load_source.py --part documents` from [`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/knowledge)) and chunks it as in [How it works](#how-it-works), with ids such as `card_terms#4.2` |
+| `embed_chunks` | OpenAI-compatible `/v1/embeddings` on the host (Qwen3-Embedding-0.6B, connection `llm_embeddings`), 1024-number vectors ([`ml/jobs/rag_ingest.py` L79-L89](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py#L79-L89)) |
+| `write_feature_store` | Feast project `card_support_kb` ([`ml/feature_repo_kb/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/feature_repo_kb)): offline history (the Parquet FileSource) and online store, Postgres with pgvector (`vector-db`) ([rag_ingest.py L108-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py#L108-L123)) |
 | `validate_rag.run_checks` | 7 checks, in the report format of the Layer 1 validate stages |
-| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, fails the run if one failed ([`pipelines/airflow/dags/common.py` L150-L170](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/common.py#L150-L170)) |
+| `validate_rag.publish_results` | logs the checks, sends them to DataHub as assertions on the feature view, fails the run if one failed ([`pipelines/airflow/dags/common.py` L150-L170](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/common.py#L150-L170)) |
 
 ### Chunking
 
 `chunk_documents` on one document
-([rag_ingest.py L46-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L46-L63)):
+([rag_ingest.py L46-L63](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py#L46-L63)):
 
 ```python
 def split_document(doc: str, text: str) -> list[dict]:
@@ -116,11 +116,11 @@ release (rag-pipeline #2) is in [cicd.md](../operations/cicd.md#rag-data-pipelin
 The feature view `policy_chunks` (entity `chunk_id`) holds `document`, `section`, `text` and `embedding` (1024
 numbers, cosine distance, vector index on;
 [`ml/feature_repo_kb/kb_features.py`
-L26-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo_kb/kb_features.py#L26-L41)).
+L26-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/feature_repo_kb/kb_features.py#L26-L41)).
 policy-rag embeds a question with Qwen3-Embedding's query instruction, asks the online store for the nearest
 candidates, reads them by id and ranks them by its own cosine similarity
 ([`services/card_support_mcp/app/service.py`
-L68-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/service.py#L68-L75)).
+L68-L75](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/service.py#L68-L75)).
 
 ## Data governance
 
@@ -132,11 +132,11 @@ Same rules as the Layer 1 pipelines ([airflow.md](../data-platform/airflow.md),
 | Quality gate | 7 checks after every write: at least 20 chunks (57), unique `chunk_id`, no empty text, text length at least 20, embedding dimension 1024, every document has chunks, online store identical to the offline history (57/57); one failure fails the run ([Gotchas](#gotchas)) |
 | Validation history | each report at `s3://lakehouse/_validation/rag_ingest/ds=<date>/results.json`, and as assertion results on `card_support_kb.policy_chunks` in DataHub |
 | Lineage | the tasks' inlets and outlets, turned into lineage by the DataHub Airflow plugin: the 5 documents, `chunk_documents`, the staging chunks, `embed_chunks`, `write_feature_store`, the offline history and the feature view, then the validate task |
-| Secrets | none in the DAG: store passwords and the embedding key come from Airflow connections (`feast_registry`, `feast_kb_online`, `llm_embeddings`, `lakehouse_s3`), masked in logs and rendered templates ([`pipelines/airflow/dags/rag_ingest.py` L31-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L31-L37)) |
-| Code provenance | tasks run the image in Airflow Variable `rag_image`, set only by the CI release; the DAG refuses anything but the ml code image (the GHCR release, or the local build `fraud/ml-train`) ([rag_ingest.py L41-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L41-L46)); Airflow starts containers through `docker-proxy`, which allows the container API and denies exec, build and volumes (Airflow has no Docker socket) |
+| Secrets | none in the DAG: store passwords and the embedding key come from Airflow connections (`feast_registry`, `feast_kb_online`, `llm_embeddings`, `lakehouse_s3`), masked in logs and rendered templates ([`pipelines/airflow/dags/rag_ingest.py` L31-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py#L31-L37)) |
+| Code provenance | tasks run the image in Airflow Variable `rag_image`, set only by the CI release; the DAG refuses anything but the ml code image (the GHCR release, or the local build `fraud/ml-train`) ([rag_ingest.py L41-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py#L41-L46)); Airflow starts containers through `docker-proxy`, which allows the container API and denies exec, build and volumes (Airflow has no Docker socket) |
 
 The 7 checks of `validate_rag.run_checks`, the last reading every chunk back from the online store
-([rag_ingest.py L141-L158](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/rag_ingest.py#L141-L158)):
+([rag_ingest.py L141-L158](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/rag_ingest.py#L141-L158)):
 
 ```python
     online = FeatureStore(repo_path=os.environ["FEAST_KB_REPO"]).get_online_features(
@@ -180,9 +180,9 @@ Its assertions, all 7 passing in the last run:
 - Feast 0.66's `retrieve_online_documents_v2(...).to_df()` can pair the wrong text and vector with a `chunk_id` (the
   id column keeps the database's rank order, the feature columns another). policy-rag uses it only for candidate ids
   ([`services/card_support_mcp/app/clients.py`
-  L68-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/clients.py#L68-L77)),
+  L68-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/clients.py#L68-L77)),
   then reads the features by id and ranks them itself ([`services/card_support_mcp/app/logic.py`
-  L45-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/logic.py#L45-L50)).
+  L45-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/logic.py#L45-L50)).
 - After a change of the embedding model, question vectors and stored vectors stop matching: the pipeline and
   policy-rag must use the same model, so re-run the pipeline.
 

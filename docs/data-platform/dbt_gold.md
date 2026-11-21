@@ -9,7 +9,7 @@ DP2 (data pipeline: bronze to silver and gold).
 
 | | |
 |---|---|
-| Code | [`pipelines/dbt/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt), [`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/build_gold_pyspark.py) (the PySpark baseline) |
+| Code | [`pipelines/dbt/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt), [`pipelines/spark/build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/spark/build_gold_pyspark.py) (the PySpark baseline) |
 | Runs on | by hand: Spark Thrift Server, compose profile `dbt` (target `local`); in Airflow DAG `dp2_silver_to_gold`: dbt's own Spark session (target `session`) |
 | Reads | `silver.stg_transactions`, `silver.stg_customers`, `bronze.raw_cards`, `bronze.raw_accounts`, `bronze.raw_merchants` |
 | Writes | `gold.dim_customer`, `gold.dim_card`, `gold.dim_merchant`, `gold.dim_date`, `gold.fact_transaction` (Delta under `s3a://lakehouse/gold`) |
@@ -58,15 +58,15 @@ In Airflow, `dbt_build` and `dbt_docs` run when `dp2_bronze_to_silver` emits the
 
 | Where | What |
 |---|---|
-| [`pipelines/dbt/models/gold/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/models/gold) | 5 models; `fact_transaction` is `incremental` with `merge` on `transaction_id` and `partition_by txn_month` |
-| [`pipelines/dbt/models/gold/schema.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/models/gold/schema.yml) | 19 generic tests (unique, not_null, relationships from the fact to each dim) + descriptions |
-| [`pipelines/dbt/tests/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/tests) | 3 singular tests: one current version per customer, no gaps/overlaps between versions, fact reconciles with silver |
-| [`pipelines/dbt/profiles.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/profiles.yml) | `local`: Spark Thrift Server (by hand, :10000); `session`: dbt's own Spark session (Airflow DP2) |
-| [`pipelines/airflow/dags/dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/dp2_silver_to_gold.py) | the `dbt_build` + `dbt_docs` tasks |
+| [`pipelines/dbt/models/gold/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/models/gold) | 5 models; `fact_transaction` is `incremental` with `merge` on `transaction_id` and `partition_by txn_month` |
+| [`pipelines/dbt/models/gold/schema.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/models/gold/schema.yml) | 19 generic tests (unique, not_null, relationships from the fact to each dim) + descriptions |
+| [`pipelines/dbt/tests/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/tests) | 3 singular tests: one current version per customer, no gaps/overlaps between versions, fact reconciles with silver |
+| [`pipelines/dbt/profiles.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/profiles.yml) | `local`: Spark Thrift Server (by hand, :10000); `session`: dbt's own Spark session (Airflow DP2) |
+| [`pipelines/airflow/dags/dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/dp2_silver_to_gold.py) | the `dbt_build` + `dbt_docs` tasks |
 
 The fact MERGEs only new export dates on `transaction_id`
 ([`pipelines/dbt/models/gold/fact_transaction.sql`
-L4-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/models/gold/fact_transaction.sql#L4-L17)):
+L4-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/models/gold/fact_transaction.sql#L4-L17)):
 
 ```sql
 {{ config(
@@ -88,12 +88,12 @@ with txn as (
 ## Same tables as hand-written PySpark
 
 dbt-spark produces exactly the rows hand-written Spark produces.
-[`build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/build_gold_pyspark.py)
+[`build_gold_pyspark.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/spark/build_gold_pyspark.py)
 builds the same five tables by hand in PySpark (the course's way) into the database
 `gold_pyspark` and runs the same 22 checks as assertions
-([build_gold_pyspark.py L82-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/build_gold_pyspark.py#L82-L110)).
+([build_gold_pyspark.py L82-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/spark/build_gold_pyspark.py#L82-L110)).
 It then compares both results row by row, with `EXCEPT ALL` in both directions
-([build_gold_pyspark.py L113-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/build_gold_pyspark.py#L113-L120)):
+([build_gold_pyspark.py L113-L120](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/spark/build_gold_pyspark.py#L113-L120)):
 
 ```python
 def compare_with_dbt(spark: SparkSession) -> None:
@@ -135,7 +135,7 @@ become a materialization config, `ref()` and one word per test.
 
 dbt is slower: it runs one model and one test query at a time (threads 1 in the session target,
 [`profiles.yml`
-L17-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/profiles.yml#L17-L22)),
+L17-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/profiles.yml#L17-L22)),
 rebuilds the four dimension tables every run (materialized `table`) and starts a session; the PySpark job computes
 everything in one session and counts its 22 checks in a few shared scans. A long-lived Thrift Server with
 `threads: 2` (target `local`) removes the session cost; incremental dimensions would shorten the daily run.
@@ -156,7 +156,7 @@ Adding a `dim_terminal` (one row per POS/ATM terminal from the fact's `terminal_
 A failing dbt test fails the Airflow task, so `publish_gold` does not run and the features are not built. `dbt build`
 runs the 19 generic tests of `schema.yml` and the 3 singular ones right after each model; `dp2_silver_to_gold` runs
 it first, next to `build_labels`, once `dp2_bronze_to_silver` has validated and published silver
-([`dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/dp2_silver_to_gold.py)).
+([`dp2_silver_to_gold.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/dp2_silver_to_gold.py)).
 
 Every DP2 run of the backfill passed 27/27 (5 models, 22 tests), when DP2 was still the single DAG
 `dp2_bronze_to_gold`. The silver validation drill in [airflow.md](airflow.md) shows a failing test one step earlier;
@@ -171,7 +171,7 @@ in green:
 
 The same manifest feeds DataHub (`datahub_metadata` DAG, recipe
 [`pipelines/airflow/dags/datahub_recipes/dbt.yml`
-L3-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/datahub_recipes/dbt.yml#L3-L10)),
+L3-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/datahub_recipes/dbt.yml#L3-L10)),
 which merges each model with its hive table: SQL, column docs and test results sit next to the Great Expectations
 assertions, the 22 dbt tests shown as 27 assertions
 ([datahub.md](datahub.md#what-datahub-holds)).
@@ -182,13 +182,13 @@ assertions, the 22 dbt tests shown as 27 assertions
   every version since 2024. So `dim_customer` is a model (lag over a hash of the tracked attributes,
   city compared after normalization,
   [`pipelines/dbt/models/gold/dim_customer.sql`
-  L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/dbt/models/gold/dim_customer.sql#L4-L22));
+  L4-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/dbt/models/gold/dim_customer.sql#L4-L22));
   decision recorded 2026-10-17.
 - `ClassCastException LocalDate -> java.sql.Date` on `min/max(date)` with Delta on the Thrift Server: Delta's
   metadata-only query clashes with the Thrift Server's java8 time API. Fix:
   `spark.databricks.delta.optimizeMetadataQuery.enabled=false`
   ([`infra/docker-compose.yaml`
-  L286-L289](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L286-L289)).
+  L286-L289](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L286-L289)).
 - Docker's DNS failed with the Thrift Server up next to DataHub: its 1 GB driver and 1 GB executor, always held,
   pushed the 8 GB Docker VM into swap (`Unable to execute HTTP request:
   seaweedfs`). In Airflow, dbt therefore uses the `session` target, a Spark session for the task's length in the

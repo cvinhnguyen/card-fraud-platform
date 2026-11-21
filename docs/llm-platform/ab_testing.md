@@ -8,7 +8,7 @@ The fraud model's A/B test, a challenger model in the Scoring API, is a separate
 
 | | |
 |---|---|
-| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml), [`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/ab-tests.json), [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval) |
+| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml), [`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards/ab-tests.json), [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval) |
 | Runs on | kind: agentgateway in namespace `agentgateway-system`, the agents in namespace `kagent`; the evaluation in a `python:3.13-slim` container on the `kind` network |
 | Reads | `agents/eval/dataset.jsonl` and the bank documents in `generator/knowledge` (evaluation); the gateway's metrics (dashboard) |
 | Writes | `agents/eval/results/*.json` (per-question answers) |
@@ -61,7 +61,7 @@ Add `--out agents/eval/results/<name>.json` to keep the per-question answers.
 ## Agent model config (risk-agent A vs B)
 
 `abTests` in [`agents/chart/values-data-agents.yaml`
-L30-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values-data-agents.yaml#L30-L37):
+L30-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values-data-agents.yaml#L30-L37):
 
 ```yaml
 # A/B test of the risk agent's model config: B samples near-greedily and caps its answers (the global config leaves
@@ -75,19 +75,19 @@ modelConfigs:
 ```
 
 The chart makes `risk-agent-b` ([`agents/chart/templates/_helpers.tpl`
-L1-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/_helpers.tpl#L1-L9)),
+L1-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/_helpers.tpl#L1-L9)),
 a copy of `risk-agent` with the same Langfuse prompt and MCP (Model Context Protocol) tools, its own KEDA ScaledObject
 (autoscaling) and SandboxAgent, under the release's NetworkPolicy. It differs only in the ModelConfig
 `qwen3-8b-precise` ([`agents/chart/templates/modelconfigs.yaml`
-L1-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/modelconfigs.yaml#L1-L19)):
+L1-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/modelconfigs.yaml#L1-L19)):
 temperature 0.2 and at most 512 output tokens, against llama.cpp's defaults (temperature 0.8, no cap).
 
 The release's A2A route
-([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml))
+([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml))
 sent 50 % of the coordinator's `risk-agent` calls to each side during the test, and B gets 0 % since. Header
 `x-agent-variant: a|b` pins a side; the gateway's metrics (label `backend`) give calls, latency p50 and error share. For
 an agent in `abTests` the template writes three rules, pinned to A, pinned to B and the weighted split
-([a2a-gateway.yaml L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
+([a2a-gateway.yaml L30-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml#L30-L49)):
 
 ```yaml
     {{- range $name, $a := .Values.agents }}
@@ -115,17 +115,17 @@ an agent in `abTests` the template writes three rules, pinned to A, pinned to B 
 ## LLM version (route `llm`: Qwen3-8B vs Qwen3.8-27B)
 
 Configured in
-[`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml):
+[`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml):
 
 | Version | Model | Backend |
 |---|---|---|
-| A | the platform's model, Qwen3-8B Q4_K_M on llama.cpp | the llm-d InferencePool ([agentgateway.yaml L18-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L18-L31)) |
-| B | Qwen3.8-27B on Groq | an OpenAI-compatible `AgentgatewayBackend` with the key `llm-groq` from Vault ([agentgateway.yaml L36-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L36-L57)) |
+| A | the platform's model, Qwen3-8B Q4_K_M on llama.cpp | the llm-d InferencePool ([agentgateway.yaml L18-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L18-L31)) |
+| B | Qwen3.8-27B on Groq | an OpenAI-compatible `AgentgatewayBackend` with the key `llm-groq` from Vault ([agentgateway.yaml L36-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L36-L57)) |
 
 The route sent 80 % of model calls to A and 20 % to B until the canary stopped ([Decisions](#decisions)). The B backend
 rewrites model `qwen3-8b` and sets its own User-Agent ([Gotchas](#gotchas)); header `x-llm-variant: a|b` pins a side.
 The rules now
-([agentgateway.yaml L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L70-L84)):
+([agentgateway.yaml L70-L84](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L70-L84)):
 
 ```yaml
   rules:
@@ -146,7 +146,7 @@ The rules now
 ```
 
 The route's policy (API key, rate limits, masking of personal data (PII),
-[agentgateway.yaml L86-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L86-L123))
+[agentgateway.yaml L86-L123](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L86-L123))
 covers both versions: a phone number reaches Groq as `<masked>` ("Repeat exactly: my phone is 0912345678" came back as
 "my phone is <masked>"). The
 metrics (labels `backend` and `gen_ai_response_model`) give calls, round trip p50, error share, and input and output
@@ -154,9 +154,9 @@ tokens per call.
 
 ## Monitoring: dashboard "Card Support - A/B tests"
 
-[`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/ab-tests.json),
+[`infra/k8s/dashboards/ab-tests.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards/ab-tests.json),
 loaded by
-[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh).
+[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability.sh).
 A is blue and B orange. The top row compares risk-agent A and B (A2A calls per minute, latency p50, error share), the
 lower rows the LLM versions (also output and input tokens per call). Over the 2 hours of the runs, calls in range were
 25.2 (A) and 18.2 (B) for the agent, 108 and 30.2 for the LLM:
@@ -165,18 +165,18 @@ lower rows the LLM versions (also output and input tokens per call). Over the 2 
 
 ## Evaluation
 
-[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/dataset.jsonl)
-(in [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval))
+[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/dataset.jsonl)
+(in [`agents/eval/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval))
 held 12 card-policy questions for these runs (fees, disputes, authentication; 20 now, for the eval gate), each with the
 facts a correct answer must state, from the bank documents
-([`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/knowledge)).
+([`generator/knowledge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/knowledge)).
 `run_eval.py` sends each to the risk agent over A2A (`agent` mode, as the coordinator does) or straight to `/v1` with
 the policy document as context (`llm` mode)
 ([`agents/eval/run_eval.py`
-L65-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/run_eval.py#L65-L90)).
+L65-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/run_eval.py#L65-L90)).
 An answer is correct when it states every expected fact as a whole term and not negated: "3%" does not match "1.3%",
 "not free" does not match "free"
-([run_eval.py L51-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/run_eval.py#L51-L54)).
+([run_eval.py L51-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/run_eval.py#L51-L54)).
 Re-scoring every stored answer and every eval-gate answer in Langfuse with this rule on 2026-11-12 gave the same
 results. Command: [Run it](#run-it).
 
@@ -190,7 +190,7 @@ One experiment ran at a time; the agent runs had the LLM route at 100/0, so A an
 | LLM version | B: Qwen3.8-27B (Groq) | 12 / 12 | 0.47 s | 1.5 s |
 
 Per-question answers:
-[`agents/eval/results/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/results)
+[`agents/eval/results/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/results)
 (`*.json`). Unpinned, with the split on, two agent passes got 8 / 12 each and the LLM pass 12 / 12, with about 78 / 22
 of the LLM calls per side on the dashboard.
 
@@ -211,7 +211,7 @@ last model call landed on B, and Groq answered `429 ... output tokens per minute
 Agents send no `max_tokens`, and the free tier's 1,000 output tokens a minute per account is less than two agent
 answers; the dashboard's "LLM error share" shows B failing and A not. The default rule is now 100 / 0, and
 `x-llm-variant: b` gets a gateway default of `max_tokens: 512`
-([agentgateway.yaml L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L54-L57)).
+([agentgateway.yaml L54-L57](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L54-L57)).
 Since B only had a share of traffic, stopping it was a weight change. Resuming needs a paid Groq tier and a decision on
 sending (masked) customer text outside the bank.
 

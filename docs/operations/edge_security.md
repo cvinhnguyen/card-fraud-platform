@@ -7,7 +7,7 @@ cluster through a port-forward or a NodePort. Every secret lives in HashiCorp Va
 
 | | |
 |---|---|
-| Code | [`infra/k8s/edge.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge.sh), [`infra/k8s/edge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge), [`infra/k8s/tls.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tls.sh), [`infra/k8s/vault.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/vault.sh), [`infra/k8s/secrets.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh) |
+| Code | [`infra/k8s/edge.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge.sh), [`infra/k8s/edge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge), [`infra/k8s/tls.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tls.sh), [`infra/k8s/vault.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/vault.sh), [`infra/k8s/secrets.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh) |
 | Runs on | kind namespaces `nginx-ingress` (the controller and the `edge` chart's release; each Ingress sits in the namespace of its service), `vault` (Vault, dev mode) and `external-secrets` (External Secrets Operator) |
 | Reads | secret values from the gitignored `infra/.env`; the DuckDNS API for the DNS-01 challenge |
 | Writes | Vault `secret/card-fraud/<namespace>/<name>`, one ExternalSecret and Kubernetes Secret per secret, the wildcard certificate in `nginx-ingress/wildcard-tls` |
@@ -66,15 +66,15 @@ sh infra/k8s/secrets.sh   # after a value in infra/.env changes or a namespace i
 
 F5 NGINX Ingress Controller 5.6.3 (chart 2.7.3) runs on the kind node's ports 80 and 443, which
 [`infra/k8s/kind.yaml`
-L12-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/kind.yaml#L12-L14)
+L12-L14](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/kind.yaml#L12-L14)
 maps to `127.0.0.1`;
-[`infra/k8s/edge.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge.sh)
+[`infra/k8s/edge.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge.sh)
 installs it and the chart
-[`infra/k8s/edge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge):
+[`infra/k8s/edge/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge):
 one Ingress per route, generated from
-[`infra/k8s/edge/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge/values.yaml)
+[`infra/k8s/edge/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge/values.yaml)
 by
-[`infra/k8s/edge/templates/ingresses.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge/templates/ingresses.yaml).
+[`infra/k8s/edge/templates/ingresses.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge/templates/ingresses.yaml).
 
 | Host | Service | Rubric | Login | Rate limit per client IP |
 |---|---|---|---|---|
@@ -96,7 +96,7 @@ The template's annotations:
 | `redirect-to-https` | plain HTTP to HTTPS |
 
 [`infra/k8s/edge/templates/ingresses.yaml`
-L9-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge/templates/ingresses.yaml#L9-L29):
+L9-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge/templates/ingresses.yaml#L9-L29):
 
 ```yaml
   annotations:
@@ -126,7 +126,7 @@ The Web API route lists its paths (`/v1`, `/healthz`, and `/docs` and `/openapi.
 `/` and sends them to the card-data MCP server. The other two servers, and the MCP endpoint, are reached only through
 agentgateway with an agent's key; `/metrics` only by Prometheus inside the cluster
 ([`infra/k8s/edge/values.yaml`
-L54-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/edge/values.yaml#L54-L65)):
+L54-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/edge/values.yaml#L54-L65)):
 
 ```yaml
   - name: web-api             # Web API that pulls data by id: card data and policy chunks (MCP server card-data)
@@ -181,13 +181,13 @@ In Chrome, logged in as `admin` (the support chat has no screenshot yet).
 The domain `cvinhnguyen.duckdns.org` (DuckDNS, free) has its A record at `127.0.0.1`, since the platform runs on this
 machine; the wildcard certificate `*.cvinhnguyen.duckdns.org` covers every host. The machine is not reachable from
 the internet, so HTTP-01 cannot work:
-[`infra/k8s/tls.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tls.sh)
+[`infra/k8s/tls.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tls.sh)
 runs lego v5.5.2 in a container with DNS-01 through the DuckDNS API and writes certificate and key into Vault;
 External Secrets syncs them to `nginx-ingress/wildcard-tls`, NGINX's default TLS secret. Certificates last 90 days:
 re-run `tls.sh` within the last 30 (this one expires on 2027-01-18).
 
 [`infra/k8s/tls.sh`
-L22-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tls.sh#L22-L28):
+L22-L28](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tls.sh#L22-L28):
 
 ```sh
 # the token reaches the container through the environment (-e NAME without a value), not the command line
@@ -221,27 +221,27 @@ The same limit in the browser:
 
 ## Secrets: HashiCorp Vault + External Secrets
 
-[`infra/k8s/vault.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/vault.sh)
+[`infra/k8s/vault.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/vault.sh)
 installs and connects Vault 2.0.4 (chart 0.34.1) and External Secrets Operator 2.11.0:
 
 - Vault runs the KV (key-value) v2 engine at `secret/`; every secret is at `secret/card-fraud/<namespace>/<name>`.
 - External Secrets logs in with Kubernetes auth: the role `external-secrets` is bound to the operator's
   ServiceAccount and has the read-only policy `card-fraud-read` on `secret/card-fraud/*`
   ([`infra/k8s/vault.sh`
-  L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/vault.sh#L30-L34)).
+  L30-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/vault.sh#L30-L34)).
   It holds no Vault token. Vault's own root token (dev mode) is in its Helm release and pod environment
   ([Limits](#limits)).
-- [`infra/k8s/secrets.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh)
+- [`infra/k8s/secrets.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh)
   writes the values from `infra/.env` into Vault (JSON on stdin to the HTTP API) and one ExternalSecret per secret
   (ClusterSecretStore `vault`, refreshed hourly, so a change in Vault reaches the cluster within the hour).
 - `infra/.env` and `infra/.secrets/` are gitignored, and
-  [`infra/make_env.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/make_env.py)
+  [`infra/make_env.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/make_env.py)
   generates random local values.
 - The gateway keeps only SHA-256 hashes of its API keys.
 
 One call per secret writes the value to Vault and the ExternalSecret that reads it
 ([`infra/k8s/secrets.sh`
-L35-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh#L35-L55)):
+L35-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh#L35-L55)):
 
 ```sh
 secret() {
@@ -269,7 +269,7 @@ EOF
 
 The NGINX login is one of these secrets; only the apr1 hash of `EDGE_ADMIN_PASSWORD` is stored
 ([`infra/k8s/secrets.sh`
-L73-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh#L73-L74)):
+L73-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh#L73-L74)):
 
 ```sh
 htpasswd="admin:$(printf '%s' "$(val EDGE_ADMIN_PASSWORD)" | openssl passwd -apr1 -stdin)"

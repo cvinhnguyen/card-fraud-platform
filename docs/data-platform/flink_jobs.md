@@ -8,7 +8,7 @@ one city is most of the traffic (a hot key). Replay checks compare each job's ou
 
 | | |
 |---|---|
-| Code | [`pipelines/flink/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink), [`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/flink/Dockerfile), [`infra/docker-compose.yaml` L318-L360](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L318-L360) |
+| Code | [`pipelines/flink/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink), [`infra/flink/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/flink/Dockerfile), [`infra/docker-compose.yaml` L318-L360](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L318-L360) |
 | Runs on | compose profile `stream`: Flink 2.2.1 session cluster, 1 JobManager and 1 TaskManager with 6 slots; UI http://127.0.0.1:8088 |
 | Reads | Kafka `card_authorizations`; the replay topics `card_auth_replay` and `app_events_replay` |
 | Writes | Kafka `auth_counts_<mode>`, `auth_late_<mode>`, `card_features_rt`, `card_device_seen`, `ato_alerts_<order>`, `ato_alerts_cep`, `unit_counts_<mode>`; JSON lines under `s3://lakehouse/landing/card_authorizations/` |
@@ -93,11 +93,11 @@ offsets committed with its last checkpoint, along with its files.
 ## Jobs
 
 The image adds PyFlink 2.2.1 and the Kafka connector 5.0.0-2.2 to Flink 2.2.1
-([Dockerfile L4-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/flink/Dockerfile#L4-L21)).
+([Dockerfile L4-L21](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/flink/Dockerfile#L4-L21)).
 Most jobs use the PyFlink DataStream API; `ato_cep.py` and `raw_landing.py` use Flink SQL. The jobs in
-[`pipelines/flink/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink)
+[`pipelines/flink/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink)
 are mounted at `/opt/flink/jobs`
-([compose L349-L351](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L349-L351)).
+([compose L349-L351](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L349-L351)).
 
 - Bounded jobs stop at the offset that was latest at start and end FINISHED (dedup screenshot below), so their
   output can be compared with pandas row by row.
@@ -135,14 +135,14 @@ and the records per operator.
 
 The producer sets each Kafka message timestamp to the event time (`auth_ts`, `event_ts`), as a card network or app
 would
-([`generator/producer.py` L43-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/producer.py#L43-L55)).
+([`generator/producer.py` L43-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/producer.py#L43-L55)).
 The jobs use `WatermarkStrategy.for_bounded_out_of_orderness(...)` without a timestamp assigner, so watermarks are
 generated inside the Kafka source
-([`auth_windows.py` L108-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L108-L110)).
+([`auth_windows.py` L108-L110](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L108-L110)).
 
 ## Late events and duplicates
 
-[`pipelines/flink/auth_windows.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py)
+[`pipelines/flink/auth_windows.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py)
 counts authorizations per card per 5-minute tumbling window, with a watermark of 5 s (normal network delay is at most
 2 s). Each mode adds one fix:
 
@@ -150,10 +150,10 @@ counts authorizations per card per 5-minute tumbling window, with a watermark of
 |---|---|
 | `baseline` | Late events miss their window (here they go to a side output, so they can be counted); retries are counted twice. |
 | `lateness` | Allowed lateness keeps each window's state 30 minutes past the watermark: the window fires on time and again for each late event, so results are early and complete. A 30-minute watermark delay would hold every result back 30 minutes. |
-| `dedup` | A flag per `auth_id`, kept 1 hour (retries come 1 to 10 s later), passes only the first copy, before any count ([`auth_windows.py` L42-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L42-L55)). |
+| `dedup` | A flag per `auth_id`, kept 1 hour (retries come 1 to 10 s later), passes only the first copy, before any count ([`auth_windows.py` L42-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L42-L55)). |
 
 The modes in the job
-([`auth_windows.py` L117-L130](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L117-L130)):
+([`auth_windows.py` L117-L130](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L117-L130)):
 
 ```python
     events = env.from_source(source, wm, f"kafka {TOPIC}").map(parse, output_type=EVENT)
@@ -212,7 +212,7 @@ The first runs reported 0 late events. Three replay effects hid them:
    the send time) and every event landed in the current 5 minutes. Fix: event time as the Kafka timestamp.
 2. The default 200 ms watermark interval spans hours of event time in a replay, so a 30-minute-late event still
    arrived "before" the watermark; the Python map's 1,000-event bundles also let the source run ahead. Fix: watermark every 10 ms and a Python bundle size of 1
-   ([`auth_windows.py` L97-L102](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L97-L102)).
+   ([`auth_windows.py` L97-L102](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L97-L102)).
 3. The watermark is the minimum over Kafka partitions, and the 6 partitions were read at very different speeds: a
    debug job saw it at `Long.MIN_VALUE` for the first 30,000 events, then days behind, so few events looked late (206
    of 1,218 in a 50,000-event replay). The production fix, watermark alignment (`with_watermark_alignment` pauses
@@ -224,11 +224,11 @@ Live traffic has none of these effects: partitions advance with the wall clock, 
 
 ## Realtime features
 
-[`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/rt_features.py)
+[`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/rt_features.py)
 emits one feature row per authorization on arrival, over the same card's earlier authorizations: `auth_count_10m`,
 `amount_sum_1h`, `distinct_merchants_1h`, `distinct_units_1h`. It is a `KeyedProcessFunction` per card holding the
 last 90 minutes in state
-([`rt_features.py` L64-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/rt_features.py#L64-L91)),
+([`rt_features.py` L64-L91](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/rt_features.py#L64-L91)),
 since a window reports only when it closes and scoring needs the features of the payment now. Duplicates are dropped
 first. Locations map to the 34 units (the provinces after the reorganization) through the 63-row mapping, loaded once
 (a broadcast stream only if it changed at runtime).
@@ -252,8 +252,8 @@ one feature row each.
 
 In the platform, `rt_features.py --topic card_authorizations --live` resumes from the committed offsets of group
 `rt_features`, checkpoints every 10 s to `s3://lakehouse/flink/checkpoints` with the Kafka offsets
-([`rt_features.py` L108-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/rt_features.py#L108-L113);
-storage in [compose L343-L344](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L343-L344))
+([`rt_features.py` L108-L113](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/rt_features.py#L108-L113);
+storage in [compose L343-L344](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L343-L344))
 and runs until cancelled, feeding the Feast push jobs ([feature_store.md](../ml-platform/feature_store.md)).
 
 For the screenshots (2026-10-25) it read the replay topic, fed at 200 events/s by
@@ -275,15 +275,15 @@ interval of events (2,405 at 200 events/s), and 0 on `card_authorizations`:
 
 ## Out-of-order app events
 
-[`pipelines/flink/ato_sequence.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/ato_sequence.py)
+[`pipelines/flink/ato_sequence.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/ato_sequence.py)
 looks for the `new_device` account takeover pattern: `password_reset`, then `add_payee`, then `transfer`, within 10
 minutes in one session. 15% of app events reach Kafka after the session's next event (1 to 20 s, parallel uploads).
 Two orders:
 
 | Order | How events reach the state machine |
 |---|---|
-| `arrival` | a state machine per session ([`ato_sequence.py` L53-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/ato_sequence.py#L53-L65)), fed in arrival order |
-| `event` | events wait in keyed state until an event-time timer at each `event_ts` releases them in `event_ts` order once the watermark (30 s behind the newest event) passes; then the same state machine runs ([`ato_sequence.py` L67-L80](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/ato_sequence.py#L67-L80)) |
+| `arrival` | a state machine per session ([`ato_sequence.py` L53-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/ato_sequence.py#L53-L65)), fed in arrival order |
+| `event` | events wait in keyed state until an event-time timer at each `event_ts` releases them in `event_ts` order once the watermark (30 s behind the newest event) passes; then the same state machine runs ([`ato_sequence.py` L67-L80](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/ato_sequence.py#L67-L80)) |
 
 Replay: 150,000 app events from 2024-03-01 (before the biometric rule, which later stops most takeovers before the
 transfer); 67,443 sessions, 771 with the full pattern in event time, 658 of them generator-labelled `new_device`
@@ -300,7 +300,7 @@ arrival order, 24 in event time) fall outside the pandas truth query, which take
 
 ## Hot key
 
-[`pipelines/flink/hot_key.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/hot_key.py)
+[`pipelines/flink/hot_key.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/hot_key.py)
 counts authorizations per unit per day (an operations metric: payment volume by province), with parallelism 4. Ho Chi
 Minh is 60% of all authorizations, so `key_by(unit)` sends 60% of the stream, plus units that hash to the same place,
 to one subtask. The check runs both modes, then `two_phase` with every unit salted:
@@ -350,7 +350,7 @@ After, `two_phase`: data skew 28%, upstream backpressure 48%:
 ### How two-phase aggregation works
 
 The modes differ in the key and a second window adding the partial counts
-([`hot_key.py` L117-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/hot_key.py#L117-L128)):
+([`hot_key.py` L117-L128](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/hot_key.py#L117-L128)):
 
 ```python
     if mode == "hot":
@@ -389,7 +389,7 @@ A replay cannot show whether a job keeps up: the source reads a backlog faster t
 so it is backpressured in both modes; two-phase removes the hot spot, not the Python cost.
 
 `--live` makes the job unbounded (RUNNING, from the latest offset;
-[`hot_key.py` L106-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/hot_key.py#L106-L109)),
+[`hot_key.py` L106-L109](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/hot_key.py#L106-L109)),
 and the producer sends a fixed 16,000 events/s, more than `hot` can process:
 
 ```bash
@@ -431,7 +431,7 @@ After, `two_phase`:
 ## Raw events to bronze
 
 Flink SQL in
-[`pipelines/flink/raw_landing.py` L39-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/raw_landing.py#L39-L69)
+[`pipelines/flink/raw_landing.py` L39-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/raw_landing.py#L39-L69)
 copies `card_authorizations` unchanged (duplicates and late events included, plus Kafka partition and offset for
 tracing) to `s3://lakehouse/landing/card_authorizations/auth_date=YYYY-MM-DD/` as JSON lines. With `--live` it runs
 unbounded from the committed offsets of group `raw_landing` (the whole topic on the first start); without it, it is a
@@ -444,7 +444,7 @@ checkpoint (every 10 s); until then it is an unfinished S3 multipart upload, nex
 
 `ingest_bronze.py --part landing` appends the committed files to the Delta table `bronze.raw_card_authorizations`
 with a Spark file stream (`trigger(availableNow=True)`,
-[`pipelines/spark/ingest_bronze.py` L112-L116](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/spark/ingest_bronze.py#L112-L116)).
+[`pipelines/spark/ingest_bronze.py` L112-L116](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/spark/ingest_bronze.py#L112-L116)).
 Its checkpoint remembers the loaded files, so a late file in an older `auth_date` is still picked up and a re-run
 loads nothing twice. DP1 loads every file committed since its last run, so a day still being written arrives over two
 runs.
@@ -462,14 +462,14 @@ Delta in the next step.
 
 - Kafka deletes 2024-2026 messages as soon as a segment rolls: event-time timestamps are older than the default 7
   days of retention. Fix: `retention.ms=-1`, as
-  [`infra/init_infra.py` L35-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/init_infra.py#L35-L38)
+  [`infra/init_infra.py` L35-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/init_infra.py#L35-L38)
   and the check scripts (for example
-  [`pipelines/flink/check_windows.py` L35-L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/check_windows.py#L35-L36))
+  [`pipelines/flink/check_windows.py` L35-L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/check_windows.py#L35-L36))
   create them.
 - A side-output tag typed as a tuple fails to pickle in PyFlink 2.2, so the late-event tag is untyped
-  ([`auth_windows.py` L121-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L121-L122)).
+  ([`auth_windows.py` L121-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L121-L122)).
   In the same version, windows and state TTL take `Time`, watermarks take `Duration`
-  ([`auth_windows.py` L36-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/auth_windows.py#L36-L38)).
+  ([`auth_windows.py` L36-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/auth_windows.py#L36-L38)).
 - A job waits for slots, then fails with `NoResourceAvailableException`: the three live jobs hold 3 of the 6 slots,
   and `check_hot_key.py` and `hot_key.py --live` need 4. Fix: cancel `raw_landing` first (`flink list`, then
   `flink cancel <job id>`), then restart it with the release in its job name, losing nothing:

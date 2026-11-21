@@ -8,7 +8,7 @@ rebuilt the same way and reviewed. An Azure for Students subscription ($100 cred
 
 | | |
 |---|---|
-| Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/aks/predictor.yaml) |
+| Code | [`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform), [`infra/ansible/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/ansible), [`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/aks/predictor.yaml) |
 | Runs on | Azure, resource group `rg-cardfraud-dev` in `polandcentral` (each IaC run: created, checked, destroyed); Terraform, Ansible and kubectl run from the PC |
 | Reads | `services/predictor/` (code + production model) for the VM; for AKS the predictor pipeline's image in GHCR (`ghcr.io/cvinhnguyen/fraud-predictor:v1-<commit>`), pushed to ACR as `fraud/predictor:1` (the runs below took it from the former local registry) |
 | Writes | the Azure resources, `infra/ansible/inventory/hosts.ini`, `infra/.secrets/aks-kubeconfig`, the local Terraform state (the three files are gitignored) |
@@ -130,7 +130,7 @@ disks and the load balancer while they exist.
 
 ## Terraform
 
-[`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform)
+[`infra/terraform/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform)
 has one module per service and one folder per environment (the layout the rubric links to):
 
 ```text
@@ -144,9 +144,9 @@ infra/terraform/
 
 - azurerm 5 registers no resource providers: `resource_providers_to_register` lists the four needed
   ([`infra/terraform/envs/dev/versions.tf`
-  L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/envs/dev/versions.tf#L16-L22)),
+  L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/envs/dev/versions.tf#L16-L22)),
   and `node_provisioning_profile` is required on the AKS cluster ([`infra/terraform/modules/aks/main.tf`
-  L36-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/modules/aks/main.tf#L36-L38)).
+  L36-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/modules/aks/main.tf#L36-L38)).
 - The subscription id comes from `ARM_SUBSCRIPTION_ID`. State, plan, inventory (VM IP) and kubeconfig are
   gitignored; the state is local, since one person runs this.
 - `admin_cidr` is required and must be one address (`/32`), never a whole network; the AKS API server takes it as its
@@ -156,7 +156,7 @@ infra/terraform/
 
 The environment wires the resource group and the modules
 ([`infra/terraform/envs/dev/main.tf`
-L17-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/envs/dev/main.tf#L17-L62)).
+L17-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/envs/dev/main.tf#L17-L62)).
 The check on `admin_cidr` ([`infra/terraform/envs/dev/variables.tf`
 L13-L21](../../infra/terraform/envs/dev/variables.tf#L13-L21)):
 
@@ -174,9 +174,9 @@ variable "admin_cidr" {
 
 The NSG rules use it for SSH on port 22
 ([`infra/terraform/modules/network/main.tf`
-L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/modules/network/main.tf#L24-L34))
+L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/modules/network/main.tf#L24-L34))
 and the service ports ([`infra/terraform/modules/network/main.tf`
-L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/modules/network/main.tf#L36-L46)):
+L36-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/modules/network/main.tf#L36-L46)):
 
 ```hcl
   security_rule {
@@ -227,9 +227,9 @@ admin address as the only authorized range, `kubectl get nodes` from it answered
 
 ## Ansible
 
-[`infra/ansible/site.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/ansible/site.yml)
+[`infra/ansible/site.yml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/ansible/site.yml)
 applies four roles to the `serving` group (the Terraform VM; [`infra/ansible/site.yml`
-L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/ansible/site.yml#L10-L17)):
+L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/ansible/site.yml#L10-L17)):
 
 | Role | What it does |
 |---|---|
@@ -241,7 +241,7 @@ L10-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a9
 A code or model change rebuilds the image (handler on the copy); otherwise the role only checks the container. The
 play fails unless the model answers
 ([`infra/ansible/roles/predictor/tasks/main.yml`
-L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
+L25-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/ansible/roles/predictor/tasks/main.yml#L25-L44)):
 
 ```yaml
 - name: Model is loaded and ready
@@ -356,7 +356,7 @@ From the PC through the NSG (2026-10-21 run), curl reaches the model server on 8
 AKS runs the image the local platform serves, `fraud/predictor:1` (the model inside, as on kind), from the
 Terraform registry. Terraform grants the kubelet identity `AcrPull` on it, so the cluster holds no pull secret
 ([`infra/terraform/envs/dev/main.tf`
-L65-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/terraform/envs/dev/main.tf#L65-L70)):
+L65-L70](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/terraform/envs/dev/main.tf#L65-L70)):
 
 ```hcl
 resource "azurerm_role_assignment" "aks_acr_pull" {
@@ -367,7 +367,7 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
 }
 ```
 
-[`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/aks/predictor.yaml)
+[`infra/k8s/aks/predictor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/aks/predictor.yaml)
 is a plain Deployment, since one B2s v2 node has no room for KServe and cert-manager: 2 replicas,
 `maxUnavailable: 0`, a readiness probe on the model, non-root ([Run it](#run-it)).
 
@@ -399,7 +399,7 @@ admin IP:
 - `ssh` in the Ansible container refuses the key: bind-mounted files from Windows are world-readable. The container
   copies `/key` to `~/.ssh` with mode 600 first
   ([`infra/ansible/Dockerfile`
-  L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/ansible/Dockerfile#L8)).
+  L8](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/ansible/Dockerfile#L8)).
 - `[Errno 12] Cannot allocate memory` reading `model.json`: the Ansible container runs on the PC, and once failed this
   way on a loaded Docker Desktop VM. The rerun passed.
 - The first attempts (2026-10-21) failed: `Standard_B2s_v2` not allowed for AKS and out of VM capacity in

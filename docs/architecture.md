@@ -55,10 +55,10 @@ Every check task (`validate_*`) runs Great Expectations, records the results and
 #### What starts each batch pipeline
 
 No pipeline starts another. DP1 runs every night
-([`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/dp1_source_to_bronze.py)).
+([`pipelines/airflow/dags/dp1_source_to_bronze.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/dp1_source_to_bronze.py)).
 Each pipeline ends by announcing a new checked version of its zone (an Airflow dataset event carrying the business
 day), which schedules the pipeline that reads that zone
-([`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/common.py)).
+([`pipelines/airflow/dags/common.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/common.py)).
 So the DP2 silver pipeline depends on the bronze tables, not on DP1, and can also be started by hand at any time,
 even while DP1 writes: a Delta reader always gets the last committed version ([airflow.md](data-platform/airflow.md)).
 On the overview, Airflow's dotted arrows start pipelines and move no data; DP3's frame says it starts on a new gold
@@ -91,7 +91,7 @@ topics in and out); each bullet names its Flink API:
 
 | Job | Flink API | What it does |
 |---|---|---|
-| Card features ([`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/flink/rt_features.py)) | DataStream API with keyed state | the card features of each payment |
+| Card features ([`pipelines/flink/rt_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/flink/rt_features.py)) | DataStream API with keyed state | the card features of each payment |
 | First device | DataStream API with keyed state | the first device of each card |
 | Raw landing | Flink SQL through the Table API | writes the raw payments as JSON files into `landing/` for DP1 |
 | Account takeover alerts (novel idea 1) | Flink SQL through the Table API | uses SQL `MATCH_RECOGNIZE` to find three patterns in the app's events; so far run on a replay of the app events |
@@ -103,7 +103,7 @@ training. The feature jobs, the raw landing job and the push jobs run all the ti
 
 Feast (the two blue stores ending the streaming row) is the hand-over between Layers 1 and 2, so training and serving
 see the same 20 features (`fraud_model_v1`,
-[`ml/feature_repo/fraud_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/feature_repo/fraud_features.py)).
+[`ml/feature_repo/fraud_features.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/feature_repo/fraud_features.py)).
 
 | Store | What it is | Written by | Read by |
 |---|---|---|---|
@@ -120,7 +120,7 @@ Serving is on the left, under the online store; training on the right, under the
 #### Serving
 
 The authorization switch sends each payment to the Scoring API and waits (S1 to S5,
-[`services/scoring_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/scoring_api/app/main.py)).
+[`services/scoring_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/scoring_api/app/main.py)).
 The Kafka topic `fraud_predictions` (S6) logs what the model server never sees: the payment, the decision and the
 reason for a fallback. The per-day drift report (`ml/tools/drift_by_day.py`) reads it; the live drift path does not.
 
@@ -133,7 +133,7 @@ index) of each feature and of the score over the last 15 minutes against the tra
 #### Training
 
 The training pipeline
-([`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/pipelines/train_fraud_model.py))
+([`ml/pipelines/train_fraud_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/pipelines/train_fraud_model.py))
 runs seven steps as pods; the overview draws six (the check and the split share one), then the check "Better than
 production?". The training set has no box: it is an artifact passed between steps. The arrows inside the frame name
 what passes: label rows, the training set (a Delta version), the train, validation and test files, the model files,
@@ -143,19 +143,19 @@ Labels come from `gold.label_transaction`, features from the Feast offline store
 version in `lakehouse/ml/`, so any registered model traces back to its exact rows. Every trained model becomes an
 MLflow version, even one no better than production, for later comparison; only a better one gets the alias
 `challenger`
-([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/fraud_ml/registry.py)).
+([`ml/fraud_ml/registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/fraud_ml/registry.py)).
 The `production` and `challenger` models reach KServe through the [model release](#model-release)
 ([serving.md](ml-platform/serving.md#model-release-pipeline)).
 
 The first model was trained by hand in the JupyterLab notebook
-([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/notebooks/fraud_model.ipynb)),
+([`ml/notebooks/fraud_model.ipynb`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/notebooks/fraud_model.ipynb)),
 the compose service `notebook` on the training image. It uses the same seven functions, Feast features and MLflow;
 the overview draws it under the Drift API.
 
 #### Retraining on drift
 
 The drift pipeline (DAG `drift_monitoring`,
-[`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/drift_monitoring.py))
+[`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/drift_monitoring.py))
 scores the last 7 days daily with the production model and saves the report as an MLflow run whatever the result,
 which is why the overview draws the save before the check. When a PSI is above 0.25 or the PR-AUC fell more than
 0.05, it starts a training pipeline run with the newest labels. Those labels come from the simulation's ground truth
@@ -168,7 +168,7 @@ agentgateway is the wide purple bar across the panel, because every call passes 
 servers sit above it, the agents and MCP tool servers below. A question goes from the support chat
 (`https://support.<domain>`, login checked by NGINX) to the gateway; the chat page adds its API key server side, so
 the key never reaches the browser
-([`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/support-chat.yaml)).
+([`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/support-chat.yaml)).
 The gateway checks that key and passes the question to the coordinator, whose sub-tasks, tool calls and prompts all
 pass the gateway again (A1 to A10). A NetworkPolicy lets only the gateway (and the controller of kagent, which runs
 the agents) reach the coordinator, so nothing calls an agent past it. The kagent UI is an admin console off the
@@ -379,7 +379,7 @@ tool server pod only if Jenkins signed its image ([novel_supply_chain.md](operat
 
 | | |
 |---|---|
-| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/docs/diagrams/platform.py) |
+| Code | [`docs/diagrams/platform.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/docs/diagrams/platform.py) |
 | Runs on | host process (Python stdlib; headless Chrome or Edge renders the PNGs) |
 | Writes | `docs/images/platform-*.svg` and the PNGs next to them; prints the arrow tables above |
 | Related | [airflow.md](data-platform/airflow.md), [schema_design.md](data-platform/schema_design.md), [agents.md](llm-platform/agents.md), [cicd.md](operations/cicd.md), [iac.md](operations/iac.md) |

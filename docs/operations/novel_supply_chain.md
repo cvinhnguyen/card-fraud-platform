@@ -9,7 +9,7 @@ verification at admission).
 
 | | |
 |---|---|
-| Code | [`infra/k8s/supply-chain.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain.sh), [`infra/k8s/supply-chain/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain), [`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile) (stage "Sign image (cosign)") |
+| Code | [`infra/k8s/supply-chain.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain.sh), [`infra/k8s/supply-chain/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain), [`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile) (stage "Sign image (cosign)") |
 | Runs on | signing: Jenkins (compose profile `cicd`) with cosign v2.6.5 in its image; admission: Kyverno 1.19.1 in kind namespace `kyverno`, policy on namespace `card-support` |
 | Reads | images in GHCR (`ghcr.io/cvinhnguyen`, public packages) |
 | Writes | one signature artifact (`sha256-<digest>.sig`) per signed image, in the same registry |
@@ -64,7 +64,7 @@ helm uninstall kyverno -n kyverno                         # remove after the dem
 ## Problem
 
 The MCP servers in `card-support` serve card data, and two (card-data, policy-rag) hold the online stores' passwords ([`infra/k8s/secrets.sh`
-L65-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh#L65-L69)).
+L65-L69](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh#L65-L69)).
 Before this change the cluster ran whatever image a Deployment named, next to the customers' card data.
 
 - The registry of that time (compose service `registry:3` on `127.0.0.1:5001`) asked for no login.
@@ -77,23 +77,23 @@ Before this change the cluster ran whatever image a Deployment named, next to th
 | Piece | Where | Role |
 |---|---|---|
 | private key | `infra/.secrets/cosign.key` (gitignored), encrypted with `COSIGN_PASSWORD` from `infra/.env` | signs in CI |
-| public key | [`infra/k8s/supply-chain/cosign.pub`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain/cosign.pub) | written into the policy |
-| signing script | [`infra/k8s/supply-chain.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain.sh) `sign <repo> <tag>` | signs one image by digest |
-| policy | [`infra/k8s/supply-chain/signed-images.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain/signed-images.yaml) on Kyverno | admits or refuses Pods in `card-support` |
+| public key | [`infra/k8s/supply-chain/cosign.pub`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain/cosign.pub) | written into the policy |
+| signing script | [`infra/k8s/supply-chain.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain.sh) `sign <repo> <tag>` | signs one image by digest |
+| policy | [`infra/k8s/supply-chain/signed-images.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain/signed-images.yaml) on Kyverno | admits or refuses Pods in `card-support` |
 
 `COSIGN_PASSWORD` comes from
 [`infra/make_env.py`
-L45](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/make_env.py#L45).
+L45](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/make_env.py#L45).
 Jenkins gets key and password as the credentials `cosign-key` and `cosign-password`, from Docker secrets
 ([`infra/docker-compose.yaml`
-L846-L847](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L846-L847)),
+L846-L847](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L846-L847)),
 through [`infra/jenkins/casc.yaml`
-L28-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/casc.yaml#L28-L29).
+L28-L29](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/casc.yaml#L28-L29).
 
 ### Signing
 
 [`infra/k8s/supply-chain.sh`
-L15-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain.sh#L15-L31)
+L15-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain.sh#L15-L31)
 looks up the tag's digest in GHCR (`docker buildx imagetools inspect`) and signs
 `ghcr.io/cvinhnguyen/<repo>@<digest>` with cosign v2.6.5; the key reaches cosign only through its environment
 (`--key env://COSIGN_KEY`). In Jenkins, cosign is in the Jenkins image and pushes with the pipeline's
@@ -103,7 +103,7 @@ signature is a separate artifact in the same package; nothing goes to the public
 ### Admission
 
 Kyverno 1.19.1 (chart 3.9.1, only the admission controller:
-[`infra/k8s/supply-chain/kyverno-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain/kyverno-values.yaml))
+[`infra/k8s/supply-chain/kyverno-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain/kyverno-values.yaml))
 enforces two rules:
 
 | Rule | What it requires |
@@ -112,7 +112,7 @@ enforces two rules:
 | `signed-by-ci` | `verifyImages`: required, signature by `cosign.pub`, `mutateDigest` + `verifyDigest` |
 
 [`infra/k8s/supply-chain/signed-images.yaml`
-L14-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain/signed-images.yaml#L14-L31):
+L14-L31](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain/signed-images.yaml#L14-L31):
 
 ```yaml
 - name: platform-registry-only
@@ -145,10 +145,10 @@ screenshots show; since 2026-11-21 the steps run against `ghcr.io/cvinhnguyen` (
 ### 1. CI signs the image it built
 
 In
-[`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile)
+[`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile)
 the stage "Sign image (cosign)" sits between "Build + push image" and "Deploy"
 ([`services/card_support_mcp/Jenkinsfile`
-L58-L68](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile#L58-L68)):
+L58-L68](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile#L58-L68)):
 
 ```groovy
 stage('Sign image (cosign)') {
@@ -183,7 +183,7 @@ and `cosign verify` with the repo's public key, in the cosign container on the c
 
 `sh infra/k8s/supply-chain.sh` installs Kyverno and the policy
 ([`infra/k8s/supply-chain.sh`
-L33-L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/supply-chain.sh#L33-L36)).
+L33-L36](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/supply-chain.sh#L33-L36)).
 In `card-support`, `signed-by-ci` then refuses a pushed but unsigned image ("no signatures found"), and
 `platform-registry-only` refuses `alpine:3` from another registry before any signature check:
 

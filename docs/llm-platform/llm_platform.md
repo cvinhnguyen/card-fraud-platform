@@ -8,7 +8,7 @@ A/B test of two LLM versions: [ab_testing.md](ab_testing.md).
 
 | | |
 |---|---|
-| Code | [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml), [`infra/k8s/llm-d-router.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-d-router.yaml) |
+| Code | [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh), [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml), [`infra/k8s/llm-d-router.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-d-router.yaml) |
 | Runs on | kind namespace `agentgateway-system` (gateway, llm-d router, model server pods), kind namespace `kagent` (agents); llama.cpp as a host process on the Windows host's GPU |
 | Related | [llm_benchmark.md](llm_benchmark.md), [ab_testing.md](ab_testing.md), [agents.md](agents.md) |
 
@@ -100,11 +100,11 @@ capped prompt cache.
 
 The cluster sees the model through an InferencePool (Gateway API Inference Extension 1.6.2), installed with the llm-d
 router chart 0.9.0
-([`infra/k8s/llm-d-router.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-d-router.yaml)).
+([`infra/k8s/llm-d-router.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-d-router.yaml)).
 The pool selects pods labelled `app=qwen3-8b`, and its endpoint picker (EPP) chooses one per request. llm-d's default
 scorers read vLLM metrics that llama.cpp does not publish, so the picker uses two that need none: in-flight requests
 per endpoint, and prompt prefixes already routed to each
-([llm-d-router.yaml L11-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-d-router.yaml#L11-L27)):
+([llm-d-router.yaml L11-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-d-router.yaml#L11-L27)):
 
 ```yaml
 # The default scorers read vLLM's queue and KV-cache metrics, which llama.cpp does not publish. These two need
@@ -128,8 +128,8 @@ pluginsCustomConfig:
 
 The pool's pods are small nginx bridges to llama.cpp (Deployment `qwen3-8b`,
 [`infra/k8s/agentgateway.yaml`
-L146-L173](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L146-L173);
-ConfigMap `qwen3-8b-bridge`, [agentgateway.yaml L125-L144](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml#L125-L144)).
+L146-L173](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L146-L173);
+ConfigMap `qwen3-8b-bridge`, [agentgateway.yaml L125-L144](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml#L125-L144)).
 A bridge adds the model key and is Ready only while llama.cpp's `/health` answers 200, so the picker skips it while the
 model loads. On a GPU node the pool would select real model server pods, unnoticed by the agents; prefix-aware routing
 pays off only with two or more of them ([llm_benchmark.md](llm_benchmark.md)).
@@ -140,9 +140,9 @@ agentgateway 1.6.0 runs one Gateway, `agentgateway-proxy`, with three kinds of r
 
 | Route | Path | Backend | Defined in |
 |---|---|---|---|
-| `llm` | `/v1` | AgentgatewayBackend `qwen3-8b` (InferencePool) and `qwen3-8-27b-groq` (A/B version B, weight 0) | [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/agentgateway.yaml) |
-| `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp` | `/mcp/card-data`, `/mcp/fraud-score`, `/mcp/policy-rag` | the three MCP servers, one route each | [`services/card_support_mcp/chart/templates/gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/gateway.yaml) |
-| `<release>-internal`, `a2a-coordinator` | `/`, `/a2a/coordinator` | the agents | [`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml) |
+| `llm` | `/v1` | AgentgatewayBackend `qwen3-8b` (InferencePool) and `qwen3-8-27b-groq` (A/B version B, weight 0) | [`infra/k8s/agentgateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/agentgateway.yaml) |
+| `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp` | `/mcp/card-data`, `/mcp/fraud-score`, `/mcp/policy-rag` | the three MCP servers, one route each | [`services/card_support_mcp/chart/templates/gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/gateway.yaml) |
+| `<release>-internal`, `a2a-coordinator` | `/`, `/a2a/coordinator` | the agents | [`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml) |
 
 The MCP and A2A routes and policies: [agents.md](agents.md#mcp-gateway).
 
@@ -159,7 +159,7 @@ One AgentgatewayPolicy, because several on one route overwrite each other ([Gotc
 | `promptGuard` `streaming: Enabled`, a second response guard with `Reject` | the same patterns | Mask lets a streamed answer through (its bytes are already sent); Reject ends it with a `guardrail_blocked` error, and finds nothing in a buffered answer after the mask |
 
 The keys live in Vault; [`infra/k8s/secrets.sh`
-L82-L88](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/secrets.sh#L82-L88)
+L82-L88](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/secrets.sh#L82-L88)
 writes their hashes into that ConfigMap, and clients get theirs as Secrets synced from Vault. The policy
 ([`infra/k8s/agentgateway.yaml`](../../infra/k8s/agentgateway.yaml)):
 
@@ -232,7 +232,7 @@ contains a masked value, so this has not hit a real answer yet.
 
 kagent creates the ModelConfig `default-model-config` from Helm values in
 [`infra/k8s/llm-platform.sh`
-L45-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L45-L48):
+L45-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L45-L48):
 
 ```sh
 --set providers.default=openAI \
@@ -244,16 +244,16 @@ L45-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a9
 It speaks the OpenAI chat completions API to the gateway's `/v1`, asks for `qwen3-8b` (the backend's name and
 llama.cpp's alias), with the key in Secret `agentgateway-key` (External Secrets, from Vault).
 [`agents/chart/values.yaml`
-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values.yaml#L9)
+L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values.yaml#L9)
 sets `modelConfig: default-model-config` and the chart's helper ([`agents/chart/templates/_helpers.tpl`
-L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/_helpers.tpl#L15))
+L15](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/_helpers.tpl#L15))
 writes it into every Agent, so one change switches the model, gateway or key for all. Only the A/B variant B has its
 own config
-([`agents/chart/templates/modelconfigs.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/modelconfigs.yaml)),
+([`agents/chart/templates/modelconfigs.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/modelconfigs.yaml)),
 with other sampling settings. The agents' NetworkPolicy allows connections only to the gateway, the kagent
 controller, DNS and Jaeger, never to llama.cpp, the llm-d pool or Groq
 ([`agents/chart/templates/networkpolicy.yaml`
-L23-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/networkpolicy.yaml#L23-L38)).
+L23-L38](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/networkpolicy.yaml#L23-L38)).
 
 ## Gotchas
 

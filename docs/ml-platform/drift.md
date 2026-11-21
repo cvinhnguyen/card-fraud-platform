@@ -8,7 +8,7 @@ daily one measures accuracy. A generated month-long live period with data and co
 
 | | |
 |---|---|
-| Code | [`generator/generate_drift.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/generate_drift.py), [`services/drift_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/kserve-card-fraud.yaml) (payload logger, Broker, Trigger), [`ml/jobs/drift_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/drift_job.py), [`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/drift_monitoring.py) |
+| Code | [`generator/generate_drift.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/generate_drift.py), [`services/drift_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api), [`infra/k8s/kserve-card-fraud.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/kserve-card-fraud.yaml) (payload logger, Broker, Trigger), [`ml/jobs/drift_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/drift_job.py), [`pipelines/airflow/dags/drift_monitoring.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/drift_monitoring.py) |
 | Runs on | Drift API: compose service `drift-api` (profile `ml`, port 8002), fed through Knative Eventing in kind (Broker `default` and Trigger `drift-detector` in namespace `serving`); daily check: Airflow DAG `drift_monitoring` (compose profile `orch`); retraining: Kubeflow pipeline `train_fraud_model` in kind |
 | Reads | every request and response of InferenceService `card-fraud`, as CloudEvents from the KServe payload logger; the production model's `reference_profile.json`; ground truth `s3://lakehouse/ml/ground_truth/labels.parquet`; Feast offline store |
 | Writes | `data/drift/` (generator); live histograms in Redis (`drift:<minute>:<input>`); gauges `drift_psi{input}`; MLflow experiment `card_fraud_monitoring`; KFP runs `drift-retrain-<ds>` |
@@ -58,7 +58,7 @@ Replace `<ds>` with the day to check (`YYYY-MM-DD`).
 
 The 2-year history ends on 2026-10-15; the generator continues the same world (customers, cards, merchants,
 devices) by replaying `world()` with the same seeds ([`generate_drift.py`
-L33-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/generate_drift.py#L33-L44)).
+L33-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/generate_drift.py#L33-L44)).
 The live period covers 2026-10-16 .. 2026-11-15:
 
 | Phase | Days | Kind | What changes |
@@ -68,7 +68,7 @@ The live period covers 2026-10-16 .. 2026-11-15:
 | `sale_season` | 11-09 .. 11-12 (11/11) | data drift | volume x2, online merchants' weight x2, amounts x1.6: the inputs move, fraud behaviour does not |
 
 The `drift:` block of `generator/config.yaml` defines it all
-([config.yaml L97-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/config.yaml#L97-L112)):
+([config.yaml L97-L112](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/config.yaml#L97-L112)):
 
 ```yaml
 drift:                           # Layer 2: live period after the training data (generator/generate_drift.py)
@@ -90,7 +90,7 @@ drift:                           # Layer 2: live period after the training data 
 ```
 
 Outputs in `data/drift/`
-([`generate_drift.py` L8-L13](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/generator/generate_drift.py#L8-L13)):
+([`generate_drift.py` L8-L13](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/generator/generate_drift.py#L8-L13)):
 the authorization stream (with retries and late events, as the history), the request fields per payment, the
 core-banking export and the ground truth `labels/`, a `(transaction_id, is_fraud)` table of 279,915 rows that joins to
 any table by `transaction_id`. `--upload` puts the export and labels on S3
@@ -119,7 +119,7 @@ the ecom frauds come from a known device: concept drift with no visible data dri
 ## Real-time detection (Drift API)
 
 The Drift API
-([`services/drift_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api))
+([`services/drift_api/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api))
 gets the model's inputs and outputs from the model server itself, so scoring never waits on it. It is KServe's
 standard detector setup: outlier, adversarial and drift detectors each hang off the same Broker.
 
@@ -149,7 +149,7 @@ flowchart LR
    instance's features, a response event each score, with no join.
 
 Endpoint rules
-([`services/drift_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api/app/main.py)):
+([`services/drift_api/app/main.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api/app/main.py)):
 
 - Instances are dicts by feature name, so order does not matter. A positional list is read in the reference
   profile's order, which `fetch_model.py` checks against the model's at release; a wrong length is rejected.
@@ -163,27 +163,27 @@ How the counts become a PSI:
 - Reference: the production model's `reference_profile.json`, the validation period's decile edges and row shares
   per bin for each input and the score, plus a `missing` bin so a feature that suddenly goes NULL (a broken join or a
   dead stream) drifts too.
-  [`services/predictor/fetch_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/predictor/fetch_model.py)
+  [`services/predictor/fetch_model.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/predictor/fetch_model.py)
   downloads it next to the model; run it before `drift-api` starts, because compose bind-mounts the file
   ([`infra/docker-compose.yaml`
-  L779-L782](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L779-L782))
+  L779-L782](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L779-L782))
   and a missing file becomes an empty directory.
 - Live: one Redis hash per minute and input (`drift:<minute>:<input>`, `HINCRBY bin 1`, TTL 6 h,
   [`services/drift_api/app/store.py`
-  L24-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api/app/store.py#L24-L35)).
+  L24-L35](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api/app/store.py#L24-L35)).
   Replicas keep no state, so any number can count into the same buckets.
 - `GET /v1/drift` sums the last 15 minutes and computes the PSI per input,
   `sum (live% - ref%) * ln(live% / ref%)`: < 0.1 stable, 0.1-0.25 moderate, > 0.25 major. Below `MIN_EVENTS` (100,
   ~10 per decile bin) an input is `too_few_events` and cannot raise `drift`; the first live run reported PSI 12 and
   `drift: true` from 9 events
-  ([`main.py` L112-L126](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api/app/main.py#L112-L126)).
+  ([`main.py` L112-L126](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api/app/main.py#L112-L126)).
   The gauges `drift_psi{input}` follow every report.
 - It counts what the model received and answered: on a Scoring API fallback for a slow model both events count, on
   a model failure only the request.
 
 The PSI of one input, with a floor `EPS = 1e-4` for empty bins
 ([`services/drift_api/app/psi.py`
-L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/drift_api/app/psi.py#L24-L34)):
+L24-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/drift_api/app/psi.py#L24-L34)):
 
 ```python
 def psi(reference: dict[str, float], live: dict[str, int]) -> float | None:
@@ -241,12 +241,12 @@ python ml/tools/drift_by_day.py --days 2026-10-19,2026-10-27,2026-11-03
 Scoring at 30 requests/s (one worker scores ~45/s, [serving.md](serving.md)) gave 32,017 decisions, 34 fallbacks.
 The Drift API then read them from Kafka `fraud_predictions` through a forwarder job (now the payload logger). Its
 15-minute window is wall-clock time, so
-[`ml/tools/drift_by_day.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/tools/drift_by_day.py)
+[`ml/tools/drift_by_day.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/tools/drift_by_day.py)
 regroups the decisions by payment day with the Drift API's binning and PSI code, and joins the ground truth.
 
 The replay outruns the feature path
 ([`ml/tools/replay_scoring.py`
-L5-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/tools/replay_scoring.py#L5-L10)):
+L5-L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/tools/replay_scoring.py#L5-L10)):
 a day plays in ~80 s (~1,000x), so the few seconds from Kafka through Flink to Redis are hours of replayed time.
 A card's last authorizations are often not online yet, so the realtime `*_now` features read low and show PSI that
 production would not; request features (amount, channel, ...), daily stats and the offline store are unaffected.
@@ -271,9 +271,9 @@ and `fraud_shift` phases.
 
 Concept drift needs labels. Every day DAG `drift_monitoring`
 ([`drift_monitoring.py`
-L23-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/drift_monitoring.py#L23-L48))
+L23-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/drift_monitoring.py#L23-L48))
 runs
-[`drift_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/drift_job.py)
+[`drift_job.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/drift_job.py)
 on the last 7 days:
 
 1. entity rows of the window = ground truth + request fields + device, `event_timestamp = txn_ts - 1 ms` (as
@@ -284,7 +284,7 @@ on the last 7 days:
 5. branch: retrain when any PSI > 0.25 (`drift_psi_threshold`) or the PR-AUC fell more than 0.05
    (`drift_pr_auc_drop`) below the model's own test PR-AUC
    ([`drift_job.py`
-   L72-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/drift_job.py#L72-L76));
+   L72-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/drift_job.py#L72-L76));
    `trigger_retraining` starts the KFP pipeline `train_fraud_model` through the KFP API with `label_as_of` = the run's
    day.
 
@@ -312,7 +312,7 @@ it without changing any schedule:
 
 - `AIRFLOW__SCHEDULER__ALLOW_TRIGGER_IN_FUTURE` (compose,
   [`infra/docker-compose.yaml`
-  L61-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L61-L65))
+  L61-L65](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L61-L65))
   lets the scheduler run the *triggered* DAGs DP2, DP3 and `feast_materialize` (then `schedule=None`, started by DP1's
   and DP2's trigger tasks).
 - The daily DAGs `dp1_source_to_bronze` and `drift_monitoring` run in-process as `airflow dags test <dag> <ds>`,
@@ -352,7 +352,7 @@ the 10-22 run); the scheduler was stopped to free memory for the KFP run, hence 
 
 The 11-02 run submitted the KFP run `drift-retrain-2026-11-02` (`a7cfc35f`, `label_as_of` 2026-11-02)
 ([`drift_monitoring.py`
-L39-L58](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/drift_monitoring.py#L39-L58)).
+L39-L58](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/drift_monitoring.py#L39-L58)).
 It failed in step 2 with `OutOfMemoryError: Java heap space` (a heap tuned to the previous run's peak,
 [ml_training.md](ml_training.md#gotchas)). The resubmitted run (`ce0b680c`, same argument) passed after a KFP retry
 of its evaluate step, which failed once on MLflow's presigned URLs (same Gotchas table):
@@ -384,7 +384,7 @@ On Airflow:
   `data_interval_end` loaded folders up to ds while the validation (correctly) wanted `ds + 1`. Sensor and load now
   use `macros.ds_add(ds, 1)`, the validation's day in every kind of run
   ([`pipelines/airflow/dags/dp1_source_to_bronze.py`
-  L47-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/dp1_source_to_bronze.py#L47-L54)).
+  L47-L54](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/dp1_source_to_bronze.py#L47-L54)).
 - `The key 'ds' in args is a part of kwargs and therefore reserved` from `trigger_retraining(host, ds)`: Airflow
   passes its context by name, so the parameter is now `label_as_of`.
 - The drift job's Spark session needs the Hive metastore up: Feast reads tables by path, but the shared
@@ -394,7 +394,7 @@ On the event feed:
 
 - Calls work but nothing is logged: NodePort 31080 points at the model's 8080 (as before the logger existed) and
   skips the agent. Point it at 9081
-  ([`infra/k8s/nodeports.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/nodeports.yaml));
+  ([`infra/k8s/nodeports.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/nodeports.yaml));
   KServe's own Service `card-fraud-predictor` moves to 9081 by itself.
 - Events minutes late, some counted twice: the first endpoint answered `{"counted": n}`, a broken reply event to the
   broker, which retried every delivery up to 10 times with a delay doubling from 0.2 s. It now answers `202`.

@@ -8,7 +8,7 @@ Langfuse for tracing and prompt management only).
 
 | | |
 |---|---|
-| Code | [`agents/eval/langfuse_gate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/langfuse_gate.py), [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents), [`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/dataset.jsonl), [`agents/eval/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/Dockerfile) |
+| Code | [`agents/eval/langfuse_gate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/langfuse_gate.py), [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents), [`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/dataset.jsonl), [`agents/eval/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/Dockerfile) |
 | Runs on | Jenkins job `card-support-data-agents`, stage "Eval gate (Langfuse experiment)": the runner image `fraud/agent-eval:ci` on the `kind` network, asking the risk agent in kind namespace `kagent` through the gateway |
 | Reads | Langfuse prompt `card-support/risk-agent` (label `production`); `agents/eval/dataset.jsonl` (20 questions) |
 | Writes | Langfuse dataset `card-support/risk-agent` (items, one experiment per run, `accuracy` scores); `helm rollback` of release `card-support-data-agents` below the bar |
@@ -74,14 +74,14 @@ after the eval found answers that gave up without a search (step 6):
 
 ### 2 and 3. The pipeline deploys the prompt and smoke-tests the agent
 
-[`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents):
+[`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents):
 
 1. Pulls the production prompts with
-   [`agents/fetch_prompts.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/fetch_prompts.sh).
+   [`agents/fetch_prompts.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/fetch_prompts.sh).
 2. Validates the chart: `helm lint`, then Helm's server-side dry run (`helm upgrade --dry-run=server`).
-3. Deploys with `helm upgrade --atomic` ([Jenkinsfile.data-agents L54-L59](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L54-L59))
+3. Deploys with `helm upgrade --atomic` ([Jenkinsfile.data-agents L57-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L57-L62))
    and waits with `agents/wait_ready.sh` until kagent reports each Agent's new generation Ready.
-4. Asks each agent one question through the gateway ([Jenkinsfile.data-agents L65-L87](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L65-L87)).
+4. Asks each agent one question through the gateway ([Jenkinsfile.data-agents L68-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L68-L90)).
 5. Runs the eval gate.
 
 The stage view of the deploys of 2026-10-24: #35 passed the gate in 6 min 25 s, #37 failed it after 5 min 52 s
@@ -92,20 +92,20 @@ runs with nothing to deploy:
 
 ### 4. The eval dataset is a Langfuse dataset
 
-[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/dataset.jsonl)
+[`agents/eval/dataset.jsonl`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/dataset.jsonl)
 has 20 card-policy questions over four of the five bank documents (none from `faq`), each with the facts a correct
 answer must state, in several accepted spellings ("100,000" / "100000" / "100.000"). The gate upserts them into the
 Langfuse dataset `card-support/risk-agent`, idempotent by item id ([`agents/eval/langfuse_gate.py`
-L35-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/langfuse_gate.py#L35-L41)):
+L35-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/langfuse_gate.py#L35-L41)):
 
 ![Langfuse dataset card-support/risk-agent: each item is a question with the expected facts and the document it comes from](../images/eval_dataset.png)
 
 ### 5. The deployed agent answers the dataset as an experiment
 
-[`agents/eval/langfuse_gate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/langfuse_gate.py)
+[`agents/eval/langfuse_gate.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/langfuse_gate.py)
 (Langfuse Python SDK 5.0.3, `dataset.run_experiment`) asks the risk agent each question over A2A through the gateway.
 An item evaluator scores `accuracy` 1 or 0 (every expected fact stated), a run evaluator averages
-([langfuse_gate.py L43-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/langfuse_gate.py#L43-L52)):
+([langfuse_gate.py L43-L52](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/langfuse_gate.py#L43-L52)):
 
 ```python
 def task(*, item, **kwargs):
@@ -121,13 +121,13 @@ def average(*, item_results, **kwargs):
 ```
 
 The runner is a small image
-([`agents/eval/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/Dockerfile));
+([`agents/eval/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/Dockerfile));
 Jenkins holds only the Langfuse keys and the A2A key. The same dataset drives the A/B evaluations
-([`agents/eval/run_eval.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/eval/run_eval.py),
+([`agents/eval/run_eval.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/eval/run_eval.py),
 [A/B testing](ab_testing.md)). The stage runs it twice (`--repeats 2`,
-[Jenkinsfile.data-agents L99-L105](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L99-L105))
+[Jenkinsfile.data-agents L102-L108](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L102-L108))
 and passes at a mean of at least `EVAL_MIN_ACCURACY = 0.6`
-([Jenkinsfile.data-agents L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L19)).
+([Jenkinsfile.data-agents L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L19)).
 Build #32: run 1 0.90, run 2 0.95, mean 0.93, pass, coordinator pipeline started:
 
 ![Jenkins console of card-support-data-agents #32: run 2/2 accuracy 0.95, accuracy 0.93 over 2 runs of 20 questions (gate 0.60): pass, then the coordinator pipeline is scheduled](../images/eval_console_pass.png)
@@ -153,7 +153,7 @@ the agent taking the prompt's exit without searching ([Problem](#problem)), the 
 
 Below 0.6 the stage fails the build, and the failure handler runs `helm rollback` to the previous revision
 ([`agents/Jenkinsfile.data-agents`](../../agents/Jenkinsfile.data-agents)), so the coordinator pipeline does not run
-([Jenkinsfile.data-agents L112-L115](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L112-L115)).
+([Jenkinsfile.data-agents L115-L118](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L115-L118)).
 In the builds shown, the gate stage ran the rollback itself, with the same result. Build #20:
 
 ![Jenkins console of card-support-data-agents #20: accuracy 0.58 (gate 0.60): FAIL, helm rollback card-support-data-agents, Rollback was a success](../images/eval_console_fail.png)

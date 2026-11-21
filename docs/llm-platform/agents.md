@@ -9,7 +9,7 @@ agentgateway, which checks the caller's key and allows only what it needs. The m
 
 | | |
 |---|---|
-| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart), [`services/card_support_mcp/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp), [`agents/registry/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/registry), [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh) |
+| Code | [`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart), [`services/card_support_mcp/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp), [`agents/registry/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/registry), [`infra/k8s/llm-platform.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh) |
 | Runs on | kind: the agents in namespace `kagent` (kagent 0.10.3), the MCP servers in `card-support`, agentgateway in `agentgateway-system`, Agent Substrate in `ate-system`, agentregistry in `agentregistry` |
 | Reads | Feast `card_fraud` online store (Redis), Feast `card_support_kb` online store (pgvector), the Layer 2 Fraud Scoring API, llama.cpp embeddings; the system prompts from Langfuse at deploy time |
 | Related | [llm_platform.md](llm_platform.md), [ab_testing.md](ab_testing.md), [rag_pipeline.md](rag_pipeline.md), [observability.md](../operations/observability.md), [cicd.md](../operations/cicd.md), [novel_eval_gate.md](novel_eval_gate.md) |
@@ -72,9 +72,9 @@ that caller's rules and limits the rate:
 ## Run it
 
 The pipelines deploy all of this ([cicd.md](../operations/cicd.md#agents)). By hand, run these from the repo root after
-[`infra/k8s/up.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/up.sh).
+[`infra/k8s/up.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/up.sh).
 The agents then take the prompts in
-[`agents/chart/prompts/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/prompts)
+[`agents/chart/prompts/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/prompts)
 (`<agent>.md`), which the pipeline replaces with the Langfuse prompts labelled `production`.
 
 ```bash
@@ -105,16 +105,16 @@ One MCP server per rubric item that asks for a tool:
 
 | Agent | Tools (MCP server) | Release, pipeline |
 |---|---|---|
-| card-data-agent | `get_card_data`, `get_policy_chunk` (`card-data-mcp`) | `card-support-data-agents`, [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents) |
+| card-data-agent | `get_card_data`, `get_policy_chunk` (`card-data-mcp`) | `card-support-data-agents`, [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents) |
 | risk-agent (and its A/B variant risk-agent-b) | `score_payment` (`fraud-score-mcp`), `search_policy` (`policy-rag-mcp`) | same release |
-| coordinator | the two agents above, over A2A | `card-support-coordinator`, [`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.coordinator) |
+| coordinator | the two agents above, over A2A | `card-support-coordinator`, [`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.coordinator) |
 
 One Helm chart
-([`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart))
+([`agents/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart))
 renders declarative kagent 0.10.3 Agents on the Go ADK runtime from a values file per release
-([`agents/chart/values-data-agents.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values-data-agents.yaml),
-[`agents/chart/values-coordinator.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values-coordinator.yaml)),
-each listing its MCP servers and tools ([values-data-agents.yaml L5-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values-data-agents.yaml#L5-L19)).
+([`agents/chart/values-data-agents.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values-data-agents.yaml),
+[`agents/chart/values-coordinator.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values-coordinator.yaml)),
+each listing its MCP servers and tools ([values-data-agents.yaml L5-L19](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values-data-agents.yaml#L5-L19)).
 Each Agent carries its Langfuse system prompt inline (`systemMessage`, in `agents/chart/templates/_helpers.tpl`) next
 to the annotation `card-support/prompt` with its version, so one write changes both
 ([cicd.md](../operations/cicd.md#agents)).
@@ -122,9 +122,9 @@ to the annotation `card-support/prompt` with its version, so one write changes b
 ## MCP gateway
 
 Each MCP server is reachable only on its own gateway route, `/mcp/<server>`
-([`services/card_support_mcp/chart/templates/gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/gateway.yaml)).
+([`services/card_support_mcp/chart/templates/gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/gateway.yaml)).
 kagent sees it as a RemoteMCPServer
-([`services/card_support_mcp/chart/templates/mcp-servers.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/mcp-servers.yaml))
+([`services/card_support_mcp/chart/templates/mcp-servers.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/mcp-servers.yaml))
 that calls that route with the key of the server's agent, from a Secret synced from Vault.
 
 | Policy | Setting | Why |
@@ -136,8 +136,8 @@ that calls that route with the key of the server's agent, from a Secret synced f
 
 Route, backend and policy come from the release's values (`server`, `agent`; the rate limit in
 [`services/card_support_mcp/chart/values.yaml`
-L38-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values.yaml#L38-L41)).
-The policy ([gateway.yaml L30-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/gateway.yaml#L30-L53)):
+L38-L41](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values.yaml#L38-L41)).
+The policy ([gateway.yaml L30-L53](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/gateway.yaml#L30-L53)):
 
 ```yaml
 # Who: an API key from agentgateway-api-keys. How much: a request rate limit. What: only the key of this server's
@@ -181,12 +181,12 @@ as Bearer token, JSON-RPC body; stateless servers need no `initialize` before `t
 
 kagent's `proxy.url`
 ([`infra/k8s/llm-platform.sh`
-L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L49))
+L49](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L49))
 sends every agent-as-tool call to the gateway, with the header `x-kagent-host: <agent>.<namespace>`, instead of to the
 other agent's Service. The chart adds the routes and policies
-([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml):
-internal route [a2a-gateway.yaml L50-L68](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml#L50-L68),
-public route [a2a-gateway.yaml L69-L104](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/a2a-gateway.yaml#L69-L104)):
+([`agents/chart/templates/a2a-gateway.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml):
+internal route [a2a-gateway.yaml L50-L68](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml#L50-L68),
+public route [a2a-gateway.yaml L69-L104](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/a2a-gateway.yaml#L69-L104)):
 
 | Route | Who may call | Policy |
 |---|---|---|
@@ -202,7 +202,7 @@ coordinator's key (403) and accepts the support app's; the internal route refuse
 
 ## The three MCP servers
 
-[`services/card_support_mcp/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp)
+[`services/card_support_mcp/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp)
 is one FastAPI code base run as three servers. `MCP_SERVER` picks the server, and the app registers only its tools,
 both as MCP tools on `/mcp` (streamable HTTP, stateless, for the agents) and as REST routes under `/v1` (for people,
 the tests and the load test). Each server is its own Helm release (Deployment, probes, Secret, network policy, gateway
@@ -217,7 +217,7 @@ key, kagent tool server, registry entry).
 
 The split is one table
 ([`services/card_support_mcp/app/main.py`
-L39-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L39-L44)):
+L39-L44](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L39-L44)):
 
 ```python
 # server -> (its tools, the adapters those tools use: built at start-up and checked by /readyz)
@@ -229,7 +229,7 @@ SERVERS = {
 ```
 
 `build_service`
-([main.py L55-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L55-L62))
+([main.py L55-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L55-L62))
 builds only the adapters a server's tools use, so fraud-score never imports Feast and holds no store password.
 
 One image serves all three because they share schemas, metrics wrapper and FastAPI/MCP scaffolding and are released
@@ -240,8 +240,8 @@ Different owners or release cadences would make it three images.
 
 Every input and output is a pydantic model or a constrained parameter (id patterns in
 [`services/card_support_mcp/app/schemas.py`
-L8-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/schemas.py#L8-L9),
-request models in [schemas.py L64-L87](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/schemas.py#L64-L87)):
+L8-L9](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/schemas.py#L8-L9),
+request models in [schemas.py L64-L87](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/schemas.py#L64-L87)):
 
 | Input | Rule |
 |---|---|
@@ -251,7 +251,7 @@ request models in [schemas.py L64-L87](https://github.com/cvinhnguyen/card-fraud
 | search | 1 to 10 chunks |
 
 The MCP tools carry the same rules in their input schema
-([main.py L99-L125](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L99-L125)),
+([main.py L99-L125](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L99-L125)),
 so a bad argument from an agent is a tool error before any store is read; over REST it is a 422.
 
 FastAPI publishes each server's REST API as an OpenAPI page; card-data's, through NGINX
@@ -273,12 +273,12 @@ channel, and a search for 11 chunks each answer 422 with pydantic's reason; anot
 | Endpoint | Checks | Probe |
 |---|---|---|
 | `/healthz` | answers as long as the process serves requests, never checks a dependency | startup and liveness |
-| `/readyz` | the dependencies of this server's tools ([`services/card_support_mcp/app/main.py` L183-L194](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L183-L194)) | readiness |
+| `/readyz` | the dependencies of this server's tools ([`services/card_support_mcp/app/main.py` L183-L194](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L183-L194)) | readiness |
 
 A down store or upstream takes the pods out of traffic without a restart, since the fault is outside the pod. The
 probes
 ([`services/card_support_mcp/chart/templates/deployment.yaml`
-L40-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/deployment.yaml#L40-L50)):
+L40-L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/deployment.yaml#L40-L50)):
 
 ```yaml
           startupProbe:
@@ -309,38 +309,42 @@ Every handler is `async`. The HTTP clients (embeddings, Scoring API) are one poo
 Feast reads with no async API (the pgvector store) run in `asyncio.to_thread`, so one slow search does not hold up
 other requests (Feast reads in
 [`services/card_support_mcp/app/clients.py`
-L64-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/clients.py#L64-L77),
-HTTP clients in [clients.py L88-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/clients.py#L88-L122)).
+L64-L77](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/clients.py#L64-L77),
+HTTP clients in [clients.py L88-L122](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/clients.py#L88-L122)).
 The card-data load test is in [testing.md](../operations/testing.md#load-test-locust-1).
 
 ### Deployed with Helm: one release per server, rolling update, automatic rollback
 
 One chart,
-[`services/card_support_mcp/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart),
+[`services/card_support_mcp/chart/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart),
 with a values file per server
-([`services/card_support_mcp/chart/values-card-data.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values-card-data.yaml),
-[`services/card_support_mcp/chart/values-fraud-score.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values-fraud-score.yaml),
-[`services/card_support_mcp/chart/values-policy-rag.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values-policy-rag.yaml)),
+([`services/card_support_mcp/chart/values-card-data.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values-card-data.yaml),
+[`services/card_support_mcp/chart/values-fraud-score.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values-fraud-score.yaml),
+[`services/card_support_mcp/chart/values-policy-rag.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values-policy-rag.yaml)),
 gives three releases in namespace `card-support`. Each runs 2 replicas (card-data 2 to 4,
 [autoscaled](#autoscaling-the-card-data-server-keda)) with `RollingUpdate` (`maxSurge: 1`, `maxUnavailable: 0`,
-`minReadySeconds: 5`, [deployment.yaml L13-L16](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/deployment.yaml#L13-L16)):
+`minReadySeconds: 5`, [deployment.yaml L13-L16](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/deployment.yaml#L13-L16)):
 a new pod must pass `/readyz` before an old one stops, so a server never drops below two serving pods.
 
 The pipeline installs the releases one after the other with `helm upgrade --install --atomic`. Helm rolls back a
 release whose new pods do not get Ready in time, and the pipeline stops before the next server
 ([`services/card_support_mcp/Jenkinsfile`
-L69-L86](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile#L69-L86)):
+L69-L90](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile#L69-L90)):
 
 ```groovy
 stage('Deploy (helm --atomic)') {
   // one release per server, one after the other; rolling update with maxUnavailable 0; a release whose pods
   // never get Ready is rolled back by --atomic and stops the pipeline before the next server. deployed.txt lists
-  // the releases already upgraded, which post rolls back when a later step fails.
+  // the releases already upgraded, which post rolls back when a later step fails or the build is aborted.
   steps {
     withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
       sh '''
         rm -f deployed.txt
         for s in $SERVERS; do
+          # a release an aborted build left pending-* blocks every upgrade; helm rollback clears it
+          case "$(helm status $s-mcp -n card-support -o json 2>/dev/null | jq -r .info.status)" in
+            pending-*) helm rollback $s-mcp -n card-support --wait --timeout 4m;;
+          esac
           helm upgrade --install $s-mcp $SVC/chart -f $SVC/chart/values-$s.yaml -n card-support \
             --atomic --timeout 4m --set image.tag=$TAG
           echo $s >> deployed.txt
@@ -353,7 +357,7 @@ stage('Deploy (helm --atomic)') {
 ```
 
 MCP sessions are stateless (`sessionRouting: Stateless`,
-[gateway.yaml L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/gateway.yaml#L10)),
+[gateway.yaml L10](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/gateway.yaml#L10)),
 so a rolling update does not break a conversation. The releases in the cluster (`helm list`, Deployments and Services
 with 2 pods each, one pod's `MCP_SERVER`, the probes):
 
@@ -375,10 +379,10 @@ Two release tests, with a client calling through the gateway meanwhile:
 card-data can outgrow two replicas because it is also the public Web API: the gateway caps all agents at 300 calls a
 minute per server (5 per second), but NGINX limits only each client IP, to 5 requests per second. Its release turns on
 a KEDA (Kubernetes Event-driven Autoscaling) ScaledObject
-([`services/card_support_mcp/chart/templates/scaledobject.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/scaledobject.yaml),
-[values-card-data.yaml](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values-card-data.yaml)).
+([`services/card_support_mcp/chart/templates/scaledobject.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/scaledobject.yaml),
+[values-card-data.yaml](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values-card-data.yaml)).
 fraud-score and policy-rag, reached only through the gateway, keep a fixed 2 replicas (`autoscaling.enabled: false` in
-[`services/card_support_mcp/chart/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/values.yaml)).
+[`services/card_support_mcp/chart/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/values.yaml)).
 
 | Setting | Value | Why |
 |---|---|---|
@@ -387,7 +391,7 @@ fraud-score and policy-rag, reached only through the gateway, keep a fixed 2 rep
 | `replicas` | unset on the Deployment when autoscaling is on | a Helm upgrade does not reset what KEDA set |
 
 The trigger
-([scaledobject.yaml L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/scaledobject.yaml#L16-L22)):
+([scaledobject.yaml L16-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/scaledobject.yaml#L16-L22)):
 
 ```yaml
   triggers:
@@ -402,9 +406,9 @@ The trigger
 Test on 2026-10-25: the load test's locust pod ([testing.md](../operations/testing.md#load-test-locust-1)) in
 `card-support`, 10 users for 4 minutes against the Service, `NEW_CONNECTION=1`
 ([`services/card_support_mcp/locustfile.py`
-L29-L32](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/locustfile.py#L29-L32)):
+L29-L32](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/locustfile.py#L29-L32)):
 12,830 requests, 53.6 per second, 0 failures, p95 27 ms (MCP `get_card_data` p95 36 ms). Report:
-[`locust_card_data_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/docs/images/locust_card_data_scaling.html).
+[`locust_card_data_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/docs/images/locust_card_data_scaling.html).
 
 | Moment | Requests/s (all pods) | Replicas | Per pod |
 |---|---:|---:|---|
@@ -429,15 +433,15 @@ gateway's pooled connections to the Service reach a new pod only when it opens n
 
 Each Agent becomes a Deployment managed by kagent. The chart leaves `replicas` unset, so kagent does not fight the
 autoscaler, and adds a KEDA ScaledObject per agent
-([`agents/chart/templates/scaledobjects.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/scaledobjects.yaml)):
+([`agents/chart/templates/scaledobjects.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/scaledobjects.yaml)):
 2 to 4 replicas, scaled on the agent's A2A request rate through the gateway (Prometheus `agentgateway_requests_total`),
 0.04 requests per second per replica ([`agents/chart/values.yaml`
-L19-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values.yaml#L19-L27)).
+L19-L27](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values.yaml#L19-L27)).
 With conversations of about 40 s, that is about 1.6 in flight per replica. Replicas add no LLM capacity (one GPU behind
 llm-d); they keep a slow conversation from blocking the next.
 
 The template
-([scaledobjects.yaml L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/scaledobjects.yaml#L1-L22)):
+([scaledobjects.yaml L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/scaledobjects.yaml#L1-L22)):
 
 ```yaml
 {{- $as := .Values.autoscaling }}
@@ -472,8 +476,8 @@ Scaling tests, locust sending conversations to the gateway's `/a2a/coordinator`:
 
 | Run | Load | Conversations | Result |
 |---|---|---|---|
-| [`locust_agents_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/docs/images/locust_agents_scaling.html) | 6 users for 3 min 41 s | 31, 0 failures | coordinator 2 to 4 replicas, risk agent 2 to 4, card data agent 2 to 3, back down after the load |
-| [`locust_agents_a2a.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/docs/images/locust_agents_a2a.html) | 6 users, 5 minutes | 37, 0 failures | p95 85 s |
+| [`locust_agents_scaling.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/docs/images/locust_agents_scaling.html) | 6 users for 3 min 41 s | 31, 0 failures | coordinator 2 to 4 replicas, risk agent 2 to 4, card data agent 2 to 3, back down after the load |
+| [`locust_agents_a2a.html`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/docs/images/locust_agents_a2a.html) | 6 users, 5 minutes | 37, 0 failures | p95 85 s |
 | 2026-10-21, locust in a container on the kind network | 6 users for 3 minutes | 18, 0 failures | coordinator at 4 replicas and risk-agent-b at 3 right after |
 
 In the 2026-10-21 run the HPA events give the reason, the request rate through the gateway (`s0-prometheus`) above
@@ -485,14 +489,14 @@ target; the older events at the top are the HPAs' creation and an earlier coordi
 
 The chart also renders every agent as a SandboxAgent
 ([`agents/chart/templates/sandboxagents.yaml`
-L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/sandboxagents.yaml#L1-L22))
+L1-L22](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/sandboxagents.yaml#L1-L22))
 from the same spec helper, so it has the same prompt, tools and model config. A SandboxAgent runs each conversation in
 its own gVisor sandbox on Agent Substrate 0.0.9 ([`infra/k8s/llm-platform.sh`
-L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L34),
-kagent's worker pool at [llm-platform.sh L51-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L51-L55)),
+L34](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L34),
+kagent's worker pool at [llm-platform.sh L51-L55](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L51-L55)),
 restored from a snapshot taken once the agent was warm, so there is no cold start. Its egress is limited to the gateway
 and the kagent controller ([`agents/chart/values.yaml`
-L44-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/values.yaml#L44-L51)).
+L44-L51](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/values.yaml#L44-L51)).
 
 All sandboxed agents share the worker pool `kagent-default`, here a single worker. A worker runs one conversation,
 snapshots it and takes the next, so a fleet needs one worker per concurrent conversation, whatever the number of
@@ -519,7 +523,7 @@ agentgateway is the first service a question reaches:
 | 5 | coordinator | agentgateway again: route `card-support-data-agents-internal` to the other agents, then the MCP routes and route `llm` | as in [How it works](#how-it-works) |
 
 The chat is one template,
-[`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/support-chat.yaml),
+[`agents/chart/templates/support-chat.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/support-chat.yaml),
 on in the coordinator's release (`supportChat.enabled` in `values-coordinator.yaml`): the stock
 `nginxinc/nginx-unprivileged` image plus a ConfigMap with the page and proxy config, so no image to build. The HTML
 and JavaScript page sends A2A 0.3 JSON-RPC `message/send` to `/a2a/coordinator` and keeps the `contextId` for
@@ -638,11 +642,11 @@ The risk agent's side: one `score_payment` call (served by `fraud-score-mcp`); t
 agentregistry 0.4.0 keeps the catalog: which agents exist, their version and runtime image, where their definition
 lives and which MCP servers they use. It runs in namespace `agentregistry` with its own database on ml-db and RBAC
 limited to the `kagent` namespace ([`infra/k8s/llm-platform.sh`
-L60-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L60-L62)).
+L60-L62](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L60-L62)).
 The catalog is code,
-[`agents/registry/catalog.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/registry/catalog.yaml),
+[`agents/registry/catalog.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/registry/catalog.yaml),
 published with `arctl apply -f agents/registry/catalog.yaml`; install values in
-[`agents/registry/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/registry/values.yaml).
+[`agents/registry/values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/registry/values.yaml).
 The UI at `https://registry.<domain>` (basic auth) lists the three agents:
 
 ![agentregistry: the three agents](../images/registry_agents.png)
@@ -662,9 +666,9 @@ An agent can reach an MCP server, the model server or another agent only through
 
 | Pods | Accept connections from | May open connections to | Policy |
 |---|---|---|---|
-| agents | the gateway proxy and the kagent controller (A2A calls) | DNS, the gateway, the kagent controller and Jaeger | [`agents/chart/templates/networkpolicy.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/networkpolicy.yaml) |
-| support chat | only the NGINX Ingress Controller | only DNS and the gateway | [support-chat.yaml](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/chart/templates/support-chat.yaml) |
-| each MCP server | only the gateway, Prometheus and its own namespace; the public Web API (card-data) also from NGINX | not limited (the policy covers ingress only) | [`services/card_support_mcp/chart/templates/networkpolicy.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/networkpolicy.yaml) |
+| agents | the gateway proxy and the kagent controller (A2A calls) | DNS, the gateway, the kagent controller and Jaeger | [`agents/chart/templates/networkpolicy.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/networkpolicy.yaml) |
+| support chat | only the NGINX Ingress Controller | only DNS and the gateway | [support-chat.yaml](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/chart/templates/support-chat.yaml) |
+| each MCP server | only the gateway, Prometheus and its own namespace; the public Web API (card-data) also from NGINX | not limited (the policy covers ingress only) | [`services/card_support_mcp/chart/templates/networkpolicy.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/networkpolicy.yaml) |
 
 ## Gotchas
 

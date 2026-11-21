@@ -3,12 +3,12 @@
 When an agent answers slowly or a tool server fails, the team has to see which service, call and log line. One stack
 watches the Layer 3 platform and the Layer 2 Scoring API: Prometheus and Grafana for metrics (something is wrong),
 VictoriaLogs for logs (what happened), Jaeger for traces (one conversation through every service).
-[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh)
+[`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability.sh)
 installs it into `monitoring`; NGINX publishes the UIs ([edge_security.md](edge_security.md)).
 
 | | |
 |---|---|
-| Code | [`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh), [`infra/k8s/observability-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability-values.yaml), [`infra/k8s/monitors.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/monitors.yaml), [`infra/k8s/tracing.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tracing.yaml), [`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards) |
+| Code | [`infra/k8s/observability.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability.sh), [`infra/k8s/observability-values.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability-values.yaml), [`infra/k8s/monitors.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/monitors.yaml), [`infra/k8s/tracing.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tracing.yaml), [`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards) |
 | Runs on | kind namespace `monitoring`; UIs behind NGINX at `https://grafana|logs|traces.<domain>` |
 | Reads | `/metrics` of the three MCP (Model Context Protocol) servers, agentgateway's proxy and the Scoring API; every pod's stdout; spans from agentgateway and the kagent agents (OTLP, the OpenTelemetry protocol) |
 | Related | [edge_security.md](edge_security.md), [ab_testing.md](../llm-platform/ab_testing.md), [agents.md](../llm-platform/agents.md), [llm_platform.md](../llm-platform/llm_platform.md) |
@@ -46,24 +46,24 @@ kubectl -n monitoring port-forward svc/jaeger 16686:16686                      #
 
 | Signal | Tool | Where it comes from |
 |---|---|---|
-| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the `/metrics` of the three MCP servers (one ServiceMonitor per release, [`services/card_support_mcp/chart/templates/servicemonitor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/chart/templates/servicemonitor.yaml)), agentgateway's proxy (PodMonitor in [`infra/k8s/monitors.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig; both in [`infra/k8s/monitors.yaml` L5-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/monitors.yaml#L5-L26)) |
-| Logs | VictoriaLogs v1.53 + its Vector agent | every pod's stdout, shipped by the Vector DaemonSet, kept 3 days ([`infra/k8s/observability.sh` L26-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh#L26-L30)) |
-| Traces | Jaeger 2.21 (OTLP) | agentgateway's tracing policy ([`infra/k8s/tracing.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tracing.yaml)) for every LLM, MCP and A2A request, plus the spans the kagent agents export themselves ([`infra/k8s/llm-platform.sh` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/llm-platform.sh#L50)); joined by the W3C `traceparent` header |
+| Metrics | Prometheus + Grafana (kube-prometheus-stack 91.9.0) | node-exporter and kube-state-metrics (compute), the `/metrics` of the three MCP servers (one ServiceMonitor per release, [`services/card_support_mcp/chart/templates/servicemonitor.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/chart/templates/servicemonitor.yaml)), agentgateway's proxy (PodMonitor in [`infra/k8s/monitors.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/monitors.yaml)), the Layer 2 Scoring API (ScrapeConfig; both in [`infra/k8s/monitors.yaml` L5-L26](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/monitors.yaml#L5-L26)) |
+| Logs | VictoriaLogs v1.53 + its Vector agent | every pod's stdout, shipped by the Vector DaemonSet, kept 3 days ([`infra/k8s/observability.sh` L26-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability.sh#L26-L30)) |
+| Traces | Jaeger 2.21 (OTLP) | agentgateway's tracing policy ([`infra/k8s/tracing.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tracing.yaml)) for every LLM, MCP and A2A request, plus the spans the kagent agents export themselves ([`infra/k8s/llm-platform.sh` L50](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/llm-platform.sh#L50)); joined by the W3C `traceparent` header |
 
 The four dashboards are the `*.json` files in
-[`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards),
+[`infra/k8s/dashboards/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards),
 in ConfigMaps labelled `grafana_dashboard=1` for Grafana's sidecar
 ([`infra/k8s/observability.sh`
-L20-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability.sh#L20-L25)).
+L20-L25](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability.sh#L20-L25)).
 The fourth, A/B tests, is in [ab_testing.md](../llm-platform/ab_testing.md).
 
 ## Web API metrics
 
 Dashboard "Card Support - Web API"
-([`infra/k8s/dashboards/card-support-api.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/card-support-api.json))
+([`infra/k8s/dashboards/card-support-api.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards/card-support-api.json))
 shows requests and failures (4xx and 5xx) per second and in the range, and p95 latency per handler, from
 `http_requests_total` and `http_request_duration_seconds` of the three MCP servers (prometheus-fastapi-instrumentator, [`services/card_support_mcp/app/main.py`
-L137](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L137);
+L137](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L137);
 jobs `card-data-mcp`, `fraud-score-mcp`, `policy-rag-mcp`) and from the Scoring API.
 
 The screenshot predates the split into three servers (one job, `card-support-mcp`; the job filter matches the new
@@ -86,7 +86,7 @@ cache with Prometheus, Grafana and the agents together:
 ## LLM telemetry
 
 Dashboard "Card Support - LLM telemetry"
-([`infra/k8s/dashboards/llm-telemetry.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/llm-telemetry.json)).
+([`infra/k8s/dashboards/llm-telemetry.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards/llm-telemetry.json)).
 Every number comes from agentgateway:
 
 | Rubric metric | Metric | Panel |
@@ -106,7 +106,7 @@ range come from Prometheus `increase()`, which extrapolates, hence the decimals:
 ## Agent telemetry
 
 Dashboard "Card Support - Agent telemetry"
-([`infra/k8s/dashboards/agent-telemetry.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/dashboards/agent-telemetry.json)):
+([`infra/k8s/dashboards/agent-telemetry.json`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/dashboards/agent-telemetry.json)):
 
 | Rubric metric | Metric |
 |---|---|
@@ -117,7 +117,7 @@ Dashboard "Card Support - Agent telemetry"
 
 Each MCP server counts and times every tool call in one wrapper (the same code in all three). The metrics
 ([`services/card_support_mcp/app/main.py`
-L71-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L71-L74)):
+L71-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L71-L74)):
 
 ```python
 calls = Counter("card_support_tool_calls_total", "Tool calls by tool and outcome", ["tool", "outcome"],
@@ -128,7 +128,7 @@ latency = Histogram("card_support_tool_seconds", "Tool latency", ["tool"], regis
 
 The wrapper `run`
 ([`services/card_support_mcp/app/main.py`
-L80-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/app/main.py#L80-L93)):
+L80-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/app/main.py#L80-L93)):
 
 ```python
 async def run(tool: str, call):
@@ -166,7 +166,7 @@ The query (2026-10-21, before the split into three servers):
 
 The gateway's spans come from one policy on the whole Gateway
 ([`infra/k8s/tracing.yaml`
-L43-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tracing.yaml#L43-L56)):
+L43-L56](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tracing.yaml#L43-L56)):
 
 ```yaml
 # Gateway-wide (all routes): sample every request, a demo-sized load
@@ -201,10 +201,10 @@ coordinator's last LLM call (1.8 s) writes the answer:
   itself (`kubectl -n monitoring rollout restart ds/victoria-logs-vector`).
 - `/api/services` answers 404 on Jaeger: Jaeger 2's API is `/api/v3/...`. It keeps traces in memory (20,000 at most,
   [`infra/k8s/tracing.yaml`
-  L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/tracing.yaml#L20)),
+  L20](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/tracing.yaml#L20)),
   so a restart empties it.
 - Grafana restarts on failed liveness probes: at 384Mi its search API timed out. It needs 640Mi here
   ([`infra/k8s/observability-values.yaml`
-  L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/k8s/observability-values.yaml#L15-L17)).
+  L15-L17](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/k8s/observability-values.yaml#L15-L17)).
 
 Coursework rubric: A46 to A51.

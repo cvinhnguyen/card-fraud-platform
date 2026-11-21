@@ -13,7 +13,7 @@ before, so a green build means the new version answers.
 
 | | |
 |---|---|
-| Code | [`infra/jenkins/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins), the Jenkinsfiles in [Pipelines](#pipelines) |
+| Code | [`infra/jenkins/`](https://github.com/cvinhnguyen/card-fraud-platform/tree/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins), the Jenkinsfiles in [Pipelines](#pipelines) |
 | Runs on | compose service `jenkins` (profile `cicd`, UI on `127.0.0.1:8095`); deploys into kind namespaces `card-support`, `kagent`, `agentgateway-system` and `serving`, and to compose, Airflow, Kubeflow and Flink |
 | Reads | GitHub `main` (polled every 5 minutes), production prompts in Langfuse, the model aliases in MLflow |
 | Writes | our images in GHCR (`ghcr.io/cvinhnguyen`) with their cosign signatures, Helm releases in `card-support` and `kagent`, the InferenceServices in `serving`, the compose services `scoring-api`, `drift-api`, `push-online` and `push-offline`, the Airflow Variables `batch_release`, `train_release` and `rag_image`, the Kubeflow pipeline versions, the live Flink jobs |
@@ -70,11 +70,11 @@ Before the first push, once:
 
 | Jenkins job | Jenkinsfile | Runs when | Rubric |
 |---|---|---|---|
-| `rag-pipeline` | [`pipelines/rag/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/rag/Jenkinsfile) | RAG steps, DAG, documents or ml image changed | C33 |
-| `card-support-mcp` | [`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile) | `services/card_support_mcp/**` changed | B34 |
-| `card-support-data-agents` | [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents) | `agents/**` changed, after the MCP pipeline, or a new production prompt in Langfuse | C34 |
-| `card-support-coordinator` | [`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.coordinator) | `agents/**` changed, after the data agents, or a new production prompt | C35 |
-| `stream-feature-jobs` | [`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/Jenkinsfile.stream) | push jobs, ML library, Feast repo or ml image changed | B36 |
+| `rag-pipeline` | [`pipelines/rag/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/rag/Jenkinsfile) | RAG steps, DAG, documents or ml image changed | C33 |
+| `card-support-mcp` | [`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile) | `services/card_support_mcp/**` changed | B34 |
+| `card-support-data-agents` | [`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents) | `agents/**` changed, after the MCP pipeline, or a new production prompt in Langfuse | C34 |
+| `card-support-coordinator` | [`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.coordinator) | `agents/**` changed, after the data agents, or a new production prompt | C35 |
+| `stream-feature-jobs` | [`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/Jenkinsfile.stream) | push jobs, ML library, Feast repo or ml image changed | B36 |
 | `fraud-predictor` | `services/predictor/Jenkinsfile` | an MLflow alias (`production`, `challenger`) moved (checked every 15 min), `services/predictor/**` or the KServe manifests changed | |
 | `fraud-scoring-api` | `services/scoring_api/Jenkinsfile` | `services/scoring_api/**` changed | |
 | `fraud-drift-api` | `services/drift_api/Jenkinsfile` | `services/drift_api/**` changed | |
@@ -126,18 +126,18 @@ docker exec flink-jobmanager flink list    # the live Flink jobs: <job> <commit>
 
 Jenkins 2.580.1 runs in compose (profile `cicd`, UI on `127.0.0.1:8095`, login required;
 [`infra/docker-compose.yaml`
-L786-L807](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L786-L807)).
+L786-L807](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L786-L807)).
 Its image
-([`infra/jenkins/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/Dockerfile))
+([`infra/jenkins/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/Dockerfile))
 adds the Docker CLI with buildx and compose, kubectl v1.37.0, Helm v3.22.1, jq and the plugins in
-[`infra/jenkins/plugins.txt`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/plugins.txt).
-[`infra/jenkins/casc.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/casc.yaml)
+[`infra/jenkins/plugins.txt`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/plugins.txt).
+[`infra/jenkins/casc.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/casc.yaml)
 (Jenkins Configuration as Code, JCasC) creates the admin user, the credentials and the jobs. The jobs poll because no
 webhook reaches this machine; one executor runs one pipeline at a time, since two image builds do not fit in RAM.
 
 Every Jenkinsfile wraps its stages in a `when { changeset ... }` on its own paths (the RAG pipeline's:
 [`pipelines/rag/Jenkinsfile`
-L23-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/rag/Jenkinsfile#L23-L30));
+L23-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/rag/Jenkinsfile#L23-L30));
 polls with nothing to build show only "Checkout SCM" in the stage views.
 
 ### Credentials
@@ -145,7 +145,7 @@ polls with nothing to build show only "Checkout SCM" in the stage views.
 Secrets start in the gitignored `infra/.env` (or `infra/.secrets/` for files), reach the container as Docker secrets
 under `/run/secrets/`, and JCasC turns each into a Jenkins credential
 ([`infra/jenkins/casc.yaml`
-L13-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/casc.yaml#L13-L30)).
+L13-L30](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/casc.yaml#L13-L30)).
 A Jenkinsfile names the credential id in `withCredentials`; Jenkins masks the value in the log. API keys reach curl
 on stdin (`curl -K -`) and containers through the environment (`docker run -e NAME`), never the process list.
 
@@ -161,16 +161,17 @@ on stdin (`curl -K -`) and containers through the environment (`docker run -e NA
 | `ml-db-password`, `redis-password`, `s3-access-key`, `s3-secret-key` | stream jobs deploy and smoke test; `ml-db-password` and `redis-password` also recreate `scoring-api` and `drift-api` |
 | `airflow-admin` | RAG pipeline: release and run through the Airflow REST API |
 
-Manage Jenkins, Credentials, global domain hides the values (`admin/******` for the username/password credential):
+Manage Jenkins, Credentials, global domain hides the values (`admin/******` and `cvinhnguyen/******` for the
+username/password credentials):
 
-![Jenkins global credentials: kubeconfig, Langfuse keys, A2A keys, edge password, database, Redis and S3 secrets, cosign key and password, Airflow login](../images/cicd_jenkins_credentials.png)
+![Jenkins global credentials: kubeconfig, Langfuse keys, A2A keys, edge password, database, Redis and S3 secrets, cosign key and password, Airflow login, and the GHCR logins ghcr (push) and ghcr-pull (pull only)](../images/cicd_jenkins_credentials.png)
 
 ### Access to the cluster and Docker
 
 Jenkins deploys with its own ServiceAccount
-([`infra/jenkins/rbac.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/rbac.yaml)),
+([`infra/jenkins/rbac.yaml`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/rbac.yaml)),
 whose kubeconfig
-[`infra/jenkins/setup.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/jenkins/setup.sh)
+[`infra/jenkins/setup.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/jenkins/setup.sh)
 writes to `infra/.secrets/jenkins-kubeconfig`. Its role is bound only in `card-support`, `kagent` and
 `agentgateway-system`, where the MCP and agents charts write; in `serving` a narrower Role allows InferenceServices,
 Broker and Trigger, and of the Secrets only `ghcr-pull`. So `kubectl` and `helm` cannot touch Vault, the monitoring
@@ -180,25 +181,25 @@ Jenkinsfile can run ([Limits](#limits)).
 Jenkins keeps the host's Docker socket to build images. Airflow only runs the RAG image, so it reaches Docker through
 `docker-proxy` on an internal network
 ([`infra/docker-compose.yaml`
-L471-L489](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/infra/docker-compose.yaml#L471-L489)),
+L471-L489](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/infra/docker-compose.yaml#L471-L489)),
 which allows the container and image API calls and denies exec, build, volumes and the rest. The DAG accepts as
 `rag_image` only a release in GHCR (`ghcr.io/cvinhnguyen/fraud-ml-train:<commit>`) or the local build `fraud/ml-train`
 ([`pipelines/airflow/dags/rag_ingest.py`
-L41-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py#L41-L46)).
+L41-L46](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py#L41-L46)).
 
 ## RAG data pipeline
 
-[`pipelines/rag/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/rag/Jenkinsfile)
+[`pipelines/rag/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/rag/Jenkinsfile)
 tests the steps of the DAG `rag_ingest` (chunk the bank documents, embed, write to the Feast knowledge base,
 validate). Each step runs as a container of the image in the Variable `rag_image`, so a release is one Variable update
 ([rag_pipeline.md](../llm-platform/rag_pipeline.md)).
 
 | Stage | What it does |
 |---|---|
-| Unit tests | builds the `test` stage of [`ml/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/Dockerfile) and runs [`ml/jobs/tests/test_rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/tests/test_rag_ingest.py) |
-| DAG check | imports [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/airflow/dags/rag_ingest.py) in the Airflow image and asserts its 5 tasks |
+| Unit tests | builds the `test` stage of [`ml/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/Dockerfile) and runs [`ml/jobs/tests/test_rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/tests/test_rag_ingest.py) |
+| DAG check | imports [`pipelines/airflow/dags/rag_ingest.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/airflow/dags/rag_ingest.py) in the Airflow image and asserts its 5 tasks |
 | Build + push image | `ghcr.io/cvinhnguyen/fraud-ml-train:<commit>` |
-| Release + run | Airflow REST API: sets Variable `rag_image` to the new tag, unpauses the DAG, triggers a run, waits for `success` or `failed` ([`pipelines/rag/Jenkinsfile` L66-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/pipelines/rag/Jenkinsfile#L66-L93)) |
+| Release + run | Airflow REST API: sets Variable `rag_image` to the new tag, unpauses the DAG, triggers a run, waits for `success` or `failed` ([`pipelines/rag/Jenkinsfile` L66-L93](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/pipelines/rag/Jenkinsfile#L66-L93)) |
 | Validation results | prints the checks the `validate_rag.run_checks` task logged |
 
 Build #2, started by hand because the pipeline needs the Airflow profile up: 6 unit tests passed, the DAG imported
@@ -220,7 +221,7 @@ ok   expect_online_store_to_match_offline         observed=57/57 chunks identica
 
 ## MCP servers
 
-[`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile)
+[`services/card_support_mcp/Jenkinsfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile)
 ships the three MCP servers the data agents use (card-data, fraud-score, policy-rag,
 [agents.md](../llm-platform/agents.md#the-three-mcp-servers)): one image, tested and signed once, deployed as one Helm
 release per server.
@@ -238,10 +239,10 @@ release per server.
 
 The coverage threshold sits in
 [`services/card_support_mcp/pytest.ini`
-L4](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/pytest.ini#L4),
+L4](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/pytest.ini#L4),
 so the test container itself exits non-zero; the stage computes the mutation score from mutmut's results
 ([`services/card_support_mcp/Jenkinsfile`
-L31-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/services/card_support_mcp/Jenkinsfile#L31-L48)):
+L31-L48](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/services/card_support_mcp/Jenkinsfile#L31-L48)):
 
 ```groovy
         stage('Unit tests + coverage gate') {
@@ -281,25 +282,25 @@ The builds of 2026-11-21 are in [CI test run of 2026-11-21](#ci-test-run-of-2026
 ## Agents
 
 The agents' system prompts live in Langfuse (prompt `card-support/<agent>`, label `production`).
-[`agents/fetch_prompts.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/fetch_prompts.sh)
+[`agents/fetch_prompts.sh`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/fetch_prompts.sh)
 pulls each into `agents/chart/prompts/<agent>.md` and returns Helm flags with the prompt versions, which the chart
 writes into an annotation on each Agent. Every 15 minutes both agent pipelines compare the deployed versions with
 production ([`agents/Jenkinsfile.data-agents`
-L22-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L22-L37)),
+L22-L37](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L22-L37)),
 so promoting a prompt in Langfuse redeploys the agent without a commit; with nothing new, the run stops there. For a
 tool change, each pipeline in the chain starts the next when it succeeds (the data agents only when they deployed
 something).
 
 ### Data agents
 
-[`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents)
+[`agents/Jenkinsfile.data-agents`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents)
 deploys card-data-agent and risk-agent (Helm release `card-support-data-agents`).
 
 | Stage | What it does |
 |---|---|
 | Prompts from Langfuse | fetches the production prompts, compares their versions with the deployed ones |
 | Changed? | also deploys on a change under `agents/` or a manual / upstream start |
-| Validate | `helm lint`, then Helm's own server-side dry run (`helm upgrade --install ... --dry-run=server`) |
+| Validate | a release an aborted build left `pending-*` gets `helm rollback` first; then `helm lint` and Helm's own server-side dry run (`helm upgrade --install ... --dry-run=server`) |
 | Deploy | `helm upgrade --atomic`, then `agents/wait_ready.sh` waits until kagent has processed each Agent's current generation and both are Ready |
 | Smoke test (A2A through the gateway) | one question per agent through agentgateway, as the coordinator calls it (coordinator key, header `x-kagent-host`); the answer must complete and match the expected pattern (the fee question: its citation `fee_schedule` / "fee schedule" or the 2.5% fact) |
 | Eval gate (Langfuse experiment) | the risk agent answers the eval dataset as a Langfuse experiment; below 0.6 accuracy the build fails and the failure handler runs `helm rollback` ([novel_eval_gate.md](../llm-platform/novel_eval_gate.md)) |
@@ -308,46 +309,46 @@ The eval gate stage and the failure handler
 ([`agents/Jenkinsfile.data-agents`](../../agents/Jenkinsfile.data-agents)):
 
 ```groovy
-    stage('Eval gate (Langfuse experiment)') {
-      // the risk agent just deployed answers the eval dataset as a Langfuse experiment (agents/eval/langfuse_gate.py);
-      // below EVAL_MIN_ACCURACY the build fails and the release goes back to its previous revision (post)
-      when { environment name: 'DEPLOY', value: 'true' }
-      steps {
-        withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
-                         string(credentialsId: 'langfuse-secret-key', variable: 'LANGFUSE_SECRET_KEY'),
-                         string(credentialsId: 'a2a-key-coordinator', variable: 'A2A_KEY'),
-                         file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-          sh 'docker build -q -t fraud/agent-eval:ci agents/eval >/dev/null'
-          script {
-            def gate = sh(returnStatus: true, script: '''
-              gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
-              prompt=$(printf '%s' "$PROMPT_FLAGS" | grep -o 'risk-agent=[0-9]*' | cut -d= -f2)
-              docker run --rm --network kind -e LANGFUSE_HOST -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e A2A_KEY \
-                -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
-                --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
-            ''')
-            if (gate != 0) { error "eval gate failed" }
-          }
+  stage('Eval gate (Langfuse experiment)') {
+    // the risk agent just deployed answers the eval dataset as a Langfuse experiment (agents/eval/langfuse_gate.py);
+    // below EVAL_MIN_ACCURACY the build fails and the release goes back to its previous revision (post)
+    when { environment name: 'DEPLOY', value: 'true' }
+    steps {
+      withCredentials([string(credentialsId: 'langfuse-public-key', variable: 'LANGFUSE_PUBLIC_KEY'),
+                       string(credentialsId: 'langfuse-secret-key', variable: 'LANGFUSE_SECRET_KEY'),
+                       string(credentialsId: 'a2a-key-coordinator', variable: 'A2A_KEY'),
+                       file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+        sh 'docker build -q -t fraud/agent-eval:ci agents/eval >/dev/null'
+        script {
+          def gate = sh(returnStatus: true, script: '''
+            gw="http://fraud-control-plane:$(kubectl -n agentgateway-system get svc agentgateway-proxy -o jsonpath='{.spec.ports[0].nodePort}')"
+            prompt=$(printf '%s' "$PROMPT_FLAGS" | grep -o 'risk-agent=[0-9]*' | cut -d= -f2)
+            docker run --rm --network kind -e LANGFUSE_HOST -e LANGFUSE_PUBLIC_KEY -e LANGFUSE_SECRET_KEY -e A2A_KEY \
+              -e GATEWAY="$gw" fraud/agent-eval:ci langfuse_gate.py --agent risk-agent \
+              --run-name "risk-agent prompt v$prompt (Jenkins #$BUILD_NUMBER)" --min-accuracy "$EVAL_MIN_ACCURACY" --repeats 2
+          ''')
+          if (gate != 0) { error "eval gate failed" }
         }
       }
     }
   }
-  post {
-    success {
-      script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
-    }
-    failure {
-      // a release that is live but failed its readiness wait, smoke test or eval gate goes back to the previous revision
-      script {
-        if (env.DEPLOYED == 'true') {
-          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
-            sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
-          }
-          echo "$RELEASE rolled back to its previous revision"
+}
+post {
+  success {
+    script { if (env.DEPLOY == 'true') { build job: 'card-support-coordinator', wait: false } }
+  }
+  unsuccessful {   // failed or aborted: an abort after the deploy rolls back too
+    // a release that is live but failed its readiness wait, smoke test or eval gate goes back to the previous revision
+    script {
+      if (env.DEPLOYED == 'true') {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          sh 'helm rollback $RELEASE -n kagent --wait --timeout 5m'
         }
+        echo "$RELEASE rolled back to its previous revision"
       }
     }
   }
+}
 ```
 
 These builds ran the earlier Jenkinsfile: the gate stage ran `helm rollback` itself, and a failed smoke test left the
@@ -374,11 +375,11 @@ the rollback revisions (coordinator 17 "Rollback to 15", data-agents 23 "Rollbac
 
 ### Coordinator
 
-[`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.coordinator)
+[`agents/Jenkinsfile.coordinator`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.coordinator)
 deploys the coordinator (Helm release `card-support-coordinator`) with the same first four stages ("Prompt from
 Langfuse" fetches one prompt). Its smoke test, "Smoke test (A2A client through the gateway)", calls it as a client
 does: the public A2A route `/a2a/coordinator` with the support-app key and a question needing card data and policy ([`agents/Jenkinsfile.coordinator`
-L60-L80](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.coordinator#L60-L80)). The answer must complete and state the fee from the policy: its citation `fee_schedule` / "fee schedule"
+L63-L83](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.coordinator#L63-L83)). The answer must complete and state the fee from the policy: its citation `fee_schedule` / "fee schedule"
 or the 2.5% fact.
 
 Build #24 (commit under `agents/`): `coordinator: completed | The card made 3 payments in the last 30 days. The
@@ -390,7 +391,7 @@ On 2026-10-24 builds #29 and #30 failed with correct answers: one wrote "(fee sc
 without a source, and the check wanted the exact text `fee_schedule`. The check now accepts either spelling or the fee
 itself
 ([`agents/Jenkinsfile.coordinator`
-L74-L76](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.coordinator#L74-L76)):
+L77-L79](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.coordinator#L77-L79)):
 
 ```sh
             printf '%s' "$out" | jq -e '.result.status.state == "completed"' >/dev/null
@@ -406,16 +407,16 @@ the commit and started coordinator #40, which passed with `(fee_schedule#2)`.
 
 ## Stream feature jobs
 
-[`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/Jenkinsfile.stream)
+[`ml/jobs/Jenkinsfile.stream`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/Jenkinsfile.stream)
 ships the two push jobs that write the streaming features to the feature store, compose services on the ml image:
 `push-online` (Kafka to Redis) and `push-offline` (Kafka to the Delta table behind the push source).
 
 | Stage | What it does |
 |---|---|
-| Unit tests | the `test` stage of [`ml/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/Dockerfile): the push jobs, the RAG steps and the model registry ([`ml/jobs/tests/test_registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/tests/test_registry.py): every trained model is registered, only one that passed gets an alias) |
+| Unit tests | the `test` stage of [`ml/Dockerfile`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/Dockerfile): the push jobs, the RAG steps and the model registry ([`ml/jobs/tests/test_registry.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/tests/test_registry.py): every trained model is registered, only one that passed gets an alias) |
 | Build + push image | `ghcr.io/cvinhnguyen/fraud-ml-train:<commit>` |
 | Deploy | starts Kafka if it is down, keeps the image the containers run, recreates `push-online` and `push-offline` on the new tag (`PUSH_JOBS_IMAGE`); a failed smoke test puts the kept image back |
-| Smoke test | [`ml/tools/stream_smoke.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/tools/stream_smoke.py) sends one marked authorization summary (`ci_smoke_<random>`, never a real card) to Kafka; it must reach the online store and the offline table within 180 s ([`ml/jobs/Jenkinsfile.stream` L64-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/ml/jobs/Jenkinsfile.stream#L64-L74)) |
+| Smoke test | [`ml/tools/stream_smoke.py`](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/tools/stream_smoke.py) sends one marked authorization summary (`ci_smoke_<random>`, never a real card) to Kafka; it must reach the online store and the offline table within 180 s ([`ml/jobs/Jenkinsfile.stream` L64-L74](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/ml/jobs/Jenkinsfile.stream#L64-L74)) |
 
 Build #2 (by hand): 15 tests passed, both containers recreated, and the smoke message arrived:
 `ci_smoke_fabe0b34: online 12.4 s, offline 8.4 s (s3://lakehouse/gold/feat_card_auth_rt)`.
@@ -457,6 +458,8 @@ The bugs it found:
 | agent pipelines | Validate: `helm template` piped to a kubectl server-side dry run kept the `systemMessageFrom` an older release set next to the new inline `systemMessage`, which kagent rejects | `f0341fe`: `helm upgrade --dry-run=server`, whose three-way merge drops the old field |
 | agent pipelines | the readiness wait never ended after a spec change that left the pod as it was | `e4bc9e3`: `agents/wait_ready.sh` |
 | every pipeline with a rollback | an aborted build skipped it: data-agents #55, aborted after its upgrade, left revision 27 live without its smoke test | `87706aa`: the rollback runs on failure and on abort; Flink lists each job before its stop |
+| agent pipelines, `card-support-mcp` | an abort that cut `helm rollback` off left the release `pending-rollback` (data-agents #56), and every later upgrade failed | `c72b6e6`: a `pending-*` release gets `helm rollback` before the upgrade (tested on #57) |
+| every pipeline with a rollback | Jenkins terminated an aborted build's steps after 15 s, cutting the rollback off; in `flink-jobs` the new job could start after the rollback checked for it (#5) | `54d21ed`: 15 minutes for an aborted build (`termGracePeriod=900s`); Flink waits for an in-flight submit (#6, #7 rolled back cleanly) |
 | compose services | a `docker compose up` by hand put the old local build back | `1fbccdd`: a green release becomes the compose default image |
 
 The silver restore (`9811592`) was tested by hand: `silver.stg_customers` restored from version 25 to 24.
@@ -471,7 +474,7 @@ The silver restore (`9811592`) was tested by hand: `silver.stg_customers` restor
   redeploy and eval gate after a tool change were skipped. Commit `b5bd125` added `triggeredBy 'BuildUpstreamCause'`
   to both agent Jenkinsfiles
   ([`agents/Jenkinsfile.data-agents`
-  L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/6457d47445ec1a910ebd2c01bc1edbff50f76d37/agents/Jenkinsfile.data-agents#L38-L43)).
+  L38-L43](https://github.com/cvinhnguyen/card-fraud-platform/blob/54d21eddbf6e602ae13fed46a1a9e0ef265d23cd/agents/Jenkinsfile.data-agents#L38-L43)).
   The next chain ran end to end: MCP #11, data agents #29 ("Started by upstream project card-support-mcp build
   number 11"), coordinator #26, which had no change of its own (#25 had built that commit) and deployed only because
   #29 started it.
