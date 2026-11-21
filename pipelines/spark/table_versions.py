@@ -1,9 +1,9 @@
 """Save the Delta versions of tables, and restore them later: the data side of a batch rollback.
 
-The batch-pipelines CI check (pipelines/airflow/Jenkinsfile) runs DP2 silver for real on a new release, then the gold,
-features and materialize runs its publish starts. Those runs write the silver and gold tables before their checks. If
-a check fails, the pipeline puts the old code back and, with this job, the tables too: RESTORE TABLE ... TO VERSION
-AS OF the version saved before the check. A table that did not change is left alone.
+The batch-pipelines CI check (pipelines/airflow/Jenkinsfile) runs DP2 silver for real on a new release, check-only
+(its publish is skipped, so nothing starts after it). The run writes the silver tables before it checks them. If a
+check fails, the pipeline puts the old code back and, with this job, the tables too: RESTORE TABLE ... TO VERSION AS
+OF the version saved before the run. A table that did not change is left alone.
 
 Usage (repo root), with schema names (every Delta table in them) or table names:
   docker compose -f infra/docker-compose.yaml exec spark-master /opt/spark/bin/spark-submit /opt/jobs/table_versions.py \
