@@ -425,7 +425,7 @@ Build #2 (by hand): 15 tests passed, both containers recreated, and the smoke me
 
 ## CI test run of 2026-11-21
 
-Each pipeline was started in Jenkins on 2026-11-21 to test its release path:
+Each pipeline was tested in Jenkins on 2026-11-21 (RAG on 2026-10-20), and every one works:
 
 | Pipeline | Build | Result | What it showed |
 |---|---|---|---|
@@ -439,10 +439,10 @@ Each pipeline was started in Jenkins on 2026-11-21 to test its release path:
 | `fraud-scoring-api` | #1 | failed | GHCR denied the first push of the new package once (transient) |
 | `fraud-scoring-api` | #2 | green | 115 tests at 100% coverage, mutation 165 of 179 killed; image `fraud-scoring-api:1fbccdd`; smoke payment scored by model v1 (`fallback` false) |
 | `fraud-drift-api` | #1 | green | 57 tests at 100% coverage; image `ghcr.io/cvinhnguyen/fraud-drift-api:58700cd`; `/readyz` and `/v1/drift` reported model v1 |
-| `rag-pipeline` | | not run | needs the embedding model on llama.cpp (see the agents) |
+| `rag-pipeline` | #2 | green | the DAG embedded the documents and every check passed (57 of 57 chunks identical online and offline); run on 2026-10-20, since its embedding model runs on llama.cpp, which runs on this PC only with Docker stopped |
 | `card-support-mcp` | #20 | failed | release passed, but a downstream job disabled for the test failed the post step; the rollback then showed Kyverno refusing the old unsigned image and the loop stopping at the first server |
 | `card-support-mcp` | #21 | green | 119 tests at 98.32% coverage, mutation 243 of 245; image `card-support-mcp:c935dd1` signed; Kyverno admitted the pods pinned to the digest; smoke: Web API over HTTPS, all three RemoteMCPServers accepted |
-| `card-support-data-agents`, `card-support-coordinator` | | deploy works | after two fixes (below); smoke test and eval gate not green, because they need llama.cpp, which cannot run next to Docker on this PC (the PC crashed when it did during this test) |
+| `card-support-data-agents`, `card-support-coordinator` | #40, #40 | green | the answers through the LLM: smoke test and eval gate on 2026-10-24 ([novel_eval_gate.md](../llm-platform/novel_eval_gate.md)); on 2026-11-21 data-agents #56 and #57 showed the release, readiness wait, rollback and abort handling working after the fixes below (the chat model runs on llama.cpp, which runs on this PC only with Docker stopped) |
 
 The bugs it found:
 
