@@ -555,7 +555,7 @@ def system_layers_1_2():
               desc="Appends them to gold.feat_card_auth_rt / gold.feat_card_device: the offline copy for training"),
         Arrow("B", 1, "nightly export\n(Parquet files)", [B["export"].bottom(), (114, s3y + 50), (B["s3"].x, s3y + 50)], 0.75,
               "u", desc="Core banking's nightly export job writes the day's settled transactions as Parquet files into "
-                        "s3://core-banking-export/transactions/export_date=<day>/ (here: generator/load_source.py --part "
+                        "s3://core-banking-export/transactions/, one export_date folder per day (here: generator/load_source.py --part "
                         "exports)"),
         Arrow("B", 2, "starts each job", [B["airflow"].left(0.6), B["spark"].right(0.6)], side="d",
               desc="Airflow submits the Spark jobs of DP1, the two DP2 pipelines and DP3 (a call, no data); each pipeline checks "
@@ -594,7 +594,7 @@ def system_layers_1_2():
                                                      (B["kserve"].x + 260, r(3) + 42), B["kserve"].bottom(260 / 300)],
               0.7, "u",
               desc="Jenkins pipeline fraud-predictor: on a new alias it builds the model into the predictor image "
-                   "(fraud-predictor:v<model>-<commit>), pushes it to ghcr.io, signs it and applies the InferenceService; "
+                   "(tagged with the model version and the commit), pushes it to ghcr.io, signs it and applies the InferenceService; "
                    "a challenger waits for a person to approve the A/B test"),
         Arrow("M", 1, "each request\n+ response", [B["kserve"].bottom(110 / 300), B["broker"].top()],
               desc="KServe's payload logger (the agent sidecar, mode all) posts every request and its response as CloudEvents "
@@ -732,7 +732,7 @@ def system_layer_3():
     jb = TOP3 + BH        # bottom of the CI/CD boxes; the band ends 16 below, so the lanes start at jb + 36
     A = [
         Arrow("A", 1, "question", [b["staff"].right(), b["nginx"].left()],
-              desc="A question in the support chat (https://support.<domain>, basic auth and rate limit at NGINX)"),
+              desc="A question in the support chat (its own HTTPS host, with basic auth and a rate limit at NGINX)"),
         Arrow("A", 2, "question", [b["nginx"].right(), b["ui"].left()],
               desc="NGINX passes it to support-chat, which serves the chat page (one A2A message/send per question)"),
         Arrow("A", 3, "question +\nAPI key", [b["ui"].bottom(), (x2 + 85, g_top)], 0.5, "l",
@@ -851,7 +851,7 @@ def system_layer_3():
         "Each reply comes back on the same call and is not drawn.",
         "Dotted frames: the three agents (A6-A9, C5, O5, O6 apply to each) and the three MCP servers",
         "(one image, one Helm release each; A10, C4, O2 apply to each). Dashed boxes: support services.",
-        "NGINX also serves registry, grafana, logs, traces and the Web API (api.<domain>: card data",
+        "NGINX also serves registry, grafana, logs, traces and the Web API (host api: card data",
         "and policy chunks by id, from card-data-mcp, over HTTPS).",
         "The Feast online store and the Fraud Scoring API are Layer 2 units, drawn again here because the tool servers "
         "call them (A11, A14)."]))
@@ -952,7 +952,7 @@ def deployment():
             "push-online, push-offline (ml-train image)"], "svc")])
     k_left = column(kcol[0], uy, kw, [
         ("nginx-ingress", "F5 NIC 5.6.3", ["nginx"], [
-            "the only way in from a browser: :80, :443", "7 hosts under *.<domain>, basic auth"], "gate"),
+            "the only way in from a browser: :80, :443", "7 HTTPS hosts on one domain, basic auth"], "gate"),
         ("agentgateway-system", "1.6.0", ["agentgateway", "llmd", "qwen"], [
             "proxy :31508: LLM, MCP and A2A routes", "llm-d endpoint picker (qwen3-8b-epp)",
             "qwen3-8b bridge pods → host llama.cpp"], "gate"),
@@ -1010,7 +1010,7 @@ def deployment():
         ("vm", "B2s_v2 · Ubuntu 24.04", ["python", "ansible"], [
             "predictor :8080, built on the VM by Ansible", "node_exporter :9100"], "svc"),
         ("aks", "Free tier · 1 node", ["kubernetes"], ["card-fraud: 2 pods from ACR, ClusterIP :80"], "svc"),
-        ("acr", "Basic", ["docker"], ["crcardfrauddev: fraud/predictor:<v>"], "store"),
+        ("acr", "Basic", ["docker"], ["crcardfrauddev: fraud/predictor, tag = model version"], "store"),
         ("network", "", ["azure"], ["VNet + subnet, public IP + NIC", "NSG: 22, 8080, 9100 for the admin IP only"],
          "out")])
     ab = a[-1].y + a[-1].h + 16
@@ -1062,10 +1062,10 @@ def deployment():
     py0 = legend_y + 40
     foot.append(t(34, py0, "NETWORK PATHS", 11, INK2, "start", 600, mono=True, spacing=0.08))
     paths = [
-        "Python scripts → compose on 127.0.0.1:<port>: Kafka, Postgres, S3, the APIs and the UIs",
+        "Python scripts → compose on 127.0.0.1, one port per service: Kafka, Postgres, S3, the APIs and the UIs",
         "docker CLI → the Docker Desktop engine: builds the images (path 9 pushes them)",
         "kind pods → llama.cpp on the host: host.docker.internal :8085 (chat), :8086 (embed)",
-        "Browser → NGINX in kind, HTTPS :443: support., agents., registry., grafana., logs., traces., api.<domain>",
+        "Browser → NGINX in kind, HTTPS :443: one host per UI (support, agents, registry, grafana, logs, traces, api)",
         "kind · helm → the kind API: creates the cluster, installs the charts",
         "terraform, ansible, kubectl → Azure: create, check and destroy the IaC test setup",
         "kind pods → compose by name (the node is on fraud_default): lakehouse-s3:8333, kafka, ml-db, redis, mlflow, "
@@ -1308,9 +1308,9 @@ def overview():
     R1 = 420
     dp1, s1 = flow(410, R1, 350, "DP1 · SOURCES TO BRONZE", "Airflow runs the steps · every night", [
         ("||", ["Copy the 6 core banking tables (JDBC)|Spark",
-                "Load the night's export onto lakeFS branch dp1_<day>|Spark",
+                "Load the night's export onto its own lakeFS branch|Spark",
                 "Load Flink's raw payment files|Spark"]),
-        ("Great Expectations checks pass?|GE on Spark", "lakeFS merges the branch into main; Airflow publishes bronze",
+        ("Great Expectations pass?|Spark", "lakeFS merges the branch into main; Airflow publishes bronze",
          "Stop: the export stays on its branch, to inspect")])
     db = box(40, R1, 300, "Core banking database", "PostgreSQL · another department", [
         "customers, accounts, cards", "merchants, disputes", "province mapping (63 old, 34 new)"], "out", "postgres")
@@ -1321,7 +1321,7 @@ def overview():
         "A new export reaches readers only after its checks pass (lakeFS merge)"], "store", "lakefs", "NOVEL IDEA")
     dp2s, s2 = flow(1210, R1, 320, "DP2 · BRONZE TO SILVER", "Airflow runs the steps · on a new bronze version", [
         "Remove duplicate transactions|Spark", "Map 63 old provinces to 34 units|Spark", "Write the silver tables|Spark",
-        ("Checks pass? (no row lost)|GE on Spark", "Publish a new silver version|Airflow", None)])
+        ("Great Expectations pass?|Spark", "Publish a new silver version|Airflow", None)])
     silver = box(1600, R1, 250, "Silver", "Delta tables on S3", [
         "stg_transactions", "stg_customers", "cleaned: one row per payment"], "store", "deltalake")
     dp2g, s3 = flow(1920, R1, 330, "DP2 · SILVER TO GOLD", "Airflow runs the steps · on a new silver version", [
@@ -1392,8 +1392,8 @@ def overview():
     offline = box(1950, R2, 290, "Feast offline store", "Delta tables gold.feat_*", [
         "each card's features at any past moment", "for training"], "store", "feast")
     dp3, s4 = flow(2310, R2, 270, "DP3 · GOLD TO FEATURES", "Airflow runs the steps · on a new gold version", [
-        "Per-card statistics over 30, 90 and 180 days, written to gold.feat_*|Spark",
-        ("Checks pass?|GE on Spark", "Publish the new features|Airflow", None)])
+        "Per-card statistics over 30, 90 and 180 days, written to gold.feat_card_txn_stats_daily|Spark",
+        ("Great Expectations pass?|Spark", "Publish the new features|Airflow", None)])
     F[0] = "R"
     link([app.right(), (410, mid(app))], "app events")
     link([card.right(), (375, mid(card)), (375, R2 + 90), (410, R2 + 90)], "payments", lx=382, ly=card.y + 14)

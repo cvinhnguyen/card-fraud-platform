@@ -227,7 +227,7 @@ badge letter carries the flow for colour-blind readers. Two crossings remain (M7
 | R7 | Streaming features | Writes them to the Redis online store through Feast push (offsets committed after the write) |
 | R8 | Streaming features | push-offline reads the same two topics |
 | R9 | Streaming features | Appends them to gold.feat_card_auth_rt / gold.feat_card_device: the offline copy for training |
-| B1 | Batch data | Core banking's nightly export job writes the day's settled transactions as Parquet files into s3://core-banking-export/transactions/export_date=<day>/ (here: generator/load_source.py --part exports) |
+| B1 | Batch data | Core banking's nightly export job writes the day's settled transactions as Parquet files into s3://core-banking-export/transactions/, one export_date folder per day (here: generator/load_source.py --part exports) |
 | B2 | Batch data | Airflow submits the Spark jobs of DP1, the two DP2 pipelines and DP3 (a call, no data); each pipeline checks what it wrote with Great Expectations, then announces the new version of its zone, which starts the next one |
 | B3 | Batch data | DP1 copies the core banking tables over JDBC (customers, accounts, cards, merchants, disputes, province mapping) |
 | B4 | Batch data | DP1 loads the new daily export folders from s3://core-banking-export |
@@ -240,7 +240,7 @@ badge letter carries the flow for colour-blind readers. Two crossings remain (M7
 | T3 | Training and deploy | Steps 1 and 2 (load labels, build the training set) read the labels as of label_as_of and the point-in-time features |
 | T4 | Training and deploy | Step 2 MERGEs the run's rows into ml/training_set_fraud_model_v1, one Delta version per run, so every model can be traced back to the exact rows it learned from |
 | T5 | Training and deploy | Steps 5 to 7 (train, evaluate, register) log params, data versions, metrics and the model; every model is kept as a version, and gets alias challenger only when it passes the evaluation gate |
-| T6 | Training and deploy | Jenkins pipeline fraud-predictor: on a new alias it builds the model into the predictor image (fraud-predictor:v<model>-<commit>), pushes it to ghcr.io, signs it and applies the InferenceService; a challenger waits for a person to approve the A/B test |
+| T6 | Training and deploy | Jenkins pipeline fraud-predictor: on a new alias it builds the model into the predictor image (tagged with the model version and the commit), pushes it to ghcr.io, signs it and applies the InferenceService; a challenger waits for a person to approve the A/B test |
 | M1 | Monitoring and retraining | KServe's payload logger (the agent sidecar, mode all) posts every request and its response as CloudEvents to the broker serving/default |
 | M2 | Monitoring and retraining | Trigger drift-detector delivers them to POST /v1/inference-events: request events count the features, response events the score. Outlier and adversarial detectors would subscribe the same way |
 | M3 | Monitoring and retraining | Bin counts per feature and minute in Redis db 1; GET /v1/drift returns the PSI vs the training profile |
@@ -274,7 +274,7 @@ C5, C6, C8) and under the MCP servers (C4).
 
 | # | Flow | Data / call |
 |---|---|---|
-| A1 | Agent conversation | A question in the support chat (https://support.<domain>, basic auth and rate limit at NGINX) |
+| A1 | Agent conversation | A question in the support chat (its own HTTPS host, with basic auth and a rate limit at NGINX) |
 | A2 | Agent conversation | NGINX passes it to support-chat, which serves the chat page (one A2A message/send per question) |
 | A3 | Agent conversation | support-chat forwards the question to the gateway route /a2a/coordinator and adds the support-app API key, so the key never reaches the browser. The gateway is the first hop of every question |
 | A4 | Agent conversation | Route a2a-coordinator: the gateway checks the key (only support-app may call it), applies the rate limit and passes the question to the coordinator over A2A |
